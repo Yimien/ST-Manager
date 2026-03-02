@@ -164,61 +164,67 @@
             </div>
         </div>
 
-        <!-- 收藏筛选按钮 (三态) -->
-        <button
-            @click="toggleFavFilter()"
-            class="btn-secondary transition-all flex items-center justify-center"
-            :class="{
-                'text-yellow-400 bg-yellow-400/10 border-yellow-400/50 scale-110': $store.global.viewState.favFilter === 'included',
-                'text-red-400 bg-red-400/10 border-red-400/50 scale-110': $store.global.viewState.favFilter === 'excluded',
-                'text-gray-500 border-transparent hover:text-yellow-400 hover:scale-105': $store.global.viewState.favFilter === 'none'
-            }"
-            :title="$store.global.viewState.favFilter === 'included' ? '当前：只显示收藏' : ($store.global.viewState.favFilter === 'excluded' ? '当前：排除收藏' : '当前：显示全部')"
-            style="padding: 0.5rem; margin-right: 0.5rem; border: 1px solid; position: relative; min-width: 36px;">
-            
-            <!-- 根据状态切换图标 -->
-            <span x-show="$store.global.viewState.favFilter !== 'excluded'" class="text-lg">★</span>
-            <span x-show="$store.global.viewState.favFilter === 'excluded'" class="text-lg font-bold">🚫</span>
-            
-            <!-- 激活时的光晕动画 (包含状态) -->
-            <div x-show="$store.global.viewState.favFilter === 'included'"
-                class="absolute inset-0 rounded-full bg-yellow-400/20 animate-ping" style="pointer-events: none;"></div>
-        </button>
+        <!-- 搜索与筛选区 -->
+        <div class="header-search-block ml-auto mr-4">
+            <button
+                @click="toggleFavFilter()"
+                class="header-favorite-btn"
+                :class="{
+                    'is-included': $store.global.viewState.favFilter === 'included',
+                    'is-excluded': $store.global.viewState.favFilter === 'excluded',
+                    'is-neutral': $store.global.viewState.favFilter === 'none'
+                }"
+                :title="$store.global.viewState.favFilter === 'included' ? '当前：只显示收藏' : ($store.global.viewState.favFilter === 'excluded' ? '当前：排除收藏' : '当前：显示全部')">
+                <span x-show="$store.global.viewState.favFilter !== 'excluded'" class="header-favorite-icon">★</span>
+                <span x-show="$store.global.viewState.favFilter === 'excluded'" class="header-favorite-icon">🚫</span>
+            </button>
 
-        <!-- 搜索组合框 -->
-        <div class="search-container ml-auto mr-4">
-            <select x-show="currentMode === 'cards'" x-model="searchType" class="search-select">
-                <option value="mix">✨ 智能混合</option>
-                <option value="global">🌍 全局关键字</option>
-                <option value="name">👤 角色名称</option>
-                <option value="filename">📄 文件名</option>
-                <option value="creator">🎨 创作者</option>
-                <option value="tags">🏷️ 标签</option>
-            </select>
-            <select x-show="currentMode === 'cards' && showHeaderSort" x-model="currentSort" class="search-select header-sort-select" title="仅影响当前列表排序，不会保存到配置">
-                <option value="date_desc">🕒 新到旧</option>
-                <option value="date_asc">🕒 旧到新</option>
-                <option value="name_asc">🔤 名称 A-Z</option>
-                <option value="name_desc">🔤 名称 Z-A</option>
-                <option value="token_desc">🔢 Token 大到小</option>
-                <option value="token_asc">🔢 Token 小到大</option>
-            </select>
-            <input x-show="currentMode === 'cards'" type="text" x-model.debounce.300ms="searchQuery"
-                placeholder="搜索角色卡..." class="search-input">
-            <input x-show="currentMode === 'worldinfo'" type="text" x-model.debounce.300ms="wiSearchQuery"
-                placeholder="搜索世界书名称..." class="search-input">
-            <input x-show="currentMode === 'presets'" type="text" x-model.debounce.300ms="presetSearch"
-                placeholder="搜索预设名称..." class="search-input">
-            <input x-show="['regex','scripts','quick_replies'].includes(currentMode)" type="text"
-                x-model.debounce.300ms="extensionSearch"
-                :placeholder="currentMode === 'regex' ? '搜索正则脚本...' : (currentMode === 'scripts' ? '搜索 ST 脚本...' : '搜索快速回复...')"
-                class="search-input">
-            <button x-show="currentMode === 'cards' && searchQuery" @click="searchQuery=''"
-                style="background: transparent; color: var(--text-dim); border: none; padding: 0 0.5rem; cursor: pointer;">✕</button>
-            <button x-show="currentMode === 'presets' && presetSearch" @click="presetSearch=''"
-                style="background: transparent; color: var(--text-dim); border: none; padding: 0 0.5rem; cursor: pointer;">✕</button>
-            <button x-show="['regex','scripts','quick_replies'].includes(currentMode) && extensionSearch" @click="extensionSearch=''"
-                style="background: transparent; color: var(--text-dim); border: none; padding: 0 0.5rem; cursor: pointer;">✕</button>
+            <div class="search-container header-search-container">
+                <div x-show="currentMode === 'cards'" class="search-type-inline" title="决定搜索匹配的字段范围">
+                    <span class="search-type-label">搜索方式</span>
+                    <select x-model="searchType" class="search-type-select">
+                        <option value="mix">智能混合</option>
+                        <option value="global">全局关键字</option>
+                        <option value="name">角色名称</option>
+                        <option value="filename">文件名</option>
+                        <option value="creator">创作者</option>
+                        <option value="tags">标签</option>
+                    </select>
+                </div>
+
+                <input x-show="currentMode === 'cards'" type="text" x-model.debounce.300ms="searchQuery"
+                    placeholder="搜索角色卡..." class="search-input"
+                    :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'">
+                <input x-show="currentMode === 'worldinfo'" type="text" x-model.debounce.300ms="wiSearchQuery"
+                    placeholder="搜索世界书名称..." class="search-input"
+                    :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'">
+                <input x-show="currentMode === 'presets'" type="text" x-model.debounce.300ms="presetSearch"
+                    placeholder="搜索预设名称..." class="search-input"
+                    :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'">
+                <input x-show="['regex','scripts','quick_replies'].includes(currentMode)" type="text"
+                    x-model.debounce.300ms="extensionSearch"
+                    :placeholder="currentMode === 'regex' ? '搜索正则脚本...' : (currentMode === 'scripts' ? '搜索 ST 脚本...' : '搜索快速回复...')"
+                    class="search-input"
+                    :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'">
+                <button x-show="currentMode === 'cards' && searchQuery" @click="searchQuery=''"
+                    class="search-clear-btn">✕</button>
+                <button x-show="currentMode === 'presets' && presetSearch" @click="presetSearch=''"
+                    class="search-clear-btn">✕</button>
+                <button x-show="['regex','scripts','quick_replies'].includes(currentMode) && extensionSearch" @click="extensionSearch=''"
+                    class="search-clear-btn">✕</button>
+            </div>
+
+            <div x-show="currentMode === 'cards' && showHeaderSort" class="search-sort-group" title="仅影响当前列表排序，不会保存到配置">
+                <span class="search-sort-label">排序</span>
+                <select x-model="currentSort" class="search-sort-select">
+                    <option value="date_desc">修改日期 (新→旧)</option>
+                    <option value="date_asc">修改日期 (旧→新)</option>
+                    <option value="name_asc">名称 (A→Z)</option>
+                    <option value="name_desc">名称 (Z→A)</option>
+                    <option value="token_desc">Token (大→小)</option>
+                    <option value="token_asc">Token (小→大)</option>
+                </select>
+            </div>
         </div>
 
         <!-- 工具按钮组 -->
