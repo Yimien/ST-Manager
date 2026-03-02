@@ -654,44 +654,78 @@
                     </section>
 
                     <!-- TAB: 标签 -->
-                    <section x-show="tab==='tags'" x-transition.opacity class="detail-section custom-scrollbar">
-                        <div class="detail-card">
-                            <div class="detail-card-head detail-card-head-row">
-                                <div class="detail-card-title">标签 (Tags)</div>
+                    <section x-show="tab==='tags'" x-transition.opacity class="detail-section detail-section-fill">
+                        <div class="detail-tab-scroll custom-scrollbar">
+                            <div class="detail-card detail-tags-card">
+                                <div class="detail-card-head detail-card-head-row">
+                                    <div class="detail-card-title">标签 (Tags)</div>
 
-                                <div class="detail-card-actions">
-                                    <button @click="openTagPicker()" class="btn-secondary detail-mini-btn">
-                                        <span>📚</span>
-                                        <span x-show="$store.global.deviceType !== 'mobile'" class="ml-1">标签库</span>
-                                    </button>
+                                    <div class="detail-card-actions">
+                                        <button @click="openTagPicker()" class="btn-secondary detail-mini-btn"
+                                            :title="showTagLibrary ? '收起标签库' : '展开标签库'">
+                                            <span>📚</span>
+                                            <span x-show="$store.global.deviceType !== 'mobile'" class="ml-1"
+                                                x-text="showTagLibrary ? '收起库' : '标签库'"></span>
+                                        </button>
 
-                                    <div class="detail-inline-input">
-                                        <input type="text" x-model="newTagInput" @keydown.enter.prevent="addTag()"
-                                            :placeholder="$store.global.settingsForm.automation_slash_is_tag_separator ? '自定义 (支持批量,逗号/斜杠/管道分隔)...' : '自定义 (支持批量,逗号分隔)...'"
-                                            :title="$store.global.settingsForm.automation_slash_is_tag_separator ? '支持输入多个标签，使用逗号(,)、斜杠(/)或管道符(|)分隔' : '支持输入多个标签，使用逗号(,)或管道符(|)分隔'"
-                                            class="detail-inline-text">
-                                        <button @click="addTag()" class="detail-inline-add">+</button>
+                                        <div class="detail-inline-input">
+                                            <input type="text" x-model="newTagInput" @keydown.enter.prevent="addTag()"
+                                                :placeholder="$store.global.settingsForm.automation_slash_is_tag_separator ? '自定义 (支持批量,逗号/斜杠/管道分隔)...' : '自定义 (支持批量,逗号分隔)...'"
+                                                :title="$store.global.settingsForm.automation_slash_is_tag_separator ? '支持输入多个标签，使用逗号(,)、斜杠(/)或管道符(|)分隔' : '支持输入多个标签，使用逗号(,)或管道符(|)分隔'"
+                                                class="detail-inline-text">
+                                            <button @click="addTag()" class="detail-inline-add">+</button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div class="detail-taglist">
-                                <template x-for="(tag, index) in editingData.tags" :key="tag + '-' + index">
-                                    <button type="button" class="detail-tag" :draggable="isEditMode"
-                                        @click="if (!isEditMode) toggleTag(tag)"
-                                        @dragstart="onDetailTagDragStart($event, index)"
-                                        @dragover="onDetailTagDragOver($event)"
-                                        @drop="onDetailTagDrop($event, index)"
-                                        @dragend="onDetailTagDragEnd()"
-                                        :class="isEditMode && detailTagDragIndex === index ? 'detail-tag-dragging' : ''">
-                                        <span x-show="isEditMode" class="detail-tag-handle" title="拖拽排序">☰</span>
-                                        <span x-text="tag"></span>
-                                        <span x-show="isEditMode" class="detail-tag-x" @click.stop="removeTagAt(index)">✕</span>
-                                    </button>
-                                </template>
+                                <div class="detail-taglist">
+                                    <template x-for="(tag, index) in editingData.tags" :key="tag + '-' + index">
+                                        <button type="button" class="detail-tag" :draggable="isEditMode"
+                                            @click="if (!isEditMode) toggleTag(tag)"
+                                            @dragstart="onDetailTagDragStart($event, index)"
+                                            @dragover="onDetailTagDragOver($event)"
+                                            @drop="onDetailTagDrop($event, index)"
+                                            @dragend="onDetailTagDragEnd()"
+                                            :class="isEditMode && detailTagDragIndex === index ? 'detail-tag-dragging' : ''">
+                                            <span x-show="isEditMode" class="detail-tag-handle" title="拖拽排序">☰</span>
+                                            <span x-text="tag"></span>
+                                            <span x-show="isEditMode" class="detail-tag-x" @click.stop="removeTagAt(index)">✕</span>
+                                        </button>
+                                    </template>
 
-                                <div x-show="!editingData.tags || editingData.tags.length===0" class="detail-muted">
-                                    暂无标签...
+                                    <div x-show="!editingData.tags || editingData.tags.length===0" class="detail-muted">
+                                        暂无标签...
+                                    </div>
+                                </div>
+
+                                <div class="detail-tag-library" x-show="showTagLibrary" x-collapse>
+                                    <div class="detail-tag-library-head">
+                                        <div class="detail-muted">全量标签库（点击快速添加/移除）</div>
+                                        <div class="detail-tag-library-meta"
+                                            x-text="'共 ' + (($store.global.globalTagsPool || []).length) + ' 个'"></div>
+                                    </div>
+
+                                    <div class="detail-inline-input detail-tag-library-search">
+                                        <input x-ref="tagLibrarySearchInput" type="text" x-model="tagLibrarySearch"
+                                            placeholder="搜索标签库..." class="detail-inline-text">
+                                        <button x-show="tagLibrarySearch" @click="tagLibrarySearch=''"
+                                            class="detail-inline-add" title="清空搜索">✕</button>
+                                    </div>
+
+                                    <div class="detail-tag-library-cloud custom-scrollbar">
+                                        <template x-for="tag in filteredTagLibraryPool" :key="'pool-' + tag">
+                                            <button type="button" class="tag-chip-btn" @click="toggleTag(tag)"
+                                                :class="editingData.tags && editingData.tags.includes(tag) ? 'tag-chip-selected-purple' : 'tag-chip-unselected'">
+                                                <span x-text="tag"></span>
+                                                <span x-show="editingData.tags && editingData.tags.includes(tag)"
+                                                    style="margin-left: 0.4rem; font-weight: bold;">+</span>
+                                            </button>
+                                        </template>
+
+                                        <div x-show="filteredTagLibraryPool.length===0" class="detail-muted">
+                                            没有找到匹配标签...
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

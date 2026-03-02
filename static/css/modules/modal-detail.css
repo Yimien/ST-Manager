@@ -662,6 +662,62 @@ html.light-mode .detail-thumb-label {
     background: var(--accent-faint)
 }
 
+.detail-tags-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden
+}
+
+.detail-tag-library {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed color-mix(in srgb, var(--border-light), transparent 20%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    flex: 1 1 0
+}
+
+.detail-tag-library-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-shrink: 0
+}
+
+.detail-tag-library-meta {
+    font-size: 11px;
+    color: var(--text-dim)
+}
+
+.detail-tag-library-search {
+    align-self: stretch;
+    flex-shrink: 0
+}
+
+.detail-tag-library-search .detail-inline-text {
+    width: 100%
+}
+
+.detail-tag-library-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-content: flex-start;
+    min-height: 120px;
+    max-height: none;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-sub), transparent 18%);
+    padding: 8px
+}
+
 .detail-manage-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1722,6 +1778,26 @@ html.light-mode .note-textarea:focus {
     .detail-inline-text {
         flex: 1;
         font-size: 0.8125rem
+    }
+
+    .detail-tag-library {
+        margin-top: 0.625rem;
+        padding-top: 0.625rem;
+        gap: 0.5rem;
+        flex: 1 1 0
+    }
+
+    .detail-tag-library-head {
+        flex-wrap: wrap;
+        align-items: flex-start
+    }
+
+    .detail-tag-library-cloud {
+        min-height: 7rem;
+        max-height: none;
+        flex: 1 1 auto;
+        gap: 0.5rem;
+        padding: 0.5rem
     }
 
     .detail-manage-grid {

@@ -53,6 +53,8 @@ export default function detailModal() {
         showDetail: false,
         activeCard: {}, // 当前查看的卡片对象 (原始引用或副本)
         newTagInput: '',
+        showTagLibrary: true,
+        tagLibrarySearch: '',
         tab: 'basic', 
         lastTab: 'basic',
         showFirstPreview: false,
@@ -206,6 +208,15 @@ export default function detailModal() {
             );
         },
 
+        get filteredTagLibraryPool() {
+            const pool = Array.isArray(this.$store?.global?.globalTagsPool)
+                ? this.$store.global.globalTagsPool
+                : [];
+            const keyword = (this.tagLibrarySearch || '').trim().toLowerCase();
+            if (!keyword) return pool;
+            return pool.filter(tag => String(tag).toLowerCase().includes(keyword));
+        },
+
         // === 初始化 ===
         init() {
             // 监听打开详情页事件
@@ -224,6 +235,8 @@ export default function detailModal() {
                     this.updateImagePolicy = 'overwrite';
                     this.saveOldCoverOnSwap = false;
                     this.isEditMode = false; // 重置编辑模式
+                    this.showTagLibrary = true;
+                    this.tagLibrarySearch = '';
                 }
             });
         },
@@ -524,6 +537,8 @@ export default function detailModal() {
             this.showFirstPreview = false;
             this.lastTab = this.tab; 
             this.tab = 'basic';
+            this.showTagLibrary = true;
+            this.tagLibrarySearch = '';
 
             // 深拷贝并清洗数据 (Flatten & Sanitize)
             let rawData = JSON.parse(JSON.stringify(c));
@@ -1427,9 +1442,14 @@ export default function detailModal() {
         },
 
         openTagPicker() {
-            window.dispatchEvent(new CustomEvent('open-tag-picker', {
-                detail: this.editingData.tags // 传递 tags 数组引用
-            }));
+            this.showTagLibrary = !this.showTagLibrary;
+            if (this.showTagLibrary) {
+                this.$nextTick(() => {
+                    if (this.$refs.tagLibrarySearchInput) {
+                        this.$refs.tagLibrarySearchInput.focus();
+                    }
+                });
+            }
         },
 
         openAdvancedEditor() {

@@ -18,7 +18,6 @@ import advancedEditor from './components/advancedEditor.js';
 import rollbackModal from './components/rollbackModal.js';
 import settingsModal from './components/settingsModal.js';
 import largeEditor from './components/largeEditor.js';
-import tagPicker from './components/tagPicker.js';
 import tagFilterModal from './components/tagFilterModal.js';
 import batchTagModal from './components/batchTagModal.js';
 import importModal from './components/importModal.js';
@@ -51,7 +50,6 @@ const registerComponents = () => {
     Alpine.data('rollbackModal', rollbackModal);
     Alpine.data('settingsModal', settingsModal);
     Alpine.data('largeEditor', largeEditor);
-    Alpine.data('tagPicker', tagPicker);
     Alpine.data('tagFilterModal', tagFilterModal);
     Alpine.data('batchTagModal', batchTagModal);
     Alpine.data('importModal', importModal);
