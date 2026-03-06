@@ -39,10 +39,7 @@ export default function cardGrid() {
         flippedCardIds: {},
         bulkBackMode: false,
         autoFlipBackDelayMs: 1800,
-        imageZoomCardId: null,
-        _imageHoverTimers: {},
         _autoFlipBackTimers: {},
-        cornerPreviewCardId: null,
 
         get selectedIds() { return this.$store.global.viewState.selectedIds; },
         set selectedIds(val) { this.$store.global.viewState.selectedIds = val; return true; },
@@ -80,10 +77,7 @@ export default function cardGrid() {
             this.$watch('$store.global.settingsForm.favorites_first', () => { this.fetchCards(); });
             this.$watch('$store.global.deviceType', (deviceType) => {
                 if (deviceType === 'mobile') {
-                    this.clearAllImageHoverTimers();
                     this.clearAllAutoFlipBackTimers();
-                    this.imageZoomCardId = null;
-                    this.cornerPreviewCardId = null;
                 }
             });
 
@@ -300,12 +294,38 @@ export default function cardGrid() {
             }));
         },
 
-        isCardFlipped(cardId) {
-            return !!this.flippedCardIds[String(cardId)];
+        cardHasLocalNote(card) {
+            const summary = card && typeof card.ui_summary === 'string' ? card.ui_summary.trim() : '';
+            return summary.length > 0;
         },
 
-        isCornerPeelPreview(cardId) {
-            return String(this.cornerPreviewCardId) === String(cardId);
+        openCardLocalNote(card) {
+            if (!this.cardHasLocalNote(card)) return;
+            this.openMarkdownView(card.ui_summary);
+        },
+
+        getReadableTagChipStyle(tag) {
+            const base = this.$store.global.getTagChipStyle(tag) || '';
+            const enhanced = '--tag-chip-backdrop:blur(7px);--tag-chip-shadow:inset 0 1px 0 rgba(255,255,255,0.08),0 1px 2px rgba(0,0,0,0.35);';
+            return `${base}${enhanced}`;
+        },
+
+        formatCategoryLabel(category) {
+            const raw = String(category || '').trim();
+            if (!raw) return '根目录';
+
+            const normalized = raw
+                .replace(/\\+/g, '/')
+                .replace(/\/+/g, '/')
+                .replace(/^\/+|\/+$/g, '');
+            if (!normalized) return '根目录';
+
+            // 统一交给 CSS text-overflow 做后置省略，避免前置/双省略不稳定
+            return normalized;
+        },
+
+        isCardFlipped(cardId) {
+            return !!this.flippedCardIds[String(cardId)];
         },
 
         getVisibleTagLimit() {
@@ -328,9 +348,6 @@ export default function cardGrid() {
             if (!this.paginatedCards || this.paginatedCards.length === 0) return;
 
             this.clearAllAutoFlipBackTimers();
-            this.clearAllImageHoverTimers();
-            this.imageZoomCardId = null;
-            this.cornerPreviewCardId = null;
 
             const next = {};
             this.paginatedCards.forEach(card => {
@@ -343,7 +360,6 @@ export default function cardGrid() {
 
         flipAllCardsToFront() {
             this.clearAllAutoFlipBackTimers();
-            this.cornerPreviewCardId = null;
             this.flippedCardIds = {};
             this.bulkBackMode = false;
         },
@@ -354,82 +370,15 @@ export default function cardGrid() {
             next[key] = !next[key];
             if (!next[key]) delete next[key];
             this.flippedCardIds = next;
-            this.cornerPreviewCardId = null;
-            this.handleImageHoverEnd(cardId);
             this.clearAutoFlipBackTimer(key);
-        },
-
-        isImageZoomed(cardId) {
-            return String(this.imageZoomCardId) === String(cardId);
-        },
-
-        handleImageHoverStart(cardId) {
-            if (this.$store.global.deviceType === 'mobile') return;
-            if (this.isCardFlipped(cardId)) return;
-
-            const key = String(cardId);
-            this.clearImageHoverTimer(key);
-            this._imageHoverTimers[key] = setTimeout(() => {
-                if (this.isCardFlipped(cardId)) return;
-                this.imageZoomCardId = cardId;
-                this.clearImageHoverTimer(key);
-            }, 500);
         },
 
         handleCardMouseEnter(cardId) {
             this.clearAutoFlipBackTimer(String(cardId));
         },
 
-        handleCardMouseMove(e, cardId) {
-            if (this.$store.global.deviceType === 'mobile') return;
-
-            if (this.isImageZoomed(cardId)) {
-                if (this.isCornerPeelPreview(cardId)) this.cornerPreviewCardId = null;
-                return;
-            }
-
-            const rect = e.currentTarget.getBoundingClientRect();
-            const dx = rect.right - e.clientX;
-            const dy = rect.bottom - e.clientY;
-            const threshold = 84;
-            const inCorner = dx >= 0 && dy >= 0 && dx <= threshold && dy <= threshold;
-
-            if (inCorner) {
-                if (!this.isCornerPeelPreview(cardId)) {
-                    this.cornerPreviewCardId = cardId;
-                    this.handleImageHoverEnd(cardId);
-                }
-            } else if (this.isCornerPeelPreview(cardId)) {
-                this.cornerPreviewCardId = null;
-            }
-        },
-
         handleCardMouseLeave(cardId) {
-            this.handleImageHoverEnd(cardId);
-            if (this.isCornerPeelPreview(cardId)) {
-                this.cornerPreviewCardId = null;
-            }
             this.scheduleAutoFlipBack(cardId);
-        },
-
-        handleImageHoverEnd(cardId) {
-            const key = String(cardId);
-            this.clearImageHoverTimer(key);
-            if (String(this.imageZoomCardId) === key) {
-                this.imageZoomCardId = null;
-            }
-        },
-
-        clearImageHoverTimer(cardKey) {
-            const timer = this._imageHoverTimers[cardKey];
-            if (!timer) return;
-
-            clearTimeout(timer);
-            delete this._imageHoverTimers[cardKey];
-        },
-
-        clearAllImageHoverTimers() {
-            Object.keys(this._imageHoverTimers).forEach(key => this.clearImageHoverTimer(key));
         },
 
         scheduleAutoFlipBack(cardId) {
@@ -487,20 +436,6 @@ export default function cardGrid() {
                     this.clearAutoFlipBackTimer(key);
                 }
             });
-
-            Object.keys(this._imageHoverTimers).forEach(key => {
-                if (!activeIds.has(String(key))) {
-                    this.clearImageHoverTimer(key);
-                }
-            });
-
-            if (this.imageZoomCardId !== null && !activeIds.has(String(this.imageZoomCardId))) {
-                this.imageZoomCardId = null;
-            }
-
-            if (this.cornerPreviewCardId !== null && !activeIds.has(String(this.cornerPreviewCardId))) {
-                this.cornerPreviewCardId = null;
-            }
         },
 
         // === 核心数据加载 ===

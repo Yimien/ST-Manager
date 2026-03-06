@@ -86,10 +86,10 @@ export function getCardGridTokenBadgeClass(tokenCount) {
         extreme: TOKEN_THRESHOLDS.EXTREME
     });
 
-    if (level === 'extreme') return 'text-red-300 border-red-500/70 bg-red-950/90';
-    if (level === 'danger') return 'text-orange-300 border-orange-500/50 bg-orange-900/80';
-    if (level === 'warn') return 'text-yellow-300 border-yellow-500/50 bg-yellow-900/80';
-    return 'text-green-300 border-green-500/50 bg-green-900/80';
+    if (level === 'extreme') return 'card-token-level-extreme';
+    if (level === 'danger') return 'card-token-level-danger';
+    if (level === 'warn') return 'card-token-level-warn';
+    return 'card-token-level-ok';
 }
 
 export function getWiTokenClass(tokenCount, lowClass = 'text-green-400') {
