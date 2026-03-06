@@ -26,6 +26,19 @@ export default function header() {
         get searchType() { return this.$store.global.viewState.searchType; },
         set searchType(val) { this.$store.global.viewState.searchType = val; },
 
+        get searchScope() { return this.$store.global.viewState.searchScope || 'current'; },
+        set searchScope(val) {
+            const vs = this.$store.global.viewState;
+            const next = ['current', 'all_dirs', 'full'].includes(val) ? val : 'current';
+            if (vs.searchScope === next) return;
+            vs.searchScope = next;
+
+            // 切换范围时清空选择，避免跨范围误操作
+            vs.selectedIds = [];
+            vs.lastSelectedId = null;
+            vs.draggedCards = [];
+        },
+
         get currentSort() {
             return this.$store.global.currentSort || this.$store.global.settingsForm.default_sort || 'date_desc';
         },
@@ -280,7 +293,8 @@ export default function header() {
                 category: vs.filterCategory, // 访问父级 scope
                 tags: vs.filterTags,
                 search: vs.searchQuery,
-                search_type: vs.searchType
+                search_type: vs.searchType,
+                search_scope: vs.searchScope || 'current'
             };
 
             getRandomCard(params)

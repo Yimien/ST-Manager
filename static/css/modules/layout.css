@@ -464,6 +464,39 @@
     color: var(--text-main)
 }
 
+.search-scope-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    height: 100%;
+    padding: 0 0.6rem;
+    border-left: 1px solid var(--border-light);
+    background: color-mix(in srgb, var(--bg-panel), var(--bg-sub) 40%);
+    flex-shrink: 0
+}
+
+.search-scope-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    white-space: nowrap
+}
+
+.search-scope-select {
+    min-width: 6.25rem;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-main);
+    font-size: 0.8rem;
+    outline: none;
+    cursor: pointer
+}
+
+.search-scope-select option {
+    background-color: var(--bg-panel);
+    color: var(--text-main)
+}
+
 .search-input-with-type {
     border-radius: 0 !important
 }

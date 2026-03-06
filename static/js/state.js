@@ -138,6 +138,7 @@ export function initState() {
         viewState: {
             searchQuery: '',
             searchType: 'mix',
+            searchScope: 'current', // 'current' | 'all_dirs' | 'full'
             filterCategory: '',
             filterTags: [],
             excludedTags: [],

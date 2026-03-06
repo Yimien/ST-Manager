@@ -55,6 +55,7 @@ export default function cardGrid() {
                 this.scheduleFetchCards('search');
             });
             this.$watch('$store.global.viewState.searchType', () => { this.currentPage = 1; this.scheduleFetchCards('type'); });
+            this.$watch('$store.global.viewState.searchScope', () => { this.currentPage = 1; this.fetchCards(); });
             this.$watch('$store.global.viewState.filterCategory', () => { this.currentPage = 1; this.fetchCards(); });
             this.$watch('$store.global.viewState.filterTags', () => { this.currentPage = 1; this.fetchCards(); });
             this.$watch('$store.global.viewState.excludedTags', () => { this.currentPage = 1; this.fetchCards(); });
@@ -308,6 +309,7 @@ export default function cardGrid() {
                 excluded_cats: (vs.excludedCategories || []).join('|||'),
                 search: vs.searchQuery || '',
                 search_type: vs.searchType || 'mix',
+                search_scope: vs.searchScope || 'current',
                 sort: store.currentSort || store.settingsForm.default_sort || 'date_desc',
                 recursive: vs.recursiveFilter,
                 fav_filter: vs.favFilter,

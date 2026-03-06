@@ -401,6 +401,9 @@ def api_list_cards():
     excluded_tags_param = request.args.get('excluded_tags', '')
     search = request.args.get('search', '').lower().strip()
     search_type = request.args.get('search_type', 'mix')
+    search_scope = request.args.get('search_scope', 'current')
+    if search_scope not in ('current', 'all_dirs', 'full'):
+        search_scope = 'current'
     sort_mode = _normalize_sort_mode(request.args.get('sort', current_config.get('default_sort', 'date_desc')))
     excluded_cats_param = request.args.get('excluded_cats', '')
     
@@ -417,7 +420,8 @@ def api_list_cards():
     library_total = len(candidates)
     
     # --- 全局目录排除逻辑 ---
-    if excluded_cats_param:
+    # full 模式下忽略所有筛选条件（只保留关键词搜索）
+    if search_scope != 'full' and excluded_cats_param:
         ex_list = [e.strip().lower() for e in excluded_cats_param.split('|||') if e.strip()]
         if ex_list:
             # 排除条件：分类完全匹配 OR 是其子分类 (以 "name/" 开头)
@@ -430,28 +434,31 @@ def api_list_cards():
             ]
 
     # 2. 分类过滤 (支持递归子分类)
-    # 逻辑：如果选了分类，先缩减范围；如果没选(根目录)，则范围是全部
-    if category and category != "根目录":
-        target_cat_lower = category.lower()
-        target_cat_prefix = target_cat_lower + '/'
-        
-        if is_recursive:
-            # 保留：分类完全相等 OR 是其子分类 (以 "name/" 开头)
-            candidates  = [
-                c for c in candidates  
-                if c['category'].lower() == target_cat_lower or c['category'].lower().startswith(target_cat_prefix)
-            ]
+    # current: 使用当前目录过滤
+    # all_dirs/full: 不按分类缩小范围
+    if search_scope == 'current':
+        # 逻辑：如果选了分类，先缩减范围；如果没选(根目录)，则范围是全部
+        if category and category != "根目录":
+            target_cat_lower = category.lower()
+            target_cat_prefix = target_cat_lower + '/'
+
+            if is_recursive:
+                # 保留：分类完全相等 OR 是其子分类 (以 "name/" 开头)
+                candidates = [
+                    c for c in candidates
+                    if c['category'].lower() == target_cat_lower or c['category'].lower().startswith(target_cat_prefix)
+                ]
+            else:
+                # --- 严格匹配当前分类，不包含子分类 ---
+                candidates = [
+                    c for c in candidates
+                    if c['category'].lower() == target_cat_lower
+                ]
         else:
-            # --- 严格匹配当前分类，不包含子分类 ---
-            candidates = [
-                c for c in candidates  
-                if c['category'].lower() == target_cat_lower
-            ]
-    else:
-        # 根目录情况
-        if not is_recursive:
-            # 根目录下不递归 = 只看 category 为空的卡片
-            candidates = [c for c in candidates if c['category'] == ""]
+            # 根目录情况
+            if not is_recursive:
+                # 根目录下不递归 = 只看 category 为空的卡片
+                candidates = [c for c in candidates if c['category'] == ""]
 
     # === 在应用“搜索”和“标签”过滤之前，先计算当前分类下的标签池 ===
     # 这样标签池就只受“文件夹/分类”影响，而不会被“选中的标签”把自己给过滤没了
@@ -471,10 +478,11 @@ def api_list_cards():
         sidebar_tags = sorted(list(sidebar_tags_set), key=lambda x: str(x).lower())
         global_tags = sorted(list(ctx.cache.global_tags or []), key=lambda x: str(x).lower())
 
-    if fav_filter == 'included':
-        candidates = [c for c in candidates if c.get('is_favorite')]
-    elif fav_filter == 'excluded':
-        candidates = [c for c in candidates if not c.get('is_favorite')]
+    if search_scope != 'full':
+        if fav_filter == 'included':
+            candidates = [c for c in candidates if c.get('is_favorite')]
+        elif fav_filter == 'excluded':
+            candidates = [c for c in candidates if not c.get('is_favorite')]
 
     # 3. 搜索过滤 (在已经(可能)被分类缩小范围的基础上继续过滤)
     if search:
@@ -504,20 +512,21 @@ def api_list_cards():
                 )
             ]
 
-    # 4.1. 标签排除
-    if excluded_tags_param:
-        ex_tag_list = [t.strip() for t in excluded_tags_param.split('|||') if t.strip()]
-        if ex_tag_list:
-            candidates = [
-                c for c in candidates 
-                if not any(t in c['tags'] for t in ex_tag_list)
-            ]
+    if search_scope != 'full':
+        # 4.1. 标签排除
+        if excluded_tags_param:
+            ex_tag_list = [t.strip() for t in excluded_tags_param.split('|||') if t.strip()]
+            if ex_tag_list:
+                candidates = [
+                    c for c in candidates
+                    if not any(t in c['tags'] for t in ex_tag_list)
+                ]
 
-    # 4.2. 标签正向过滤
-    if tags_param:
-        tag_list = [t.strip() for t in tags_param.split('|||') if t.strip()]
-        if tag_list:
-            candidates = [c for c in candidates if all(t in c['tags'] for t in tag_list)]
+        # 4.2. 标签正向过滤
+        if tags_param:
+            tag_list = [t.strip() for t in tags_param.split('|||') if t.strip()]
+            if tag_list:
+                candidates = [c for c in candidates if all(t in c['tags'] for t in tag_list)]
 
     # 5. 排序
     filtered_cards = candidates
@@ -2226,6 +2235,9 @@ def api_random_card():
         tags_param = data.get('tags', []) # 前端传数组过来
         search = data.get('search', '').lower().strip()
         search_type = data.get('search_type', 'mix')
+        search_scope = data.get('search_scope', 'current')
+        if search_scope not in ('current', 'all_dirs', 'full'):
+            search_scope = 'current'
         
         # 1. 获取所有卡片
         if not ctx.cache.initialized:
@@ -2234,13 +2246,14 @@ def api_random_card():
         candidates = ctx.cache.cards
 
         # 2. 分类过滤
-        if category and category != "根目录":
-            target_cat_lower = category.lower()
-            target_cat_prefix = target_cat_lower + '/'
-            candidates = [
-                c for c in candidates 
-                if c['category'].lower() == target_cat_lower or c['category'].lower().startswith(target_cat_prefix)
-            ]
+        if search_scope == 'current':
+            if category and category != "根目录":
+                target_cat_lower = category.lower()
+                target_cat_prefix = target_cat_lower + '/'
+                candidates = [
+                    c for c in candidates
+                    if c['category'].lower() == target_cat_lower or c['category'].lower().startswith(target_cat_prefix)
+                ]
 
         # 3. 搜索过滤
         if search:
@@ -2261,7 +2274,7 @@ def api_random_card():
                 )]
 
         # 4. 标签过滤
-        if tags_param:
+        if search_scope != 'full' and tags_param:
             # 确保 tags_param 是列表
             target_tags = tags_param if isinstance(tags_param, list) else []
             if target_tags:

@@ -30,8 +30,9 @@ export default function moveCardsModal() {
                     return;
                 }
 
-                // 默认选择当前浏览目录
-                this.targetCategory = this.$store.global.viewState.filterCategory || '';
+                // 默认选择当前浏览目录；跨目录搜索时默认根目录，避免误移动
+                const scope = this.$store.global.viewState.searchScope || 'current';
+                this.targetCategory = scope === 'current' ? (this.$store.global.viewState.filterCategory || '') : '';
                 this.showMoveCardsModal = true;
             });
         },
