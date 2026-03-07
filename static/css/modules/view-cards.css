@@ -335,38 +335,40 @@ html.light-mode .card-bottom-toolbar {
     top: 0.45rem;
     right: 0.45rem;
     z-index: 8;
-    width: 1.7rem;
-    height: 1.7rem;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--border-light), #ffffff 16%);
-    background: rgba(2, 6, 23, 0.58);
-    color: rgba(241, 245, 249, 0.84);
+    min-width: 1.9rem;
+    min-height: 1.9rem;
+    padding: 0.05rem;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(241, 245, 249, 0.9);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     line-height: 1;
+    text-shadow: 0 2px 6px rgba(2, 6, 23, 0.7), 0 0 1px rgba(2, 6, 23, 0.8);
     opacity: 0;
-    transform: scale(0.9);
-    transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-    backdrop-filter: blur(4px)
+    transform: scale(0.86);
+    transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease, filter 0.2s ease
 }
 
 .card-fav-overlay:focus-visible {
     outline: 2px solid var(--accent-light);
-    outline-offset: 1px
+    outline-offset: 1px;
+    border-radius: 0.35rem
 }
 
 .card-fav-overlay .card-fav-icon {
-    font-size: 0.98rem;
+    font-size: 1.42rem;
+    font-weight: 700;
     line-height: 1
 }
 
 .card-fav-overlay.is-active {
     opacity: 1;
-    transform: scale(1);
-    background: linear-gradient(180deg, rgba(157, 23, 77, 0.72), rgba(136, 19, 55, 0.5));
-    color: #fda4af;
-    border-color: rgba(244, 114, 182, 0.62)
+    transform: scale(1.02);
+    color: #fb7185;
+    filter: drop-shadow(0 0 4px rgba(251, 113, 133, 0.55))
 }
 
 .st-card:hover .card-fav-overlay,
@@ -376,8 +378,8 @@ html.light-mode .card-bottom-toolbar {
 }
 
 .card-fav-overlay:hover {
-    background: rgba(2, 6, 23, 0.75);
-    color: #ffffff
+    color: #ffe4e6;
+    transform: scale(1.08)
 }
 
 .card-image-container::after {
@@ -1313,10 +1315,15 @@ html.light-mode .btn-note-preview:hover {
     .card-fav-overlay {
         top: 0.35rem;
         right: 0.35rem;
-        width: 1.45rem;
-        height: 1.45rem;
+        min-width: 1.7rem;
+        min-height: 1.7rem;
+        padding: 0.04rem;
         opacity: 1;
         transform: scale(1)
+    }
+
+    .card-fav-overlay .card-fav-icon {
+        font-size: 1.26rem
     }
 
     .card-source-link-fab {

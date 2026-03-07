@@ -177,8 +177,7 @@
                     'is-neutral': $store.global.viewState.favFilter === 'none'
                 }"
                 :title="$store.global.viewState.favFilter === 'included' ? '当前：只显示收藏' : ($store.global.viewState.favFilter === 'excluded' ? '当前：排除收藏' : '当前：显示全部')">
-                <span x-show="$store.global.viewState.favFilter !== 'excluded'" class="header-favorite-icon">★</span>
-                <span x-show="$store.global.viewState.favFilter === 'excluded'" class="header-favorite-icon">🚫</span>
+                <span class="header-favorite-icon">♥</span>
             </button>
 
             <div class="search-container header-search-container">
@@ -408,10 +407,9 @@
             :class="{
                 'active': $store.global.viewState.favFilter === 'included',
                 'excluded': $store.global.viewState.favFilter === 'excluded'
-            }"
-            :style="$store.global.viewState.favFilter === 'excluded' ? 'background-color: rgba(248, 113, 113, 0.15); border-color: rgba(248, 113, 113, 0.5); color: #f87171;' : ''">
+            }">
             
-            <span class="favorite-icon" x-text="$store.global.viewState.favFilter === 'excluded' ? '🚫' : '★'"></span>
+            <span class="favorite-icon">♥</span>
             
             <span x-text="$store.global.viewState.favFilter === 'included' ? '只看收藏' : ($store.global.viewState.favFilter === 'excluded' ? '排除收藏' : '收藏筛选')"></span>
         </button>
