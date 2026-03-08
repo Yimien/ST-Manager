@@ -650,6 +650,14 @@
     background: color-mix(in srgb, var(--bg-panel), transparent 3%);
 }
 
+.chat-reader-app-stage-tools {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
 .chat-reader-app-stage-host {
     min-height: calc(100vh - 300px);
     border: 1px solid var(--border-main);
@@ -857,6 +865,23 @@
     margin: 0 auto;
 }
 
+.chat-window-switcher {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    padding: 0.9rem 1rem;
+    border-radius: 18px;
+    border: 1px dashed color-mix(in srgb, var(--accent-main), var(--border-light) 52%);
+    background: color-mix(in srgb, var(--bg-panel), transparent 2%);
+    color: var(--text-dim);
+    font-size: 0.82rem;
+}
+
+.chat-window-switcher--tail {
+    margin-bottom: 0.25rem;
+}
+
 .chat-message-card {
     position: relative;
     overflow: hidden;
@@ -984,6 +1009,38 @@
     padding-left: 0.55rem;
 }
 
+.chat-message-segment-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.chat-message-segment {
+    min-width: 0;
+}
+
+.chat-message-segment.is-sideblock {
+    margin-left: 0.55rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--bg-sub), transparent 8%);
+    border: 1px solid var(--border-light);
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    line-height: 1.75;
+}
+
+.chat-message-segment-parts {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    min-width: 0;
+}
+
+.chat-message-segment-part.is-html {
+    width: 100%;
+}
+
 .chat-message-content--compact,
 .chat-message-content--collapsed {
     display: flex;
@@ -1033,14 +1090,6 @@
 
 .chat-message-sideblock {
     margin-top: 0.85rem;
-    padding: 0.85rem 0.95rem;
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--bg-sub), transparent 8%);
-    border: 1px solid var(--border-light);
-    color: var(--text-dim);
-    white-space: pre-wrap;
-    line-height: 1.75;
-    margin-left: 0.55rem;
 }
 
 .chat-message-sideblock-title {

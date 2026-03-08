@@ -16,6 +16,8 @@ import { getCardDetail, listCards } from '../api/card.js';
 import { openPath } from '../api/system.js';
 import { formatDate } from '../utils/format.js';
 import { ChatAppStage } from '../runtime/chatAppStage.js';
+import { clearIsolatedHtml } from '../runtime/renderRuntime.js';
+import { destroyMessageSegmentHost } from '../runtime/messageSegmentRenderer.js';
 import { renderMarkdown, updateInlineRenderContent } from '../utils/dom.js';
 import { clearActiveRuntimeContext, setActiveRuntimeContext } from '../runtime/runtimeContext.js';
 
@@ -69,12 +71,16 @@ const DEFAULT_CHAT_READER_VIEW_SETTINGS = {
     fullDisplayCount: 8,
     renderNearbyCount: 4,
     compactPreviewLength: 140,
+    instanceRenderDepth: 1,
 };
 
 const DEFAULT_CHAT_READER_RENDER_PREFS = {
     renderMode: 'markdown',
     componentMode: true,
 };
+
+const CHAT_READER_WINDOW_SIZE = 120;
+const CHAT_READER_WINDOW_OVERLAP = 24;
 
 
 function normalizeDisplayRule(rule, index = 0) {
@@ -379,6 +385,7 @@ function normalizeViewSettings(raw) {
     const fullDisplayCount = Number.parseInt(source.fullDisplayCount, 10);
     const renderNearbyCount = Number.parseInt(source.renderNearbyCount, 10);
     const compactPreviewLength = Number.parseInt(source.compactPreviewLength, 10);
+    const instanceRenderDepth = Number.parseInt(source.instanceRenderDepth, 10);
 
     return {
         fullDisplayCount: Number.isFinite(fullDisplayCount)
@@ -390,6 +397,9 @@ function normalizeViewSettings(raw) {
         compactPreviewLength: Number.isFinite(compactPreviewLength)
             ? Math.min(400, Math.max(40, compactPreviewLength))
             : DEFAULT_CHAT_READER_VIEW_SETTINGS.compactPreviewLength,
+        instanceRenderDepth: Number.isFinite(instanceRenderDepth)
+            ? Math.min(50, Math.max(0, instanceRenderDepth))
+            : DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth,
     };
 }
 
@@ -411,6 +421,65 @@ function storeViewSettings(settings) {
     } catch {
         // Ignore storage failures in the reader.
     }
+}
+
+
+function createReaderVisibleMessagesCache() {
+    return {
+        messagesRef: null,
+        bookmarksRef: null,
+        detailBookmarkedOnly: false,
+        currentFloor: 0,
+        fullCount: 0,
+        renderNearby: 0,
+        compactPreviewLength: 0,
+        result: [],
+    };
+}
+
+
+const readerVisibleMessagesCacheMap = new WeakMap();
+
+
+function getReaderVisibleMessagesCache(owner) {
+    const cache = readerVisibleMessagesCacheMap.get(owner);
+    if (cache) {
+        return cache;
+    }
+
+    const next = createReaderVisibleMessagesCache();
+    readerVisibleMessagesCacheMap.set(owner, next);
+    return next;
+}
+
+
+function resetReaderVisibleMessagesCache(owner) {
+    if (!owner) return;
+    readerVisibleMessagesCacheMap.set(owner, createReaderVisibleMessagesCache());
+}
+
+
+function findFloorCardFromNode(node) {
+    let current = node instanceof Node ? node : null;
+
+    while (current) {
+        if (current instanceof Element) {
+            const direct = current.closest('[data-chat-floor]');
+            if (direct) {
+                return direct;
+            }
+        }
+
+        const root = typeof current.getRootNode === 'function' ? current.getRootNode() : null;
+        if (root instanceof ShadowRoot && root.host) {
+            current = root.host;
+            continue;
+        }
+
+        break;
+    }
+
+    return null;
 }
 
 
@@ -612,45 +681,269 @@ function applyDisplayRules(text, config) {
 }
 
 
-function extractHtmlPayloadFromText(text) {
+function extractHtmlPayloadsFromText(text) {
     const raw = String(text || '').trim();
-    if (!raw) return '';
+    if (!raw) return [];
 
     const codeBlockRegex = /```(?:html|xml|text|js|css|json)?\s*([\s\S]*?)```/gi;
     let match;
+    const results = [];
+    const seen = new Set();
 
     while ((match = codeBlockRegex.exec(raw)) !== null) {
         const block = stripCommonIndent(match[1] || '');
         if (/<!DOCTYPE html/i.test(block) || /<html[\s>]/i.test(block) || /id=["']readingContent["']/i.test(block)) {
-            return block;
+            if (!seen.has(block)) {
+                seen.add(block);
+                results.push(block);
+            }
         }
     }
 
-    if (/<!DOCTYPE html/i.test(raw) || /<html[\s>]/i.test(raw)) {
-        return raw;
+    if (results.length === 0 && (/<!DOCTYPE html/i.test(raw) || /<html[\s>]/i.test(raw))) {
+        if (!seen.has(raw)) {
+            results.push(raw);
+        }
     }
 
-    return '';
+    return results;
 }
 
 
-function buildFullPageAppHtml(messageText, config, macroContext = {}) {
+function extractRawHtmlFragments(text) {
+    const source = String(text || '');
+    if (!source.trim()) return [];
+
+    const blockRegex = /(<(?:div|details|section|article|main|table|svg|iframe|script|style)\b[\s\S]*?<\/(?:div|details|section|article|main|table|svg|iframe|script|style)>|<img\b[^>]*?>)/gi;
+    const results = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = blockRegex.exec(source)) !== null) {
+        const before = source.slice(lastIndex, match.index);
+        if (before.trim()) {
+            results.push({ type: 'markdown', text: before });
+        }
+
+        const html = match[0];
+        if (html.trim()) {
+            results.push({ type: 'html', text: html });
+        }
+        lastIndex = match.index + html.length;
+    }
+
+    const after = source.slice(lastIndex);
+    if (after.trim()) {
+        results.push({ type: 'markdown', text: after });
+    }
+
+    return results;
+}
+
+
+function classifyHtmlRenderPart(htmlPayload) {
+    const analysis = scoreFullPageAppHtml(htmlPayload);
+    if (analysis.score >= 8) {
+        return {
+            type: 'app-stage',
+            text: htmlPayload,
+            score: analysis.score,
+            reasons: analysis.reasons,
+            minHeight: 520,
+            maxHeight: 860,
+        };
+    }
+
+    const isCompactWidget = analysis.reasons.includes('collapsible-widget') || analysis.reasons.includes('thinking-widget');
+    return {
+        type: 'html-component',
+        text: htmlPayload,
+        score: analysis.score,
+        reasons: analysis.reasons,
+        minHeight: isCompactWidget ? 28 : 120,
+        maxHeight: isCompactWidget ? 340 : 520,
+    };
+}
+
+
+function sanitizeHtmlForStaticPreview(htmlPayload) {
+    let source = String(htmlPayload || '');
+    if (!source.trim()) return '';
+
+    source = source.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+    source = source.replace(/\son[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    source = source.replace(/\s(href|src)\s*=\s*(['"])javascript:[\s\S]*?\2/gi, ' $1="#"');
+    return source;
+}
+
+
+function isExecutableRenderPart(part) {
+    const source = String(part?.text || '');
+    if (!source.trim()) return false;
+
+    return part?.type === 'app-stage'
+        || /<script\b/i.test(source)
+        || /\b(?:MutationObserver|requestAnimationFrame|setTimeout|setInterval|addEventListener|querySelectorAll)\b/.test(source)
+        || /\b(?:processTextContent|createDialogueElement|showArgMenu|toggleCollapsible|window\.setTheme)\b/.test(source);
+}
+
+
+function getMessageExecutableParts(message) {
+    const segments = Array.isArray(message?.render_segments) ? message.render_segments : [];
+    const parts = [];
+
+    segments.forEach((segment) => {
+        const segmentParts = Array.isArray(segment?.parts) ? segment.parts : [];
+        segmentParts.forEach((part) => {
+            if (isExecutableRenderPart(part)) {
+                parts.push(part);
+            }
+        });
+    });
+
+    return parts;
+}
+
+
+function resolveBestMessageExecutablePart(message) {
+    const parts = getMessageExecutableParts(message);
+    if (!parts.length) return null;
+
+    const scorePart = (part) => {
+        let score = 0;
+        const text = String(part?.text || '');
+
+        if (part?.type === 'app-stage') score += 100;
+        if (/<!doctype html/i.test(text) || /<html[\s>]/i.test(text)) score += 40;
+        if (/id=["']readingContent["']/i.test(text)) score += 20;
+        if (/function\s+processTextContent\s*\(/i.test(text)) score += 12;
+        if (/window\.setTheme\s*=\s*applyTheme/i.test(text)) score += 8;
+        if (/showArgMenu\s*\(/i.test(text)) score += 6;
+        return score;
+    };
+
+    return parts
+        .slice()
+        .sort((left, right) => scorePart(right) - scorePart(left) || String(right.text || '').length - String(left.text || '').length)[0] || null;
+}
+
+
+function getExecutableMessageFloors(activeChat) {
+    const messages = Array.isArray(activeChat?.messages) ? activeChat.messages : [];
+    return messages
+        .filter(message => Boolean(resolveBestMessageExecutablePart(message)))
+        .map(message => Number(message.floor || 0))
+        .filter(Boolean);
+}
+
+
+function shouldExecuteMessageSegments(message, activeChat, viewSettings) {
+    const floor = Number(message?.floor || 0);
+    if (!floor) return false;
+
+    const candidateFloors = getExecutableMessageFloors(activeChat);
+    if (!candidateFloors.length || !candidateFloors.includes(floor)) {
+        return false;
+    }
+
+    const depth = Number(viewSettings?.instanceRenderDepth ?? DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth);
+    if (depth === 0) {
+        return true;
+    }
+
+    return candidateFloors.slice(-depth).includes(floor);
+}
+
+
+function buildDeferredInstancePlaceholder(message, viewSettings) {
+    const floor = Number(message?.floor || 0);
+    const depth = Number(viewSettings?.instanceRenderDepth ?? DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth);
+    const scopeText = depth === 0 ? '全部实例楼层都会执行。' : `当前只执行最近 ${depth} 个实例楼层。`;
+
+    return [
+        '### 实例预览已折叠',
+        `楼层 #${floor} 的前端实例未进入当前执行范围。`,
+        scopeText,
+        '可点击楼层头部的“实例”按钮，或切换到整页实例模式查看该楼层。',
+    ].join('\n\n');
+}
+
+
+function scoreFullPageAppHtml(htmlPayload) {
+    const source = String(htmlPayload || '');
+    if (!source.trim()) {
+        return { score: 0, reasons: ['empty'] };
+    }
+
+    let score = 0;
+    const reasons = [];
+    const add = (value, reason) => {
+        score += value;
+        reasons.push(reason);
+    };
+
+    if (/<!DOCTYPE html/i.test(source) || /<html[\s>]/i.test(source)) add(2, 'full-document');
+    if (/id=["']readingContent["']/i.test(source)) add(8, 'reading-content-root');
+    if (/function\s+processTextContent\s*\(/i.test(source)) add(8, 'process-text-content');
+    if (/window\.setTheme\s*=\s*applyTheme/i.test(source)) add(5, 'theme-switcher');
+    if (/class=["'][^"']*theme-controls/i.test(source)) add(3, 'theme-controls');
+    if (/showArgMenu\s*\(/i.test(source)) add(4, 'argument-menu');
+    if (/Mvu\.getMvuData\s*\(/i.test(source)) add(4, 'mvu-data');
+    if (/triggerSlash\s*\(/i.test(source)) add(4, 'slash-bridge');
+    if (/class=["'][^"']*dialogue-container/i.test(source) || /createDialogueElement\s*\(/i.test(source)) add(4, 'dialogue-layout');
+    if (/class=["'][^"']*grimoire-container/i.test(source)) add(3, 'full-reader-shell');
+    if (/position:\s*fixed/i.test(source) && /class=["'][^"']*header/i.test(source)) add(2, 'fixed-header');
+
+    if (/sakura-collapsible/i.test(source)) add(-8, 'collapsible-widget');
+    if (/Sakura\s*-\s*折叠栏/i.test(source)) add(-10, 'thinking-widget');
+    if (/id=["']raw-markdown["']/i.test(source)) add(-6, 'inline-markdown-widget');
+    if (/toggleCollapsible\s*\(/i.test(source) && !/processTextContent\s*\(/i.test(source)) add(-4, 'standalone-collapse-control');
+
+    return { score, reasons };
+}
+
+
+function selectBestFullPageAppHtml(messageText, config, macroContext = {}) {
     const rawMessage = String(messageText || '');
-    if (!rawMessage.trim()) return '';
+    if (!rawMessage.trim()) return { htmlPayload: '', score: 0, reasons: [], candidates: [] };
 
     const transformedRaw = applyDisplayRules(rawMessage, config, { placement: 2, isMarkdown: true, macroContext });
-    const htmlFromRaw = extractHtmlPayloadFromText(transformedRaw);
-    if (htmlFromRaw) {
-        return htmlFromRaw;
-    }
-
     const extractedContent = extractContentWithConfig(rawMessage, config, { placement: 2, isMarkdown: true, macroContext });
-    const htmlFromExtractedContent = extractHtmlPayloadFromText(extractedContent);
-    if (htmlFromExtractedContent) {
-        return htmlFromExtractedContent;
+    const candidates = [];
+
+    const pushCandidates = (items, sourceLabel) => {
+        for (const item of items) {
+            const analysis = scoreFullPageAppHtml(item);
+            candidates.push({
+                htmlPayload: item,
+                score: analysis.score,
+                reasons: analysis.reasons,
+                source: sourceLabel,
+            });
+        }
+    };
+
+    pushCandidates(extractHtmlPayloadsFromText(transformedRaw), 'display-rules');
+    pushCandidates(extractHtmlPayloadsFromText(extractedContent), 'content-extract');
+
+    candidates.sort((a, b) => b.score - a.score || b.htmlPayload.length - a.htmlPayload.length);
+    const best = candidates[0] || null;
+
+    if (!best || best.score < 8) {
+        return {
+            htmlPayload: '',
+            score: best?.score || 0,
+            reasons: best?.reasons || [],
+            candidates,
+        };
     }
 
-    return '';
+    return {
+        htmlPayload: best.htmlPayload,
+        score: best.score,
+        reasons: best.reasons,
+        candidates,
+    };
 }
 
 
@@ -692,7 +985,7 @@ function extractContentWithConfig(messageText, config, options = {}) {
 
     let content = String(messageText || '');
 
-    const userInputRegex = compileReaderPattern(config.userInputPattern, 'i');
+    const userInputRegex = compileReaderPattern(config?.userInputPattern, 'i');
     if (userInputRegex) {
         const match = content.match(userInputRegex);
         if (match && match[1]) {
@@ -700,17 +993,17 @@ function extractContentWithConfig(messageText, config, options = {}) {
         }
     }
 
-    const recallRegex = compileReaderPattern(config.recallPattern, 'gi');
+    const recallRegex = compileReaderPattern(config?.recallPattern, 'gi');
     if (recallRegex) {
         content = content.replace(recallRegex, '');
     }
 
-    const thinkingRegex = compileReaderPattern(config.thinkingPattern, 'gi');
+    const thinkingRegex = compileReaderPattern(config?.thinkingPattern, 'gi');
     if (thinkingRegex) {
         content = content.replace(thinkingRegex, '');
     }
 
-    const mainContentRegex = compileReaderPattern(config.contentPattern, 'i');
+    const mainContentRegex = compileReaderPattern(config?.contentPattern, 'i');
     if (mainContentRegex) {
         const match = content.match(mainContentRegex);
         if (match && match[1]) {
@@ -730,6 +1023,123 @@ function extractSingleMatch(messageText, pattern) {
     const match = String(messageText).match(regex);
     if (!match || !match[1]) return null;
     return stripCommonIndent(match[1]);
+}
+
+
+function extractSingleMatchWithIndex(messageText, pattern) {
+    if (!messageText || !pattern) return null;
+    const regex = compileReaderPattern(pattern, 'i');
+    if (!regex) return null;
+    const match = regex.exec(String(messageText));
+    if (!match || !match[1]) return null;
+    return {
+        text: stripCommonIndent(match[1]),
+        index: Number(match.index || 0),
+    };
+}
+
+
+function extractTagBlockWithIndex(messageText, tagNames = []) {
+    const source = String(messageText || '');
+    for (const tagName of tagNames) {
+        const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\/${tagName}>`, 'i');
+        const match = regex.exec(source);
+        if (match && match[1]) {
+            return {
+                text: stripCommonIndent(match[1]),
+                index: Number(match.index || 0),
+            };
+        }
+    }
+    return null;
+}
+
+
+function buildTextRenderParts(text) {
+    const source = String(text || '');
+    if (!source.trim()) return [];
+
+    const parts = [];
+    const codeBlockRegex = /```(?:html|xml|text|js|css|json)?\s*([\s\S]*?)```/gi;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(source)) !== null) {
+        const before = source.slice(lastIndex, match.index);
+        if (before.trim()) {
+            parts.push({ type: 'markdown', text: before });
+        }
+
+        const htmlCandidates = extractHtmlPayloadsFromText(match[0]);
+        if (htmlCandidates.length > 0) {
+            htmlCandidates.forEach(candidate => parts.push(classifyHtmlRenderPart(candidate)));
+        } else if (match[0].trim()) {
+            parts.push({ type: 'markdown', text: match[0] });
+        }
+
+        lastIndex = match.index + match[0].length;
+    }
+
+    const after = source.slice(lastIndex);
+    if (after.trim()) {
+        parts.push({ type: 'markdown', text: after });
+    }
+
+    if (parts.length > 0) {
+        const normalized = [];
+        for (const part of parts) {
+            if (part.type === 'markdown') {
+                const fragments = extractRawHtmlFragments(part.text);
+                if (fragments.length > 0) {
+                    fragments.forEach(fragment => {
+                        if (fragment.type === 'html') {
+                            normalized.push(classifyHtmlRenderPart(fragment.text));
+                        } else {
+                            normalized.push({ type: 'markdown', text: fragment.text });
+                        }
+                    });
+                } else {
+                    normalized.push(part);
+                }
+            } else {
+                normalized.push(part);
+            }
+        }
+        return normalized;
+    }
+
+    const htmlCandidates = extractHtmlPayloadsFromText(source);
+    if (htmlCandidates.length > 0) {
+        return htmlCandidates.map(candidate => classifyHtmlRenderPart(candidate));
+    }
+
+    const rawFragments = extractRawHtmlFragments(source);
+    if (rawFragments.length > 0) {
+        return rawFragments.map(fragment => fragment.type === 'html'
+            ? classifyHtmlRenderPart(fragment.text)
+            : { type: 'markdown', text: fragment.text });
+    }
+
+    return [{ type: 'markdown', text: source }];
+}
+
+
+function buildOrderedMessageSegments(rawMessage, config, options = {}) {
+    const source = rawMessage && typeof rawMessage === 'object' ? rawMessage : {};
+    const macroContext = options.macroContext && typeof options.macroContext === 'object' ? options.macroContext : {};
+    const content = extractContentWithConfig(source.mes || '', config, { placement: 2, isMarkdown: true, macroContext });
+    if (!content.trim()) {
+        return [];
+    }
+
+    return [{
+        type: 'text',
+        kind: 'content',
+        title: '',
+        index: 0,
+        text: content,
+        parts: buildTextRenderParts(content),
+    }];
 }
 
 
@@ -754,6 +1164,8 @@ function buildReaderParsedMessage(rawMessage, floor, config, options = {}) {
     const source = rawMessage && typeof rawMessage === 'object' ? rawMessage : {};
     const messageText = String(source.mes || '');
     const macroContext = options.macroContext && typeof options.macroContext === 'object' ? options.macroContext : {};
+    const content = extractContentWithConfig(messageText, config, { placement: 2, isMarkdown: true, macroContext });
+    const renderSegments = buildOrderedMessageSegments(rawMessage, config, { macroContext });
 
     return {
         floor: Number(floor || 0),
@@ -764,11 +1176,12 @@ function buildReaderParsedMessage(rawMessage, floor, config, options = {}) {
         mes: messageText,
         swipes: Array.isArray(source.swipes) ? source.swipes : [],
         extra: source.extra && typeof source.extra === 'object' ? source.extra : {},
-        content: extractContentWithConfig(messageText, config, { placement: 2, isMarkdown: true, macroContext }),
-        time_bar: applyDisplayRules(extractSingleMatch(messageText, config.timeBarPattern) || '', config, { placement: 2, isMarkdown: true, macroContext }) || null,
-        summary: applyDisplayRules(extractSingleMatch(messageText, config.summaryPattern) || '', config, { placement: 2, isMarkdown: true, macroContext }) || null,
-        thinking: applyDisplayRules(extractSingleMatch(messageText, config.thinkingPattern) || '', config, { placement: 2, isMarkdown: true, macroContext }) || null,
-        choices: parseChoicesWithConfig(messageText, config, { macroContext }),
+        content,
+        time_bar: null,
+        summary: null,
+        thinking: null,
+        choices: [],
+        render_segments: renderSegments,
     };
 }
 
@@ -794,7 +1207,7 @@ function buildCompactPreview(message, limit = DEFAULT_CHAT_READER_VIEW_SETTINGS.
 
 
 function looksLikeFullPageChatApp(messageText) {
-    return Boolean(extractHtmlPayloadFromText(messageText));
+    return scoreFullPageAppHtml(messageText).score >= 8;
 }
 
 
@@ -940,6 +1353,8 @@ export default function chatGrid() {
         regexConfigSourceLabel: '',
         activeCardRegexConfig: normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false }),
         readerViewportFloor: 0,
+        readerWindowStartFloor: 1,
+        readerWindowEndFloor: 0,
         readerViewSettingsOpen: false,
         readerViewSettings: normalizeViewSettings(DEFAULT_CHAT_READER_VIEW_SETTINGS),
         editingFloor: 0,
@@ -967,6 +1382,10 @@ export default function chatGrid() {
             status: '未检测',
         },
         chatAppStage: null,
+        readerSegmentRegistry: new WeakMap(),
+        readerPartStages: new WeakMap(),
+        readerScrollRaf: 0,
+        readerScrollIdleTimer: 0,
 
         bindPickerOpen: false,
         bindPickerLoading: false,
@@ -990,29 +1409,62 @@ export default function chatGrid() {
         get visibleDetailMessages() {
             if (!this.activeChat || !Array.isArray(this.activeChat.messages)) return [];
 
-            const bookmarks = Array.isArray(this.activeChat.bookmarks) ? this.activeChat.bookmarks : [];
+            const bookmarksRef = Array.isArray(this.activeChat.bookmarks) ? this.activeChat.bookmarks : null;
+            const bookmarks = bookmarksRef || [];
             const bookmarkSet = new Set(bookmarks.map(item => Number(item.floor || 0)).filter(Boolean));
             const total = this.activeChat.messages.length;
             const currentFloor = Number(this.readerViewportFloor || this.activeChat.last_view_floor || total || 1);
+            const windowStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
+            const windowEndFloor = Math.min(total, Math.max(windowStartFloor, Number(this.readerWindowEndFloor || total)));
             const fullCount = Number(this.readerViewSettings.fullDisplayCount || DEFAULT_CHAT_READER_VIEW_SETTINGS.fullDisplayCount);
             const renderNearby = Number(this.readerViewSettings.renderNearbyCount || DEFAULT_CHAT_READER_VIEW_SETTINGS.renderNearbyCount);
+            const compactPreviewLength = Number(this.readerViewSettings.compactPreviewLength || DEFAULT_CHAT_READER_VIEW_SETTINGS.compactPreviewLength);
             const lastAlwaysVisibleFloor = Math.max(1, total - fullCount + 1);
             const expansionStartFloor = Math.max(1, currentFloor - renderNearby);
             const expansionEndFloor = Math.min(total, currentFloor + renderNearby);
+            const cache = getReaderVisibleMessagesCache(this);
 
-            let messages = this.activeChat.messages.map((message) => ({
+            if (cache
+                && cache.messagesRef === this.activeChat.messages
+                && cache.bookmarksRef === bookmarksRef
+                && cache.detailBookmarkedOnly === this.detailBookmarkedOnly
+                && cache.currentFloor === currentFloor
+                && cache.windowStartFloor === windowStartFloor
+                && cache.windowEndFloor === windowEndFloor
+                && cache.fullCount === fullCount
+                && cache.renderNearby === renderNearby
+                && cache.compactPreviewLength === compactPreviewLength) {
+                return cache.result;
+            }
+
+            let messages = this.activeChat.messages
+                .slice(Math.max(0, windowStartFloor - 1), windowEndFloor)
+                .map((message) => ({
                 ...message,
                 is_bookmarked: bookmarkSet.has(Number(message.floor || 0)),
                 is_full_display: Number(message.floor || 0) >= lastAlwaysVisibleFloor
                     || Number(message.floor || 0) >= expansionStartFloor && Number(message.floor || 0) <= expansionEndFloor,
                 should_render_full: Number(message.floor || 0) >= expansionStartFloor
                     && Number(message.floor || 0) <= expansionEndFloor,
-                compact_preview: buildCompactPreview(message, this.readerViewSettings.compactPreviewLength),
-            }));
+                compact_preview: buildCompactPreview(message, compactPreviewLength),
+                }));
 
             if (this.detailBookmarkedOnly) {
                 messages = messages.filter(item => item.is_bookmarked);
             }
+
+            readerVisibleMessagesCacheMap.set(this, {
+                messagesRef: this.activeChat.messages,
+                bookmarksRef,
+                detailBookmarkedOnly: this.detailBookmarkedOnly,
+                currentFloor,
+                windowStartFloor,
+                windowEndFloor,
+                fullCount,
+                renderNearby,
+                compactPreviewLength,
+                result: messages,
+            });
 
             return messages;
         },
@@ -1046,6 +1498,14 @@ export default function chatGrid() {
             return this.activeChat.messages.find(item => Number(item.floor || 0) === Number(this.readerAppFloor || 0)) || null;
         },
 
+        get executableMessageFloors() {
+            return getExecutableMessageFloors(this.activeChat);
+        },
+
+        get hasAppFloorNavigation() {
+            return this.executableMessageFloors.length > 1;
+        },
+
         buildReaderRegexMacroContext(rawMessage = null, floor = 0) {
             const source = rawMessage && typeof rawMessage === 'object' ? rawMessage : {};
             const chat = this.activeChat || {};
@@ -1064,6 +1524,28 @@ export default function chatGrid() {
                 floor: String(floor || ''),
                 messageid: source.id || String(floor || ''),
                 mes: String(source.mes || ''),
+            };
+        },
+
+        classifyFrontendPreText(text) {
+            const source = String(text || '');
+            if (!['<html', '<head', '<body', '<!DOCTYPE html'].some(token => source.includes(token))) {
+                return null;
+            }
+
+            const analysis = scoreFullPageAppHtml(source);
+            if (analysis.score >= 8) {
+                return {
+                    type: 'app-stage',
+                    minHeight: 520,
+                    maxHeight: 860,
+                };
+            }
+
+            return {
+                type: 'html-component',
+                minHeight: 28,
+                maxHeight: 520,
             };
         },
 
@@ -1102,6 +1584,7 @@ export default function chatGrid() {
                     summary: '',
                     time_bar: '',
                     choices: [],
+                    render_segments: [],
                 };
             }
 
@@ -1200,9 +1683,23 @@ export default function chatGrid() {
                 return '暂无楼层';
             }
 
+            const total = Number(this.activeChat?.messages?.length || messages.length || 0);
+            const windowStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
+            const windowEndFloor = Math.min(total || messages.length, Math.max(windowStartFloor, Number(this.readerWindowEndFloor || messages[messages.length - 1]?.floor || windowStartFloor)));
             const fullVisible = messages.filter(item => item.is_full_display).length;
             const renderedNow = messages.filter(item => item.should_render_full).length;
-            return `完整显示 ${fullVisible} 层，当前高渲染 ${renderedNow} 层`;
+            const instanceDepth = Number(this.readerViewSettings.instanceRenderDepth ?? DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth);
+            const instanceSummary = instanceDepth === 0 ? '全部实例执行' : `最近 ${instanceDepth} 层执行实例`;
+            return `当前渲染窗口 #${windowStartFloor}-#${windowEndFloor} / ${total} 层 · 完整显示 ${fullVisible} 层，当前高渲染 ${renderedNow} 层 · ${instanceSummary}`;
+        },
+
+        get hasEarlierReaderWindow() {
+            return Boolean(this.activeChat && this.readerWindowStartFloor > 1);
+        },
+
+        get hasLaterReaderWindow() {
+            const total = Number(this.activeChat?.messages?.length || 0);
+            return Boolean(this.activeChat && total > 0 && this.readerWindowEndFloor < total);
         },
 
         get resolvedRegexConfigSourceLabel() {
@@ -1309,6 +1806,7 @@ export default function chatGrid() {
             });
 
             window.addEventListener('beforeunload', () => {
+                this.clearReaderViewportSync();
                 if (this.chatAppStage) {
                     this.chatAppStage.destroy();
                     this.chatAppStage = null;
@@ -1411,6 +1909,7 @@ export default function chatGrid() {
         async openChatDetail(item) {
             if (!item || !item.id) return;
 
+            this.clearReaderViewportSync();
             this.detailOpen = true;
             this.detailLoading = true;
             this.activeChat = null;
@@ -1435,6 +1934,9 @@ export default function chatGrid() {
             this.regexConfigSourceLabel = '';
             this.activeCardRegexConfig = normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false });
             this.readerViewportFloor = 0;
+            this.readerWindowStartFloor = 1;
+            this.readerWindowEndFloor = 0;
+            resetReaderVisibleMessagesCache(this);
             this.readerViewSettingsOpen = false;
             this.readerAppMode = false;
             this.readerAppFloor = 0;
@@ -1484,6 +1986,7 @@ export default function chatGrid() {
                 this.regexConfigDraft = normalizeRegexConfig(this.activeRegexConfig);
                 this.regexConfigSourceLabel = this.describeRegexConfigSource(res.chat);
                 this.readerViewportFloor = Number(res.chat.last_view_floor || res.chat.messages?.length || 1);
+                this.setReaderWindowAroundFloor(this.readerViewportFloor || 1, 'center');
                 this.$nextTick(() => {
                     this.mountChatAppStage();
                     this.syncChatAppStage();
@@ -1500,6 +2003,7 @@ export default function chatGrid() {
         },
 
         closeChatDetail() {
+            this.clearReaderViewportSync();
             this.detailOpen = false;
             this.detailLoading = false;
             this.activeChat = null;
@@ -1525,6 +2029,9 @@ export default function chatGrid() {
             this.regexConfigSourceLabel = '';
             this.activeCardRegexConfig = normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false });
             this.readerViewportFloor = 0;
+            this.readerWindowStartFloor = 1;
+            this.readerWindowEndFloor = 0;
+            resetReaderVisibleMessagesCache(this);
             this.readerViewSettingsOpen = false;
             this.readerAppMode = false;
             this.readerAppFloor = 0;
@@ -1555,36 +2062,186 @@ export default function chatGrid() {
             });
         },
 
-        syncReaderViewportFloor() {
-            this.$nextTick(() => {
+        clearReaderViewportSync() {
+            if (this.readerScrollRaf) {
+                window.cancelAnimationFrame(this.readerScrollRaf);
+                this.readerScrollRaf = 0;
+            }
+            if (this.readerScrollIdleTimer) {
+                window.clearTimeout(this.readerScrollIdleTimer);
+                this.readerScrollIdleTimer = 0;
+            }
+        },
+
+        resolveReaderWindowBounds(floor = 1, mode = 'center') {
+            const total = Number(this.activeChat?.messages?.length || 0);
+            if (!total) {
+                return { start: 1, end: 0 };
+            }
+
+            const size = Math.min(total, CHAT_READER_WINDOW_SIZE);
+            const maxStart = Math.max(1, total - size + 1);
+            const targetFloor = Math.min(total, Math.max(1, Number(floor || 1)));
+            let start;
+
+            if (mode === 'start') {
+                start = targetFloor;
+            } else if (mode === 'end') {
+                start = targetFloor - size + 1;
+            } else {
+                start = targetFloor - Math.floor(size / 2);
+            }
+
+            start = Math.max(1, Math.min(maxStart, start));
+            return {
+                start,
+                end: Math.min(total, start + size - 1),
+            };
+        },
+
+        setReaderWindowAroundFloor(floor = 1, mode = 'center') {
+            const bounds = this.resolveReaderWindowBounds(floor, mode);
+            this.readerWindowStartFloor = bounds.start;
+            this.readerWindowEndFloor = bounds.end;
+            resetReaderVisibleMessagesCache(this);
+            return bounds;
+        },
+
+        ensureReaderWindowForFloor(floor = 1, mode = 'center') {
+            const targetFloor = Number(floor || 0);
+            if (!targetFloor) return false;
+
+            if (targetFloor >= Number(this.readerWindowStartFloor || 1) && targetFloor <= Number(this.readerWindowEndFloor || 0)) {
+                return false;
+            }
+
+            this.setReaderWindowAroundFloor(targetFloor, mode);
+            return true;
+        },
+
+        loadPreviousReaderWindow() {
+            if (!this.hasEarlierReaderWindow) return;
+
+            const previousStart = Number(this.readerWindowStartFloor || 1);
+            const step = Math.max(1, CHAT_READER_WINDOW_SIZE - CHAT_READER_WINDOW_OVERLAP);
+            const nextStart = Math.max(1, previousStart - step);
+            this.setReaderWindowAroundFloor(nextStart, 'start');
+            this.scrollToFloor(previousStart, false, 'auto');
+        },
+
+        loadNextReaderWindow() {
+            if (!this.hasLaterReaderWindow) return;
+
+            const previousEnd = Number(this.readerWindowEndFloor || 0);
+            const step = Math.max(1, CHAT_READER_WINDOW_SIZE - CHAT_READER_WINDOW_OVERLAP);
+            const nextStart = Math.max(1, Number(this.readerWindowStartFloor || 1) + step);
+            this.setReaderWindowAroundFloor(nextStart, 'start');
+            this.scrollToFloor(previousEnd, false, 'auto');
+        },
+
+        resolveReaderViewportFloor(container) {
+            if (!container) return 0;
+
+            const containerRect = container.getBoundingClientRect();
+            if (!containerRect.width || !containerRect.height) return 0;
+
+            const sampleX = Math.min(containerRect.right - 24, Math.max(containerRect.left + 24, containerRect.left + containerRect.width * 0.5));
+            const sampleRatios = [0.42, 0.28, 0.6];
+
+            for (const ratio of sampleRatios) {
+                const sampleY = Math.min(containerRect.bottom - 24, Math.max(containerRect.top + 24, containerRect.top + containerRect.height * ratio));
+                const target = document.elementFromPoint(sampleX, sampleY);
+                const card = findFloorCardFromNode(target);
+                const floor = Number(card?.getAttribute('data-chat-floor') || 0);
+                if (floor > 0) {
+                    return floor;
+                }
+            }
+
+            const cards = Array.from(container.querySelectorAll('[data-chat-floor]'));
+            if (!cards.length) return 0;
+
+            const viewportTop = containerRect.top;
+            const viewportBottom = containerRect.bottom;
+            const viewportCenter = containerRect.top + containerRect.height * 0.42;
+            let bestFloor = 0;
+            let bestDistance = Infinity;
+
+            cards.forEach((card) => {
+                const rect = card.getBoundingClientRect();
+                if (rect.bottom < viewportTop || rect.top > viewportBottom) {
+                    return;
+                }
+
+                const center = rect.top + rect.height / 2;
+                const distance = Math.abs(center - viewportCenter);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestFloor = Number(card.getAttribute('data-chat-floor') || 0);
+                }
+            });
+
+            if (bestFloor > 0) {
+                return bestFloor;
+            }
+
+            const firstVisible = cards.find((card) => card.getBoundingClientRect().bottom >= viewportTop);
+            return Number(firstVisible?.getAttribute('data-chat-floor') || 0);
+        },
+
+        syncReaderViewportFloor(options = {}) {
+            const run = () => {
                 const root = document.querySelector('.chat-reader-overlay--fullscreen');
                 const container = root ? root.querySelector('.chat-reader-center') : null;
                 if (!container) return;
 
-                const cards = Array.from(container.querySelectorAll('[data-chat-floor]'));
-                if (!cards.length) return;
+                const nextFloor = this.resolveReaderViewportFloor(container);
+                if (!nextFloor) return;
 
-                const containerRect = container.getBoundingClientRect();
-                const viewportCenter = containerRect.top + containerRect.height * 0.42;
-                let bestFloor = this.readerViewportFloor || 1;
-                let bestDistance = Infinity;
+                const currentFloor = Number(this.readerViewportFloor || 0);
+                const renderNearby = Number(this.readerViewSettings.renderNearbyCount || DEFAULT_CHAT_READER_VIEW_SETTINGS.renderNearbyCount);
+                const shouldForce = options.force !== false;
 
-                cards.forEach((card) => {
-                    const rect = card.getBoundingClientRect();
-                    const center = rect.top + rect.height / 2;
-                    const distance = Math.abs(center - viewportCenter);
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
-                        bestFloor = Number(card.getAttribute('data-chat-floor') || bestFloor);
-                    }
+                if (!shouldForce && currentFloor && Math.abs(nextFloor - currentFloor) < Math.max(1, renderNearby)) {
+                    return;
+                }
+
+                if (nextFloor !== currentFloor) {
+                    this.readerViewportFloor = nextFloor;
+                    this.ensureReaderWindowForFloor(nextFloor, 'center');
+                }
+            };
+
+            if (options.nextTick === false) {
+                run();
+                return;
+            }
+
+            this.$nextTick(run);
+        },
+
+        scheduleReaderViewportSync() {
+            if (!this.detailOpen || this.readerAppMode) return;
+
+            if (!this.readerScrollRaf) {
+                this.readerScrollRaf = window.requestAnimationFrame(() => {
+                    this.readerScrollRaf = 0;
+                    this.syncReaderViewportFloor({ force: false, nextTick: false });
                 });
+            }
 
-                this.readerViewportFloor = bestFloor;
-            });
+            if (this.readerScrollIdleTimer) {
+                window.clearTimeout(this.readerScrollIdleTimer);
+            }
+
+            this.readerScrollIdleTimer = window.setTimeout(() => {
+                this.readerScrollIdleTimer = 0;
+                this.syncReaderViewportFloor({ force: true, nextTick: false });
+            }, 120);
         },
 
         handleReaderScroll() {
-            this.syncReaderViewportFloor();
+            this.scheduleReaderViewportSync();
         },
 
         saveReaderViewSettings() {
@@ -1740,18 +2397,13 @@ export default function chatGrid() {
                 return;
             }
 
-            const matchedFloors = [];
-            const candidate = this.activeChat.raw_messages.find((message, index) => {
-                const floor = Number(message?.floor || index + 1 || 0);
-                const htmlPayload = buildFullPageAppHtml(message?.mes || '', this.activeRegexConfig, this.buildReaderRegexMacroContext(message, floor));
-                const matched = Boolean(htmlPayload && looksLikeFullPageChatApp(htmlPayload));
-                if (matched) {
-                    matchedFloors.push(floor);
-                }
-                return matched;
-            });
+            const matchedFloors = this.executableMessageFloors;
+            const currentFloor = Number(this.readerViewportFloor || this.activeChat.last_view_floor || 0);
+            const candidateFloor = matchedFloors.find(floor => floor >= currentFloor)
+                || matchedFloors[matchedFloors.length - 1]
+                || 0;
 
-            if (!candidate) {
+            if (!candidateFloor) {
                 this.readerAppMode = false;
                 this.readerAppFloor = 0;
                 this.readerAppSignature = '';
@@ -1772,8 +2424,7 @@ export default function chatGrid() {
                 return;
             }
 
-            this.readerAppFloor = Number(candidate.floor || this.activeChat.raw_messages.indexOf(candidate) + 1 || 0);
-            this.readerAppMode = this.readerAppFloor > 0;
+            this.readerAppFloor = candidateFloor;
             this.readerAppDebug = {
                 checkedCount: this.activeChat.raw_messages.length,
                 detectedFloor: this.readerAppFloor,
@@ -1804,17 +2455,53 @@ export default function chatGrid() {
                 ? this.activeChat.messages.find(item => Number(item.floor || 0) === floor)
                 : null;
 
-            const htmlPayload = buildFullPageAppHtml(rawMessage?.mes || '', this.activeRegexConfig, this.buildReaderRegexMacroContext(rawMessage, floor));
-            if (!htmlPayload) {
+            const parsedMessageForFloor = Array.isArray(this.activeChat.messages)
+                ? this.activeChat.messages.find(item => Number(item.floor || 0) === floor)
+                : null;
+            const selectedPart = resolveBestMessageExecutablePart(parsedMessageForFloor);
+
+            if (!selectedPart?.text) {
                 return null;
             }
 
+            const partAnalysis = scoreFullPageAppHtml(String(selectedPart.text || ''));
+
             return {
                 floor,
-                htmlPayload,
+                htmlPayload: String(selectedPart.text || ''),
                 assetBase: this.activeReaderAssetBase,
-                context: buildChatAppCompatContext(this.activeChat.raw_messages, floor, rawMessage, parsedMessage, this.activeChat),
+                context: buildChatAppCompatContext(this.activeChat.raw_messages, floor, rawMessage, parsedMessageForFloor || parsedMessage, this.activeChat),
+                debug: {
+                    score: partAnalysis.score,
+                    reasons: partAnalysis.reasons,
+                },
             };
+        },
+
+        setReaderAppFloor(floor) {
+            const targetFloor = Number(floor || 0);
+            if (!targetFloor) return;
+
+            if (!this.executableMessageFloors.includes(targetFloor)) {
+                this.$store.global.showToast(`楼层 #${targetFloor} 没有可执行的前端实例`, 2200);
+                return;
+            }
+
+            this.readerAppFloor = targetFloor;
+            this.readerAppMode = true;
+            this.$nextTick(() => {
+                this.mountChatAppStage();
+                this.syncChatAppStage();
+            });
+        },
+
+        stepReaderAppFloor(direction = 1) {
+            const floors = this.executableMessageFloors;
+            if (!floors.length) return;
+
+            const currentIndex = Math.max(0, floors.indexOf(Number(this.readerAppFloor || floors[0])));
+            const nextIndex = Math.min(floors.length - 1, Math.max(0, currentIndex + (direction >= 0 ? 1 : -1)));
+            this.setReaderAppFloor(floors[nextIndex]);
         },
 
         syncChatAppStage() {
@@ -1848,20 +2535,19 @@ export default function chatGrid() {
         activateChatAppStage() {
             if (!this.activeChat) return;
             this.detectChatAppMode();
-            if (!this.readerAppMode) {
+            if (!this.readerAppFloor) {
                 this.$store.global.showToast(this.readerAppDebug.status || '当前聊天未检测到整页前端实例', 2200);
                 return;
             }
+
+            this.readerAppMode = true;
 
             const isMobile = this.$store.global.deviceType === 'mobile';
             if (isMobile) {
                 this.readerShowLeftPanel = false;
             }
 
-            this.$nextTick(() => {
-                this.mountChatAppStage();
-                this.syncChatAppStage();
-            });
+            this.setReaderAppFloor(this.readerAppFloor);
         },
 
         deactivateChatAppStage() {
@@ -1947,6 +2633,9 @@ export default function chatGrid() {
             this.activeChat.messages = rawMessages.map((item, index) => buildReaderParsedMessage(item, index + 1, nextConfig, {
                 macroContext: this.buildReaderRegexMacroContext(item, index + 1),
             }));
+            const anchorFloor = Number(this.readerViewportFloor || this.activeChat.last_view_floor || rawMessages.length || 1);
+            this.setReaderWindowAroundFloor(anchorFloor, 'center');
+            resetReaderVisibleMessagesCache(this);
         },
 
         updateRegexDraftField(field, value) {
@@ -2222,6 +2911,176 @@ export default function chatGrid() {
             return 'plain';
         },
 
+        mountMessageRenderPart(el, message, part) {
+            if (!el || !part) return;
+
+            const allowExecutableHtml = this.readerComponentMode
+                && shouldExecuteMessageSegments(message, this.activeChat, this.readerViewSettings);
+            const htmlText = String(part.text || '');
+
+            if (part.type === 'app-stage') {
+                if (!allowExecutableHtml) {
+                    this.mountReaderRender(el, buildDeferredInstancePlaceholder(message, this.readerViewSettings));
+                    return;
+                }
+
+                let stage = this.readerPartStages.get(el);
+                if (!stage) {
+                    stage = new ChatAppStage({
+                        onTriggerSlash: async (command) => {
+                            await this.executeAppStageSlash(command);
+                        },
+                        onAppError: (error) => {
+                            console.error('[ChatMessageAppStage]', error);
+                            this.$store.global.showToast(`实例错误: ${error.message}`, 2600);
+                        },
+                    });
+                    this.readerPartStages.set(el, stage);
+                }
+
+                stage.attachHost(el);
+                const floor = Number(message?.floor || 0);
+                const rawMessage = floor > 0 && Array.isArray(this.activeChat?.raw_messages)
+                    ? this.activeChat.raw_messages[floor - 1]
+                    : { mes: String(message?.mes || message?.content || part.text || ''), name: message?.name || 'Preview' };
+                stage.update({
+                    htmlPayload: htmlText,
+                    assetBase: this.activeReaderAssetBase,
+                    context: buildChatAppCompatContext(
+                        this.activeChat?.raw_messages || [],
+                        floor || 1,
+                        rawMessage,
+                        message,
+                        this.activeChat,
+                    ),
+                });
+                return;
+            }
+
+            const existingStage = this.readerPartStages.get(el);
+            if (existingStage) {
+                existingStage.clear();
+            }
+
+            if (part.type === 'html-component') {
+                if (!allowExecutableHtml && isExecutableRenderPart(part)) {
+                    this.mountReaderRender(el, buildDeferredInstancePlaceholder(message, this.readerViewSettings));
+                    return;
+                }
+
+                updateInlineRenderContent(el, htmlText, {
+                    mode: 'html-component',
+                    minHeight: Number(part.minHeight || 72),
+                    maxHeight: Number(part.maxHeight || 520),
+                    assetBase: this.activeReaderAssetBase,
+                });
+                return;
+            }
+
+            this.mountReaderRender(el, String(part.text || ''));
+        },
+
+        destroyMessageRenderPart(el) {
+            if (!el) return;
+
+            destroyMessageSegmentHost(el);
+
+            const stage = this.readerPartStages.get(el);
+            if (stage) {
+                stage.destroy();
+                this.readerPartStages.delete(el);
+            }
+
+            clearIsolatedHtml(el, { clearShadow: true });
+            el.innerHTML = '';
+        },
+
+        mountMessageSegment(el, message, segment) {
+            if (!el || !segment) return;
+
+            if (segment.type === 'text') {
+                const parts = Array.isArray(segment.parts) ? segment.parts : [];
+                const signature = JSON.stringify({
+                    source: String(segment.text || ''),
+                    parts: parts.map(part => ({
+                        type: part.type,
+                        text: part.text,
+                    })),
+                    renderMode: this.readerRenderMode,
+                    componentMode: this.readerComponentMode,
+                });
+
+                const current = this.readerSegmentRegistry.get(el);
+                if (current?.signature === signature) {
+                    return;
+                }
+
+                if (current?.children) {
+                    current.children.forEach((child) => {
+                        if (child !== el) {
+                            this.destroyMessageRenderPart(child);
+                        }
+                    });
+                }
+
+                destroyMessageSegmentHost(el);
+                el.innerHTML = '';
+
+                const children = [];
+                parts.forEach((part) => {
+                    const child = document.createElement('div');
+                    child.className = `chat-message-segment-part markdown-body ${part.type === 'markdown' ? 'is-markdown' : 'is-html'}`;
+                    el.appendChild(child);
+                    children.push(child);
+                    this.mountMessageRenderPart(child, message, part);
+                });
+
+                if (children.length === 0) {
+                    clearIsolatedHtml(el, { clearShadow: true });
+                    this.mountReaderRender(el, String(segment.text || ''));
+                    this.readerSegmentRegistry.set(el, { signature, children: [el] });
+                    return;
+                }
+
+                this.readerSegmentRegistry.set(el, { signature, children });
+                return;
+            }
+
+            const parts = Array.isArray(segment.parts) ? segment.parts : [];
+            const signature = JSON.stringify({
+                kind: segment.kind,
+                title: segment.title || '',
+                parts: parts.map(part => ({
+                    type: part.type,
+                    text: part.text,
+                    minHeight: part.minHeight || 0,
+                    maxHeight: part.maxHeight || 0,
+                })),
+            });
+
+            const current = this.readerSegmentRegistry.get(el);
+            if (current?.signature === signature) {
+                return;
+            }
+
+            if (current?.children) {
+                current.children.forEach(child => this.destroyMessageRenderPart(child));
+            }
+
+            el.innerHTML = '';
+            const children = [];
+
+            parts.forEach((part) => {
+                const child = document.createElement('div');
+                child.className = `chat-message-segment-part markdown-body ${part.type === 'markdown' ? 'is-markdown' : 'is-html'}`;
+                el.appendChild(child);
+                children.push(child);
+                this.mountMessageRenderPart(child, message, part);
+            });
+
+            this.readerSegmentRegistry.set(el, { signature, children });
+        },
+
         mountReaderRender(el, text) {
             if (!el) return;
 
@@ -2270,26 +3129,7 @@ export default function chatGrid() {
         },
 
         applyEditedContentToRaw() {
-            const raw = String(this.editingMessageRawDraft || '');
-            const contentPattern = String(this.activeRegexConfig.contentPattern || '').trim();
-            if (!contentPattern) {
-                this.editingMessageRawDraft = this.editingMessageDraft;
-                return;
-            }
-
-            try {
-                const regex = new RegExp(contentPattern, 'i');
-                if (!regex.test(raw)) {
-                    this.editingMessageRawDraft = this.editingMessageDraft;
-                    return;
-                }
-                this.editingMessageRawDraft = raw.replace(regex, (_match, captured) => {
-                    const fallback = typeof captured === 'string' ? captured : '';
-                    return _match.replace(fallback, this.editingMessageDraft);
-                });
-            } catch {
-                this.editingMessageRawDraft = this.editingMessageDraft;
-            }
+            this.editingMessageRawDraft = this.editingMessageDraft;
         },
 
         async saveFloorEdit() {
@@ -2594,7 +3434,8 @@ export default function chatGrid() {
             if (!query || !this.activeChat) return;
 
             const matches = [];
-            this.visibleDetailMessages.forEach((message) => {
+            const sourceMessages = Array.isArray(this.activeChat.messages) ? this.activeChat.messages : [];
+            sourceMessages.forEach((message) => {
                 const text = `${message.name || ''}\n${message.content || ''}\n${message.mes || ''}`.toLowerCase();
                 if (text.includes(query)) {
                     matches.push(Number(message.floor || 0));
@@ -2620,26 +3461,39 @@ export default function chatGrid() {
             this.scrollToFloor(this.detailSearchResults[this.detailSearchIndex]);
         },
 
-        scrollToFloor(floor, persist = true) {
+        scrollToFloor(floor, persist = true, behavior = 'smooth') {
             const targetFloor = Number(floor || 0);
             if (!targetFloor || !this.activeChat) return;
 
             if (this.readerAppMode) {
-                this.readerViewportFloor = targetFloor;
-                if (persist) {
-                    this.activeChat.last_view_floor = targetFloor;
+                this.jumpFloorInput = String(targetFloor);
+                if (this.executableMessageFloors.includes(targetFloor)) {
+                    this.readerViewportFloor = targetFloor;
+                    this.setReaderAppFloor(targetFloor);
+                    if (persist) {
+                        this.activeChat.last_view_floor = targetFloor;
+                    }
+                } else {
+                    this.$store.global.showToast(`楼层 #${targetFloor} 没有可执行实例，已退出整页实例模式`, 2200);
+                    this.deactivateChatAppStage();
+                    this.$nextTick(() => this.scrollToFloor(targetFloor, persist, behavior));
                 }
                 return;
             }
 
+            if (this.detailBookmarkedOnly && !this.isBookmarked(targetFloor)) {
+                this.detailBookmarkedOnly = false;
+            }
+
             this.jumpFloorInput = String(targetFloor);
             this.readerViewportFloor = targetFloor;
+            this.ensureReaderWindowForFloor(targetFloor, 'center');
 
             this.$nextTick(() => {
                 const root = document.querySelector('.chat-reader-overlay--fullscreen');
                 const el = root ? root.querySelector(`[data-chat-floor="${targetFloor}"]`) : null;
                 if (el) {
-                    this.scrollElementToTop(el, 'smooth');
+                    this.scrollElementToTop(el, behavior);
                 }
             });
 
@@ -2666,8 +3520,22 @@ export default function chatGrid() {
             this.scrollToFloor(floor);
         },
 
+        openMessageAsAppStage(message) {
+            const floor = Number(message?.floor || 0);
+            if (!floor) return;
+
+            if (!this.executableMessageFloors.includes(floor)) {
+                this.$store.global.showToast(`楼层 #${floor} 没有检测到可执行实例`, 2200);
+                return;
+            }
+
+            this.readerViewportFloor = floor;
+            this.jumpFloorInput = String(floor);
+            this.setReaderAppFloor(floor);
+        },
+
         jumpToEdge(which) {
-            const messages = this.visibleDetailMessages;
+            const messages = Array.isArray(this.activeChat?.messages) ? this.activeChat.messages : [];
             if (!messages.length) return;
             if (which === 'first') {
                 this.scrollToFloor(messages[0].floor);
