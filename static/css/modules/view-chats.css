@@ -1558,6 +1558,54 @@
     padding-right: 0.15rem;
 }
 
+.chat-reader-regex-preview {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding-right: 0.2rem;
+    scrollbar-gutter: stable both-edges;
+}
+
+.chat-reader-regex-preview::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.chat-reader-regex-preview::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.chat-reader-regex-preview::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-main) 42%, var(--border-light));
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+.chat-reader-regex-preview::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--accent-main) 62%, var(--border-light));
+}
+
+.chat-reader-regex-preview {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--accent-main) 48%, var(--border-light)) transparent;
+}
+
+.chat-reader-regex-preview pre,
+.chat-reader-regex-preview code,
+.chat-reader-regex-preview .chat-message-render-chunk,
+.chat-reader-regex-preview .chat-message-pre-anchor {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.chat-reader-regex-preview pre {
+    white-space: pre-wrap;
+    overflow-x: hidden;
+}
+
 .chat-diff-table {
     display: flex;
     flex-direction: column;

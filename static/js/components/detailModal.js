@@ -42,7 +42,7 @@ import {
     formatWiKeys,
     getTopbarTokenLevelClass
 } from '../utils/format.js';
-import { updateShadowContent } from '../utils/dom.js';
+import { updateShadowContent, updateMixedPreviewContent } from '../utils/dom.js';
 import { createAutoSaver } from '../utils/autoSave.js'; 
 import { wiHelpers } from '../utils/wiHelpers.js';
 import { clearActiveRuntimeContext, setActiveRuntimeContext } from '../runtime/runtimeContext.js';
@@ -124,6 +124,7 @@ export default function detailModal() {
         formatDate,
         estimateTokens,
         updateShadowContent,
+        updateMixedPreviewContent,
         formatWiKeys,
         getTopbarTokenLevelClass,
         updateWiKeys,

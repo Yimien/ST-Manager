@@ -15,7 +15,7 @@
 
         <!-- 内容 (Markdown 渲染区) - Shadow DOM 安全版 -->
         <div class="flex-1 overflow-hidden relative"
-            x-effect="updateShadowContent($el, showMarkdownModal ? renderMarkdown(markdownModalContent) : null)">
+            x-effect="updateShadowContent($el, showMarkdownModal ? renderMarkdown(markdownModalContent) : null, { scroll: true })">
         </div>
 
         <!-- 底部 -->

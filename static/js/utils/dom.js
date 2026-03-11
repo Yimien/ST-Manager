@@ -6,6 +6,8 @@
 const htmlComponentRenderCache = new WeakMap();
 let renderRuntimeModule = null;
 let renderRuntimeModulePromise = null;
+let messageSegmentRendererModule = null;
+let messageSegmentRendererModulePromise = null;
 
 function loadRenderRuntimeModule() {
     if (renderRuntimeModule) {
@@ -26,6 +28,191 @@ function loadRenderRuntimeModule() {
     }
 
     return renderRuntimeModulePromise;
+}
+
+function loadMessageSegmentRendererModule() {
+    if (messageSegmentRendererModule) {
+        return Promise.resolve(messageSegmentRendererModule);
+    }
+
+    if (!messageSegmentRendererModulePromise) {
+        messageSegmentRendererModulePromise = import('../runtime/messageSegmentRenderer.js')
+            .then((module) => {
+                messageSegmentRendererModule = module;
+                return module;
+            })
+            .catch((error) => {
+                messageSegmentRendererModulePromise = null;
+                console.warn('Failed to load message segment renderer module:', error);
+                throw error;
+            });
+    }
+
+    return messageSegmentRendererModulePromise;
+}
+
+function scorePreviewAppHtml(htmlPayload) {
+    const source = String(htmlPayload || '');
+    if (!source.trim()) {
+        return 0;
+    }
+
+    let score = 0;
+    if (/<!DOCTYPE html/i.test(source) || /<html[\s>]/i.test(source)) score += 2;
+    if (/id=["']readingContent["']/i.test(source)) score += 8;
+    if (/function\s+processTextContent\s*\(/i.test(source)) score += 8;
+    if (/window\.setTheme\s*=\s*applyTheme/i.test(source)) score += 5;
+    if (/showArgMenu\s*\(/i.test(source)) score += 4;
+    if (/triggerSlash\s*\(/i.test(source)) score += 4;
+    if (/class=["'][^"']*dialogue-container/i.test(source) || /createDialogueElement\s*\(/i.test(source)) score += 4;
+
+    if (/sakura-collapsible/i.test(source)) score -= 8;
+    if (/Sakura\s*-\s*折叠栏/i.test(source)) score -= 10;
+    if (/id=["']raw-markdown["']/i.test(source)) score -= 6;
+
+    return score;
+}
+
+function classifyPreviewFrontendText(text, options = {}) {
+    const source = String(text || '').trim();
+    if (!source) {
+        return null;
+    }
+
+    const normalized = source
+        .replace(/^```(?:html|text|xml)?\s*/i, '')
+        .replace(/```$/i, '')
+        .trim();
+    const score = scorePreviewAppHtml(normalized);
+    if (score < Number(options.appThreshold || 8)) {
+        return null;
+    }
+
+    return {
+        type: 'app-stage',
+        minHeight: Number(options.minHeight || 260),
+        maxHeight: Number(options.maxHeight || 3200),
+    };
+}
+
+function shouldRenderPreviewTextAsPlainText(text) {
+    const source = String(text || '').trim();
+    if (!source) {
+        return false;
+    }
+
+    if (/^\s*<(?:[a-z][\w:-]*|!doctype|!--)/i.test(source)) {
+        return false;
+    }
+
+    if (/^\s{4,}\S/m.test(source)) {
+        return true;
+    }
+
+    const markdownSignals = [
+        /^#{1,6}\s/m,
+        /^\s*[-*+]\s+/m,
+        /^\s*\d+\.\s+/m,
+        /^\s*>\s+/m,
+        /```/,
+        /\[[^\]]+\]\([^)]+\)/,
+        /^\s*\|.+\|\s*$/m,
+    ];
+
+    return !markdownSignals.some((pattern) => pattern.test(source));
+}
+
+function buildMixedPreviewParts(content, options = {}) {
+    const rawContent = String(content || '');
+    const trimmedContent = rawContent.trim();
+    if (!trimmedContent) {
+        return [];
+    }
+
+    const htmlFragmentRegex = /^\s*<(?:div|style|details|section|article|main|link|table|script|iframe|svg|html|body|head|canvas)/i;
+    const codeBlockRegex = /```(?:html|xml|text|js|css|json)?\s*([\s\S]*?)```/gi;
+    const looksLikeHtmlPayload = (text) => {
+        const block = String(text || '');
+        return block.includes('<!DOCTYPE')
+            || block.includes('<html')
+            || block.includes('<script')
+            || block.includes('export default')
+            || (block.includes('<div') && block.includes('<style'));
+    };
+
+    let htmlPayload = '';
+    let markdownCommentary = '';
+    let match;
+    let foundPayload = false;
+
+    while ((match = codeBlockRegex.exec(rawContent)) !== null) {
+        const blockContent = String(match[1] || '');
+        if (!looksLikeHtmlPayload(blockContent)) {
+            continue;
+        }
+
+        htmlPayload = blockContent;
+        markdownCommentary = rawContent.replace(match[0], '');
+        foundPayload = true;
+        break;
+    }
+
+    if (!foundPayload) {
+        if (htmlFragmentRegex.test(trimmedContent)
+            || rawContent.includes('<!DOCTYPE')
+            || rawContent.includes('<html')
+            || rawContent.includes('<script')) {
+            htmlPayload = rawContent;
+            markdownCommentary = '';
+        } else {
+            markdownCommentary = rawContent;
+        }
+    }
+
+    const cleanedCommentary = markdownCommentary.replace(/<open>|<\/open>/gi, '').trim();
+    const cleanedPayload = htmlPayload.replace(/<open>|<\/open>/gi, '').trim();
+
+    const parts = [];
+    if (cleanedCommentary) {
+        parts.push({
+            type: shouldRenderPreviewTextAsPlainText(cleanedCommentary) ? 'text' : 'markdown',
+            text: cleanedCommentary,
+        });
+    }
+
+    if (cleanedPayload) {
+        parts.push({
+            type: 'app-stage',
+            text: cleanedPayload,
+            minHeight: Number(options.minHeight || 260),
+            maxHeight: Number(options.maxHeight || 3200),
+        });
+    }
+
+    if (!parts.length) {
+        parts.push({
+            type: shouldRenderPreviewTextAsPlainText(trimmedContent) ? 'text' : 'markdown',
+            text: trimmedContent,
+        });
+    }
+
+    return parts;
+}
+
+function destroyMixedPreviewHost(el) {
+    if (!el) return;
+
+    if (messageSegmentRendererModule?.destroyMessageSegmentHost) {
+        if (el.__stmMixedPreviewHost) {
+            messageSegmentRendererModule.destroyMessageSegmentHost(el.__stmMixedPreviewHost);
+        }
+        messageSegmentRendererModule.destroyMessageSegmentHost(el);
+    }
+
+    if (el.__stmMixedPreviewHost instanceof HTMLElement) {
+        el.__stmMixedPreviewHost.innerHTML = '';
+    }
+    el.__stmMixedPreviewHost = null;
 }
 
 export function clearInlineIsolatedHtml(el, options = {}) {
@@ -169,6 +356,11 @@ export function updateInlineRenderContent(el, content, options = {}) {
 }
 
 export function updateShadowContent(el, content, options = {}) {
+    destroyMixedPreviewHost(el);
+
+    const shadowRenderToken = Number(el.__stmShadowRenderToken || 0) + 1;
+    el.__stmShadowRenderToken = shadowRenderToken;
+
     if (!el.shadowRoot) {
         el.attachShadow({ mode: 'open' });
     }
@@ -178,6 +370,11 @@ export function updateShadowContent(el, content, options = {}) {
     const hostMinHeight = Number.isFinite(minHeight) ? `${Math.max(0, minHeight)}px` : '0px';
     const maxHeight = Number.parseInt(options.maxHeight, 10);
     const hostMaxHeight = Number.isFinite(maxHeight) ? `${Math.max(0, maxHeight)}px` : 'none';
+    const scrollMode = Boolean(options.scroll);
+    const hostOverflow = scrollMode ? 'hidden' : 'visible';
+    const wrapperOverflow = scrollMode ? 'auto' : 'visible';
+    const hostHeight = scrollMode ? '100%' : 'auto';
+    const wrapperHeight = scrollMode ? '100%' : 'auto';
 
     if (content === null || content === undefined) {
         htmlComponentRenderCache.delete(el);
@@ -245,6 +442,9 @@ export function updateShadowContent(el, content, options = {}) {
         }
         loadRenderRuntimeModule()
             .then((module) => {
+                if (el.__stmShadowRenderToken !== shadowRenderToken || !el.isConnected) {
+                    return;
+                }
                 module.renderIsolatedHtml(el, {
                     htmlPayload,
                     noteHtml: renderedMd,
@@ -254,6 +454,9 @@ export function updateShadowContent(el, content, options = {}) {
                 });
             })
             .catch(() => {
+                if (el.__stmShadowRenderToken !== shadowRenderToken || !el.isConnected) {
+                    return;
+                }
                 shadow.innerHTML = `<div class="scroll-wrapper markdown-body">运行时模块加载失败，无法渲染 HTML 预览。</div>`;
             });
         return;
@@ -268,7 +471,8 @@ export function updateShadowContent(el, content, options = {}) {
                         min-height: ${hostMinHeight};
                         max-height: ${hostMaxHeight};
                         width: 100%;
-                        overflow: visible;
+                        height: ${hostHeight};
+                        overflow: ${hostOverflow};
                         background-color: transparent;
                         color: var(--text-main, #e5e7eb);
                         font-family: ui-sans-serif, system-ui, sans-serif;
@@ -279,7 +483,8 @@ export function updateShadowContent(el, content, options = {}) {
                         min-height: ${hostMinHeight};
                         max-height: ${hostMaxHeight};
                         width: 100%;
-                        overflow: visible;
+                        height: ${wrapperHeight};
+                        overflow: ${wrapperOverflow};
                         padding: 1rem;
                         box-sizing: border-box;
                     }
@@ -305,4 +510,195 @@ export function updateShadowContent(el, content, options = {}) {
 
     const htmlWrapper = renderedHtml || '<div style="color: gray; font-style: italic;">空内容</div>';
     shadow.innerHTML = style + `<div class="scroll-wrapper markdown-body">${htmlWrapper}</div>`;
+}
+
+export function updateMixedPreviewContent(el, content, options = {}) {
+    if (!el) return;
+
+    const renderVersion = Number(el.__stmMixedPreviewVersion || 0) + 1;
+    el.__stmMixedPreviewVersion = renderVersion;
+    const scrollMode = Boolean(options.scroll);
+
+    destroyMixedPreviewHost(el);
+
+    if (!el.shadowRoot) {
+        el.attachShadow({ mode: 'open' });
+    }
+
+    const minHeight = Number.parseInt(options.minHeight, 10);
+    const maxHeight = Number.parseInt(options.maxHeight, 10);
+    const hostMinHeight = Number.isFinite(minHeight) ? `${Math.max(0, minHeight)}px` : '0px';
+    const hostMaxHeight = Number.isFinite(maxHeight) ? `${Math.max(0, maxHeight)}px` : 'none';
+    const shadow = el.shadowRoot;
+
+    shadow.innerHTML = `
+        <style>
+            :host {
+                display: block;
+                min-height: ${hostMinHeight};
+                max-height: ${hostMaxHeight};
+                width: 100%;
+                height: ${scrollMode ? '100%' : 'auto'};
+                overflow: ${scrollMode ? 'hidden' : 'visible'};
+                background-color: transparent;
+                color: var(--text-main, #e5e7eb);
+                font-family: ui-sans-serif, system-ui, sans-serif;
+                font-size: 0.9rem;
+                line-height: 1.6;
+            }
+            .mixed-preview-scroll {
+                min-height: ${hostMinHeight};
+                max-height: ${hostMaxHeight};
+                width: 100%;
+                height: ${scrollMode ? '100%' : 'auto'};
+                overflow: ${scrollMode ? 'auto' : 'visible'};
+                box-sizing: border-box;
+                padding: 1rem;
+                scrollbar-gutter: stable both-edges;
+                scrollbar-width: thin;
+                scrollbar-color: color-mix(in srgb, var(--accent-main, #3b82f6) 48%, var(--border-light, #475569)) transparent;
+            }
+            .mixed-preview-host {
+                width: 100%;
+                min-width: 0;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+            .mixed-preview-host .chat-message-render-chunk {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                margin: 0;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+            .mixed-preview-host .chat-message-render-chunk + .chat-message-render-chunk,
+            .mixed-preview-host .chat-message-render-chunk + .chat-message-pre-anchor,
+            .mixed-preview-host .chat-message-pre-anchor + .chat-message-render-chunk,
+            .mixed-preview-host .chat-message-pre-anchor + .chat-message-pre-anchor {
+                margin-top: 0.9rem;
+            }
+            .mixed-preview-host .chat-message-pre-anchor {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                overflow: hidden;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+            .mixed-preview-host .chat-reader-app-stage-shell,
+            .mixed-preview-host .chat-reader-app-stage-frame,
+            .mixed-preview-host .stm-render-shell,
+            .mixed-preview-host .stm-render-frame {
+                min-height: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            .mixed-preview-host .chat-reader-app-stage-shell,
+            .mixed-preview-host .stm-render-shell {
+                overflow: hidden !important;
+            }
+            .mixed-preview-host img {
+                max-width: 100%;
+                height: auto;
+            }
+            .mixed-preview-host .preview-plain-text {
+                padding: 0.9rem 1rem;
+                border-radius: 12px;
+                border: 1px solid color-mix(in srgb, var(--accent-main, #3b82f6) 30%, var(--border-light, #334155));
+                background: color-mix(in srgb, var(--bg-body, #0f172a) 72%, transparent);
+                color: inherit;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+                line-height: 1.85;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            }
+            .mixed-preview-host .preview-plain-text > :first-child {
+                margin-top: 0;
+            }
+            .mixed-preview-host .preview-plain-text > :last-child {
+                margin-bottom: 0;
+            }
+            .mixed-preview-host pre {
+                background: rgba(0,0,0,0.3);
+                padding: 1em;
+                border-radius: 6px;
+                overflow-x: auto;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+            .mixed-preview-host code {
+                font-family: monospace;
+            }
+            .mixed-preview-scroll::-webkit-scrollbar,
+            .mixed-preview-host pre::-webkit-scrollbar {
+                width: 8px;
+                height: 8px;
+            }
+            .mixed-preview-scroll::-webkit-scrollbar-track,
+            .mixed-preview-host pre::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .mixed-preview-scroll::-webkit-scrollbar-thumb,
+            .mixed-preview-host pre::-webkit-scrollbar-thumb {
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--accent-main, #3b82f6) 42%, var(--border-light, #475569));
+                border: 2px solid transparent;
+                background-clip: padding-box;
+            }
+            .mixed-preview-scroll::-webkit-scrollbar-thumb:hover,
+            .mixed-preview-host pre::-webkit-scrollbar-thumb:hover {
+                background: color-mix(in srgb, var(--accent-main, #3b82f6) 62%, var(--border-light, #475569));
+                border: 2px solid transparent;
+                background-clip: padding-box;
+            }
+        </style>
+        <div class="mixed-preview-scroll markdown-body">
+            <div class="mixed-preview-host"></div>
+        </div>
+    `;
+
+    const host = shadow.querySelector('.mixed-preview-host');
+    if (!(host instanceof HTMLElement)) {
+        return;
+    }
+
+    el.__stmMixedPreviewHost = host;
+
+    const source = String(content || '');
+    if (!source.trim()) {
+        const emptyHtml = options.emptyHtml || '<span class="text-gray-500 italic">空内容</span>';
+        host.innerHTML = emptyHtml;
+        return;
+    }
+
+    const parts = buildMixedPreviewParts(source, options);
+
+    loadMessageSegmentRendererModule()
+        .then((module) => {
+            if (el.__stmMixedPreviewVersion !== renderVersion || !el.isConnected) {
+                return;
+            }
+
+            module.mountMessageSegmentHost(host, {
+                source,
+                parts,
+                classifyFrontendText: (text) => classifyPreviewFrontendText(text, options),
+                assetBase: options.assetBase || '',
+                runtimeOwner: options.runtimeOwner || 'preview',
+                runtimeLabel: options.runtimeLabel || 'Preview Segment',
+            });
+        })
+        .catch(() => {
+            if (el.__stmMixedPreviewVersion !== renderVersion || !el.isConnected) {
+                return;
+            }
+            host.innerHTML = renderMarkdown(parts
+                .filter(part => part.type === 'markdown')
+                .map(part => String(part.text || ''))
+                .join('\n\n') || source);
+        });
 }

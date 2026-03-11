@@ -582,20 +582,20 @@
 
                                 <!-- 编辑模式 - 编辑状态 -->
                                 <textarea x-show="isEditMode && !showFirstPreview" x-model="editingData.first_mes"
-                                    class="form-textarea" style="height: 10rem; resize:none;"></textarea>
+                                    class="form-textarea detail-dialog-grow-box" style="resize:none;"></textarea>
 
                                 <!-- 编辑模式或阅览模式 - HTML预览 -->
-                                <div x-show="showFirstPreview" class="form-textarea custom-scrollbar"
-                                    style="height: 10rem; background: var(--bg-panel); border-color: var(--accent-main); padding: 0; overflow: auto;"
-                                    x-effect="updateShadowContent($el, showFirstPreview ? editingData.first_mes : null)">
+                                <div x-show="showFirstPreview" class="detail-render-box custom-scrollbar detail-dialog-grow-box"
+                                    style="background: var(--bg-panel); border-color: var(--accent-main); padding: 0; overflow: auto;"
+                                    x-effect="updateMixedPreviewContent($el, showFirstPreview ? editingData.first_mes : null, { runtimeOwner: 'card-first-message', runtimeLabel: 'Card First Message Preview', scroll: true, minHeight: 220, maxHeight: 3200 })">
                                 </div>
                                 
                                 <!-- 阅览模式 - 只读文本 -->
                                 <textarea x-show="!isEditMode && !showFirstPreview && editingData.first_mes" 
                                     readonly
                                     x-model="editingData.first_mes"
-                                    class="form-textarea custom-scrollbar" 
-                                    style="height: 10rem; resize:none; background: var(--bg-sub); border-color: var(--border-light); color: var(--text-dim); cursor: default;"></textarea>
+                                    class="form-textarea custom-scrollbar detail-dialog-grow-box" 
+                                    style="resize:none; background: var(--bg-sub); border-color: var(--border-light); color: var(--text-dim); cursor: default;"></textarea>
                             </div>
 
                             <!-- Mes Example -->

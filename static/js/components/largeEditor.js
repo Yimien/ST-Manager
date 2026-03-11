@@ -3,7 +3,7 @@
  * 通用大文本/富文本编辑器组件
  */
 
-import { insertAtCursor, updateShadowContent, renderMarkdown } from '../utils/dom.js';
+import { insertAtCursor, updateShadowContent, updateMixedPreviewContent, renderMarkdown } from '../utils/dom.js';
 import { uploadNoteImage } from '../api/resource.js';
 
 export default function largeEditor() {
@@ -34,6 +34,7 @@ export default function largeEditor() {
         editingDataRef: null, 
 
         updateShadowContent,
+        updateMixedPreviewContent,
         renderMarkdown,
 
         get editingData() { return this.editingDataRef || {}; },

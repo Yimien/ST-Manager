@@ -5,7 +5,7 @@
 
 import { ManagerScriptRuntime } from '../runtime/scriptRuntime.js';
 import { subscribeRuntimeManager } from '../runtime/runtimeManager.js';
-import { updateShadowContent } from '../utils/dom.js';
+import { updateShadowContent, updateMixedPreviewContent } from '../utils/dom.js';
 
 export default function advancedEditor() {
     return {
@@ -57,6 +57,7 @@ export default function advancedEditor() {
         fileType: null, // 'regex' | 'script'
 
         updateShadowContent,
+        updateMixedPreviewContent,
         scriptRuntime: null,
         _runtimeManagerUnsubscribe: null,
 

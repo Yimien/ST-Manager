@@ -64,7 +64,7 @@
                     如果是 MD 模式   -> 传 renderMarkdown(content)
                 -->
             <div x-show="markdownPreview" class="large-editor-preview"
-                x-effect="updateShadowContent($el, markdownPreview ? (largeRenderMode === 'html' ? largeEditorContent : renderMarkdown(largeEditorContent)) : null)">
+                x-effect="largeRenderMode === 'html' ? updateMixedPreviewContent($el, markdownPreview ? largeEditorContent : null, { runtimeOwner: 'large-editor', runtimeLabel: 'Large Editor Preview', scroll: true, minHeight: 220, maxHeight: 3200 }) : updateShadowContent($el, markdownPreview ? renderMarkdown(largeEditorContent) : null, { scroll: true })">
             </div>
 
             <div class="large-editor-footer">

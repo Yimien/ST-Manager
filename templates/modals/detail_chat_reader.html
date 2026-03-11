@@ -432,7 +432,7 @@
                     <textarea x-model="regexTestInput" class="form-textarea chat-reader-floor-editor chat-reader-floor-editor--raw" style="min-height: 14rem;" placeholder="贴一段原始消息文本，实时查看当前规则的显示效果"></textarea>
                     <div class="chat-reader-sideblock-card">
                         <div class="chat-message-sideblock-title">渲染预览</div>
-                        <div class="chat-message-content markdown-body st-reader-floor-0" x-html="renderMessageDisplayHtml(regexTestPreview)" x-effect="mountMessageDisplay($el, regexTestPreview)"></div>
+                        <div class="chat-message-content markdown-body st-reader-floor-0 chat-reader-regex-preview custom-scrollbar" x-html="renderMessageDisplayHtml(regexTestPreview)" x-effect="mountMessageDisplay($el, regexTestPreview)"></div>
                     </div>
                 </div>
             </div>

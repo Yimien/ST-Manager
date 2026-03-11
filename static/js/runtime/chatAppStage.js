@@ -194,6 +194,7 @@ function createSupportStyle(initialViewportHeight, options = {}) {
     const resolvedHeight = Number.isFinite(Number(initialViewportHeight)) && Number(initialViewportHeight) > 0
         ? `${Math.ceil(Number(initialViewportHeight))}px`
         : '100vh';
+    const embedded = options && options.embedded === true;
 
     return [
         '<style>',
@@ -201,6 +202,60 @@ function createSupportStyle(initialViewportHeight, options = {}) {
         `  --TH-viewport-height: ${resolvedHeight};`,
         '  color-scheme: normal;',
         '}',
+        ...(embedded ? [
+            '*, *::before, *::after {',
+            '  box-sizing: border-box;',
+            '}',
+            'html, body {',
+            '  width: 100% !important;',
+            '  max-width: 100% !important;',
+            '  margin: 0 !important;',
+            '  padding: 0 !important;',
+            '  overflow-x: hidden !important;',
+            '  background: transparent !important;',
+            '}',
+            'body {',
+            '  display: block !important;',
+            '  position: relative !important;',
+            '  min-height: auto !important;',
+            '  min-width: 0 !important;',
+            '}',
+            'body, body * {',
+            '  min-width: 0 !important;',
+            '}',
+            'body > * {',
+            '  max-width: 100% !important;',
+            '  min-width: 0 !important;',
+            '  margin-left: auto !important;',
+            '  margin-right: auto !important;',
+            '  overflow-x: hidden !important;',
+            '}',
+            'input, textarea, select, button {',
+            '  max-width: 100% !important;',
+            '  box-sizing: border-box !important;',
+            '}',
+            'img, video, audio, canvas, svg, iframe, embed, object {',
+            '  max-width: 100% !important;',
+            '  height: auto !important;',
+            '}',
+            'table {',
+            '  display: block !important;',
+            '  max-width: 100% !important;',
+            '  overflow-x: auto !important;',
+            '}',
+            'pre {',
+            '  max-width: 100% !important;',
+            '  overflow: auto !important;',
+            '  white-space: pre-wrap !important;',
+            '  word-break: break-word !important;',
+            '}',
+            '[style*="position: fixed"],',
+            '[style*="position:fixed"],',
+            '[style*="position: sticky"],',
+            '[style*="position:sticky"] {',
+            '  position: absolute !important;',
+            '}',
+        ] : []),
         '</style>',
     ].join('');
 }
@@ -578,7 +633,7 @@ function injectIntoFullDocument(htmlPayload, injectedHead) {
 }
 
 
-function buildChatAppDocument({ stageId, htmlPayload, assetBase = '', context = {}, activeContext = {}, storageState = {}, initialViewportHeight = 0 }) {
+function buildChatAppDocument({ stageId, htmlPayload, assetBase = '', context = {}, activeContext = {}, storageState = {}, initialViewportHeight = 0, embedded = false }) {
     const baseHref = normalizeAssetBase(assetBase);
     const compatScript = buildCompatScript({
         stageId,
@@ -592,7 +647,7 @@ function buildChatAppDocument({ stageId, htmlPayload, assetBase = '', context = 
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
         `<base href="${baseHref}">`,
-        createSupportStyle(initialViewportHeight),
+        createSupportStyle(initialViewportHeight, { embedded }),
         `<script>${compatScript}</script>`,
     ].join('');
 
@@ -627,6 +682,8 @@ function detectAppFrameHeight(htmlPayload = '') {
 export class ChatAppStage {
     constructor(callbacks = {}) {
         this.callbacks = callbacks;
+        this.minHeight = Number.isFinite(Number(callbacks.minHeight)) ? Number(callbacks.minHeight) : 0;
+        this.maxHeight = Number.isFinite(Number(callbacks.maxHeight)) ? Number(callbacks.maxHeight) : 0;
         this.host = null;
         this.shell = null;
         this.iframe = null;
@@ -680,12 +737,25 @@ export class ChatAppStage {
             return this.resolveViewportStageHeight();
         }
 
+        if (this.minHeight > 0) {
+            return Math.max(24, Math.ceil(this.minHeight));
+        }
+
         return Math.max(DEFAULT_STAGE_MIN_HEIGHT, detectAppFrameHeight(this.currentHtmlPayload));
     }
 
     resolveMaxHeight() {
         if (this.isViewportStage()) {
             return this.resolveViewportStageHeight();
+        }
+
+        if (this.maxHeight > 0) {
+            return Math.max(this.resolveMinHeight(), Math.ceil(this.maxHeight));
+        }
+
+        const rectHeight = Math.ceil(this.host?.getBoundingClientRect?.().height || 0);
+        if (rectHeight > 0) {
+            return Math.max(this.resolveMinHeight(), rectHeight);
         }
 
         return Math.max(this.resolveMinHeight(), DEFAULT_STAGE_MAX_HEIGHT);
@@ -726,6 +796,11 @@ export class ChatAppStage {
         if (!this.host) {
             return;
         }
+
+        this.host.style.width = '100%';
+        this.host.style.maxWidth = '100%';
+        this.host.style.minWidth = '0';
+        this.host.style.overflow = 'hidden';
 
         if (!this.shell) {
             const shell = document.createElement('div');
@@ -815,6 +890,7 @@ export class ChatAppStage {
             activeContext: this.activeRuntimeContext,
             storageState: this.storageState,
             initialViewportHeight: window.innerHeight,
+            embedded: !this.isViewportStage(),
         });
     }
 

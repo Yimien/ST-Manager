@@ -5,6 +5,27 @@ import { ChatAppStage } from './chatAppStage.js';
 const registry = new Map();
 let cleanupObserverAttached = false;
 
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderPlainTextHtml(source) {
+    const normalized = String(source || '').replace(/\r\n?/g, '\n').trim();
+    if (!normalized) {
+        return '<p></p>';
+    }
+
+    return normalized
+        .split(/\n{2,}/)
+        .map((block) => `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`)
+        .join('');
+}
+
 function cleanupDisconnectedHosts() {
     for (const [host, state] of registry.entries()) {
         if (!host.isConnected) {
@@ -35,6 +56,8 @@ function mountAnchorContent(anchor, classification, text, options = {}) {
             onTriggerSlash: options.onTriggerSlash,
             onToast: options.onToast,
             onAppError: options.onAppError,
+            minHeight: Number(classification.minHeight || 0),
+            maxHeight: Number(classification.maxHeight || 0),
         });
         stage.attachHost(anchor);
         stage.update({
@@ -191,6 +214,13 @@ function mountMarkdownSource(host, source, classify, options, anchors) {
     });
 }
 
+function mountPlainTextSource(host, source) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat-message-render-chunk chat-message-render-chunk--plain';
+    wrapper.innerHTML = `<div class="preview-plain-text">${renderPlainTextHtml(source)}</div>`;
+    host.appendChild(wrapper);
+}
+
 export function destroyMessageSegmentHost(host) {
     const state = registry.get(host);
     if (!state) return;
@@ -233,6 +263,11 @@ export function mountMessageSegmentHost(host, options = {}) {
         const anchors = [];
 
         parts.forEach((part) => {
+            if (part.type === 'text') {
+                mountPlainTextSource(host, String(part.text || ''));
+                return;
+            }
+
             if (part.type === 'markdown') {
                 mountMarkdownSource(host, String(part.text || ''), classify, options, anchors);
                 return;
