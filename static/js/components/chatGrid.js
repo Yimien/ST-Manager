@@ -2164,14 +2164,14 @@ export default function chatGrid() {
                 this.detectChatAppMode();
                 this.regexConfigDraft = normalizeRegexConfig(this.activeRegexConfig);
                 this.regexConfigSourceLabel = this.describeRegexConfigSource(res.chat);
-                this.readerViewportFloor = Number(res.chat.last_view_floor || res.chat.messages?.length || 1);
+                const initialFloor = Number(res.chat.last_view_floor || res.chat.messages?.length || 1);
+                this.readerViewportFloor = initialFloor;
                 this.setReaderWindowAroundFloor(this.readerViewportFloor || 1, 'center');
                 this.$nextTick(() => {
                     this.mountChatAppStage();
                     this.syncChatAppStage();
                     this.updateReaderLayoutMetrics();
-                    this.syncReaderViewportFloor();
-                    this.scrollToFloor(res.chat.last_view_floor || 1, false);
+                    this.scrollToFloor(initialFloor || 1, false, 'auto');
                 });
             } catch (err) {
                 alert('读取聊天详情失败: ' + err);
@@ -3205,7 +3205,19 @@ export default function chatGrid() {
                 return '<div class="chat-message-content chat-message-content--compact">空内容</div>';
             }
 
-            return renderMarkdown(source);
+            const scopeClass = `st-reader-floor-${Number(message?.floor || 0) || 0}`;
+            const flags = resolveReaderFormatFlags(message);
+            return formatScopedDisplayedHtml(source, {
+                scopeClass,
+                renderMode: 'literal',
+                speakerName: flags.speakerName,
+                stripSpeakerPrefix: flags.stripSpeakerPrefix,
+                encodeTags: flags.encodeTags,
+                promptBias: flags.promptBias,
+                hidePromptBias: flags.hidePromptBias,
+                reasoningMarkers: flags.reasoningMarkers,
+                blockMedia: true,
+            });
         },
 
         syncMessageDisplay(el, message, variant = 'full') {

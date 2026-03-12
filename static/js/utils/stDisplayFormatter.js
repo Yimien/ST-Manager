@@ -12,6 +12,7 @@ const DISALLOWED_RENDER_TAGS = new Set([
 const CLASS_PRESERVE_PREFIXES = ['fa-', 'note-'];
 const CLASS_PRESERVE_EXACT = new Set(['monospace']);
 const MEDIA_TAGS = new Set(['img', 'video', 'audio', 'source', 'track']);
+const BLOCKABLE_MEDIA_TAGS = new Set(['img', 'picture', 'video', 'audio', 'source', 'track', 'embed', 'object']);
 let domPurifyHooksInstalled = false;
 
 
@@ -235,11 +236,20 @@ function installDomPurifyHooks() {
                 textNode.replaceWith(fragment);
             }
         }
+
+        if (!config.MESSAGE_BLOCK_MEDIA || !(node instanceof Element)) {
+            return;
+        }
+
+        if (BLOCKABLE_MEDIA_TAGS.has(node.tagName.toLowerCase())) {
+            node.remove();
+        }
     });
 }
 
 
-function sanitizeRenderedHtml(html) {
+function sanitizeRenderedHtml(html, options = {}) {
+    const blockMedia = options.blockMedia === true;
     if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
         installDomPurifyHooks();
         return DOMPurify.sanitize(String(html || ''), {
@@ -248,6 +258,7 @@ function sanitizeRenderedHtml(html) {
             RETURN_TRUSTED_TYPE: false,
             ADD_TAGS: ['custom-style'],
             MESSAGE_SANITIZE: true,
+            MESSAGE_BLOCK_MEDIA: blockMedia,
         });
     }
 
@@ -260,6 +271,11 @@ function sanitizeRenderedHtml(html) {
         if (!(element instanceof Element)) continue;
 
         if (DISALLOWED_RENDER_TAGS.has(element.tagName.toLowerCase())) {
+            element.remove();
+            continue;
+        }
+
+        if (blockMedia && BLOCKABLE_MEDIA_TAGS.has(element.tagName.toLowerCase())) {
             element.remove();
             continue;
         }
@@ -503,13 +519,16 @@ export function formatScopedDisplayedHtml(source, options = {}) {
 
     const scopeClass = String(options.scopeClass || 'stm-reader-scope');
     const scopeSelector = `.${scopeClass}`;
-    const renderMode = options.renderMode === 'plain' ? 'plain' : 'markdown';
+    const renderMode = ['markdown', 'plain', 'literal'].includes(String(options.renderMode || ''))
+        ? String(options.renderMode)
+        : 'markdown';
     const speakerName = String(options.speakerName || '');
     const stripSpeakerPrefix = options.stripSpeakerPrefix === true;
     const encodeTags = options.encodeTags === true;
     const promptBias = String(options.promptBias || '');
     const hidePromptBias = options.hidePromptBias === true;
     const reasoningMarkers = Array.isArray(options.reasoningMarkers) ? options.reasoningMarkers : [];
+    const blockMedia = options.blockMedia === true;
 
     let preparedText = text;
 
@@ -537,9 +556,11 @@ export function formatScopedDisplayedHtml(source, options = {}) {
             const html = renderMarkdown(protectedText);
             return postProcessMarkdownHtml(restoreInlineHtmlBlocks(html, placeholders));
         })()
-        : `<div>${escapeHtml(text).replace(/\n/g, '<br>')}</div>`;
+        : renderMode === 'literal'
+            ? `<pre><code>${escapeHtml(finalText)}</code></pre>`
+            : `<div>${escapeHtml(finalText).replace(/\n/g, '<br>')}</div>`;
 
     const encodedStyles = encodeStyleTags(renderedHtml);
-    const sanitizedHtml = sanitizeRenderedHtml(encodedStyles);
+    const sanitizedHtml = sanitizeRenderedHtml(encodedStyles, { blockMedia });
     return decodeScopedStyleTags(sanitizedHtml, scopeSelector);
 }
