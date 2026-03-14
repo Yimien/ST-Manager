@@ -4837,16 +4837,33 @@ export default function chatGrid() {
             this.regexConfigStatus = '已清空聊天自定义规则，保存后将恢复为角色卡继承';
         },
 
-        exportRegexConfigDraft() {
-            const payload = normalizeRegexConfig(this.regexConfigDraft, { fillDefaults: false });
+        downloadRegexConfigExport(payload, filenamePrefix, statusMessage) {
             const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `chat-reader-regex-${Date.now()}.json`;
+            link.download = `${filenamePrefix}-${Date.now()}.json`;
             link.click();
             URL.revokeObjectURL(url);
-            this.regexConfigStatus = '已导出当前聊天自定义规则';
+            this.regexConfigStatus = statusMessage;
+        },
+
+        exportEffectiveRegexConfig() {
+            const payload = normalizeRegexConfig(this.activeRegexConfig, { fillDefaults: false });
+            this.downloadRegexConfigExport(
+                payload,
+                'chat-reader-effective-regex',
+                '已导出当前实际生效规则',
+            );
+        },
+
+        exportRegexConfigDraft() {
+            const payload = normalizeRegexConfig(this.regexConfigDraft, { fillDefaults: false });
+            this.downloadRegexConfigExport(
+                payload,
+                'chat-reader-regex-draft',
+                '已导出当前聊天自定义规则',
+            );
         },
 
         openRegexConfig() {

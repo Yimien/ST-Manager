@@ -360,6 +360,7 @@
                 </div>
                 <div class="chat-reader-regex-toolbar-group">
                     <span class="chat-reader-regex-toolbar-label">操作</span>
+                    <button class="chat-toolbar-btn" @click="exportEffectiveRegexConfig()">导出生效规则</button>
                     <button class="chat-toolbar-btn" @click="exportRegexConfigDraft()">导出草稿</button>
                     <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveRegexConfig()">保存到当前聊天</button>
                     <button class="chat-toolbar-btn" @click="closeRegexConfig()">关闭</button>
