@@ -661,6 +661,68 @@ function createReaderManifestMessages(messageIndex, totalCount = 0) {
 }
 
 
+function isReaderIgnorableTailPlaceholder(entry) {
+    const source = entry && typeof entry === 'object'
+        ? (entry.message && typeof entry.message === 'object' ? entry.message : entry)
+        : {};
+    if (source.is_user || source.is_system) {
+        return false;
+    }
+
+    const previewText = String(
+        source.preview
+        ?? source.preview_text
+        ?? source.content
+        ?? source.mes
+        ?? '',
+    ).trim();
+    if (previewText) {
+        return false;
+    }
+
+    const extra = source.extra && typeof source.extra === 'object' ? source.extra : {};
+    if (String(extra.display_text || '').trim()) {
+        return false;
+    }
+
+    if (Array.isArray(source.swipes)) {
+        return source.swipes.length > 0 && source.swipes.every(item => !String(item || '').trim());
+    }
+
+    return !Boolean(source.has_runtime_candidate);
+}
+
+
+function trimReaderIgnorableTailEntries(entries = []) {
+    const source = Array.isArray(entries) ? entries.slice() : [];
+    while (source.length && isReaderIgnorableTailPlaceholder(source[source.length - 1])) {
+        source.pop();
+    }
+    return source;
+}
+
+
+function resolveReaderEffectiveMessageCount(chat = null) {
+    const source = chat && typeof chat === 'object' ? chat : {};
+    const indexedMessages = trimReaderIgnorableTailEntries(source.message_index);
+    if (indexedMessages.length) {
+        return indexedMessages.length;
+    }
+
+    const parsedMessages = trimReaderIgnorableTailEntries(source.messages);
+    if (parsedMessages.length) {
+        return parsedMessages.length;
+    }
+
+    const rawMessages = trimReaderIgnorableTailEntries(source.raw_messages);
+    if (rawMessages.length) {
+        return rawMessages.length;
+    }
+
+    return Math.max(0, Number(source.message_count || 0));
+}
+
+
 function createReaderVisibleMessagesCache() {
     return {
         messagesRef: null,
@@ -876,15 +938,70 @@ function getDisplayRuleRegexSource(rule, options = {}) {
 }
 
 
+function getReaderDisplayRuleOrderBucket(rule, index = 0) {
+    const normalized = normalizeDisplayRule(rule, index);
+    const pattern = String(normalized.findRegex || '').toLowerCase();
+    const replace = String(normalized.replaceString || '');
+    const actionTag = `<${'\u884c\u52a8\u9009\u9879'}>`;
+
+    if (pattern.includes('think')) {
+        return -100;
+    }
+
+    if (pattern.includes(actionTag) && pattern.includes('statusplaceholderimpl')) {
+        return -60;
+    }
+
+    if (
+        pattern.includes('summary')
+        || pattern.includes('statusplaceholderimpl')
+        || pattern.includes('now_plot')
+        || pattern.includes('updatevariable')
+        || pattern.includes('<update>')
+    ) {
+        return -50;
+    }
+
+    if (/<!doctype html|<html[\s>]|```html|```text|<style[\s>]|<script[\s>]/i.test(replace)) {
+        return 20;
+    }
+
+    return 0;
+}
+
+
+function orderReaderDisplayRules(rules = []) {
+    return (Array.isArray(rules) ? rules : [])
+        .map((rule, index) => ({
+            rule,
+            index,
+            bucket: getReaderDisplayRuleOrderBucket(rule, index),
+        }))
+        .sort((left, right) => left.bucket - right.bucket || left.index - right.index)
+        .map((entry) => entry.rule);
+}
+
+
+function stripReaderControlBlocks(text) {
+    let output = String(text || '');
+
+    output = output.replace(/<disclaimer\b[^>]*>[\s\S]*?<\/disclaimer>/gi, '\n');
+    output = output.replace(/(?:\n\s*){3,}/g, '\n\n');
+
+    return output.trim();
+}
+
+
 export function applyDisplayRules(text, config) {
     let content = String(text || '');
-    const rules = Array.isArray(config?.displayRules) ? config.displayRules : [];
+    const sourceRules = Array.isArray(config?.displayRules) ? config.displayRules : [];
     const options = arguments[2] && typeof arguments[2] === 'object' ? arguments[2] : {};
     const placement = Number(options.placement ?? READER_REGEX_PLACEMENT.AI_OUTPUT);
     const isMarkdown = options.isMarkdown !== false;
     const isPrompt = options.isPrompt === true;
     const isEdit = options.isEdit === true;
     const readerDisplayRules = options.readerDisplayRules === true;
+    const rules = readerDisplayRules ? orderReaderDisplayRules(sourceRules) : sourceRules;
     const macroContext = options.macroContext && typeof options.macroContext === 'object' ? options.macroContext : {};
     const depth = typeof options.depth === 'number' ? options.depth : null;
     const depthInfo = options.depthInfo && typeof options.depthInfo === 'object' ? options.depthInfo : {};
@@ -986,7 +1103,7 @@ export function applyDisplayRules(text, config) {
         }
     }
 
-    return content;
+    return readerDisplayRules ? stripReaderControlBlocks(content) : content;
 }
 
 
@@ -1555,9 +1672,11 @@ function resolveReaderAnchorMessageIndex(usableMessages, anchorFloor) {
 
 function resolveReaderMessageDepthInfo(rawMessages, floor, anchorFloor = 0) {
     const list = Array.isArray(rawMessages) ? rawMessages : [];
-    const usableMessages = list
-        .map((item, index) => ({ message: item, index: index + 1 }))
-        .filter(entry => !entry.message?.is_system);
+    const usableMessages = trimReaderIgnorableTailEntries(
+        list
+            .map((item, index) => ({ message: item, index: index + 1 }))
+            .filter(entry => !entry.message?.is_system),
+    );
     const currentIndex = usableMessages.findIndex(entry => entry.index === Number(floor || 0));
     if (currentIndex === -1) {
         return {
@@ -1622,6 +1741,9 @@ function buildReaderDisplaySource(messageText, config, options = {}) {
     if (!messageText) return '';
 
     let displayText = String(messageText || '');
+    const normalizedPlacement = Number.isFinite(Number(options.placement))
+        ? Number(options.placement)
+        : READER_REGEX_PLACEMENT.AI_OUTPUT;
     const macroContext = options.macroContext && typeof options.macroContext === 'object' ? options.macroContext : {};
     const depth = typeof options.depth === 'number' ? options.depth : null;
     const depthInfo = options.depthInfo && typeof options.depthInfo === 'object' ? options.depthInfo : null;
@@ -1631,7 +1753,7 @@ function buildReaderDisplaySource(messageText, config, options = {}) {
 
     return applyDisplayRules(strippedDisplayText, config, {
         ...options,
-        placement: READER_REGEX_PLACEMENT.MD_DISPLAY,
+        placement: normalizedPlacement,
         isMarkdown: true,
         readerDisplayRules: true,
         macroContext,
@@ -2000,7 +2122,7 @@ export default function chatGrid() {
         set chatFilterType(val) { this.$store.global.chatFilterType = val; },
 
         get readerTotalMessages() {
-            return Number(this.activeChat?.message_count || this.activeChat?.messages?.length || 0);
+            return resolveReaderEffectiveMessageCount(this.activeChat);
         },
 
         get readerTotalPages() {
@@ -2357,14 +2479,22 @@ export default function chatGrid() {
 
         buildReaderManifestChat(chat) {
             const source = chat && typeof chat === 'object' ? chat : {};
-            const messageIndex = Array.isArray(source.message_index) ? source.message_index : [];
-            const total = Math.max(
-                0,
-                Number(source.message_count || 0) || messageIndex.length,
+            const messageIndex = trimReaderIgnorableTailEntries(
+                Array.isArray(source.message_index) ? source.message_index : [],
             );
+            const total = resolveReaderEffectiveMessageCount({
+                ...source,
+                message_index: messageIndex,
+            });
 
             return {
                 ...source,
+                source_message_count: Math.max(
+                    0,
+                    Number(source.message_count || 0) || messageIndex.length,
+                ),
+                message_count: total,
+                end_floor: total,
                 page_size: Math.max(1, Number(source.page_size || CHAT_READER_PAGE_SIZE)),
                 message_index: messageIndex,
                 messages: createReaderManifestMessages(messageIndex, total),

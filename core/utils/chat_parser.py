@@ -162,6 +162,52 @@ def _looks_like_runtime_candidate(message_text):
     return re.search(RUNTIME_CANDIDATE_PATTERN, message_text, re.IGNORECASE) is not None
 
 
+def _is_ignorable_tail_placeholder_message(raw_message):
+    source = raw_message if isinstance(raw_message, dict) else {}
+    if source.get('is_user') or source.get('is_system'):
+        return False
+
+    message_text = str(source.get('mes') or '').strip()
+    if message_text:
+        return False
+
+    extra = source.get('extra') if isinstance(source.get('extra'), dict) else {}
+    if str(extra.get('display_text') or '').strip():
+        return False
+
+    swipes = source.get('swipes') if isinstance(source.get('swipes'), list) else []
+    if not swipes:
+        return False
+
+    return all(not str(item or '').strip() for item in swipes)
+
+
+def _is_ignorable_tail_placeholder_index_item(index_item):
+    source = index_item if isinstance(index_item, dict) else {}
+    if source.get('is_user') or source.get('is_system'):
+        return False
+
+    if str(source.get('preview') or '').strip():
+        return False
+
+    return not bool(source.get('has_runtime_candidate'))
+
+
+def _trim_trailing_items(items, predicate):
+    source = list(items) if isinstance(items, list) else []
+    while source and predicate(source[-1]):
+        source.pop()
+    return source
+
+
+def _trim_trailing_raw_messages(raw_messages):
+    return _trim_trailing_items(raw_messages, _is_ignorable_tail_placeholder_message)
+
+
+def _trim_trailing_message_index(message_index):
+    return _trim_trailing_items(message_index, _is_ignorable_tail_placeholder_index_item)
+
+
 def build_chat_message_index_item(raw_message, floor):
     source = raw_message if isinstance(raw_message, dict) else {}
     message_text = source.get('mes', '') or ''
@@ -200,6 +246,9 @@ def _guess_chat_name(file_path, metadata):
 
 def build_chat_stats(file_path, metadata, raw_messages, parsed_messages):
     source_messages = parsed_messages if isinstance(parsed_messages, list) else []
+    trimmed_raw_messages = _trim_trailing_raw_messages(raw_messages if isinstance(raw_messages, list) else [])
+    if len(trimmed_raw_messages) < len(source_messages):
+        source_messages = source_messages[:len(trimmed_raw_messages)]
     created_at = ''
     if isinstance(metadata, dict):
         chat_meta = metadata.get('chat_metadata') if isinstance(metadata.get('chat_metadata'), dict) else {}
@@ -238,7 +287,7 @@ def build_chat_stats(file_path, metadata, raw_messages, parsed_messages):
 
 
 def build_chat_stats_from_index(file_path, metadata, message_index):
-    source_messages = message_index if isinstance(message_index, list) else []
+    source_messages = _trim_trailing_message_index(message_index if isinstance(message_index, list) else [])
     created_at = ''
     if isinstance(metadata, dict):
         chat_meta = metadata.get('chat_metadata') if isinstance(metadata.get('chat_metadata'), dict) else {}
@@ -339,6 +388,9 @@ def get_chat_jsonl_index(file_path):
             floor = len(message_index) + 1
             message_index.append(build_chat_message_index_item(payload, floor))
             offsets.append(int(offset))
+
+    message_index = _trim_trailing_message_index(message_index)
+    offsets = offsets[:len(message_index)]
 
     result = {
         'file_mtime': file_mtime,
