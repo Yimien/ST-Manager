@@ -91,7 +91,7 @@ function createSupportStyle() {
         '  height: auto !important;',
         '  overflow-x: hidden !important;',
         '  overflow-y: hidden !important;',
-        '  background: transparent !important;',
+        '  background: transparent;',
         '}',
         'body {',
         '  position: relative !important;',

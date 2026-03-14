@@ -139,6 +139,9 @@
                             <input type="checkbox" x-model="readerComponentMode">
                             <span>后挂载实例</span>
                         </label>
+                        <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'scroll' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('scroll')">滚动</button>
+                        <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_non_user' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_non_user')">单页·非用户</button>
+                        <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_pair' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_pair')">单页·对话</button>
                         <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
                         <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
                     </div>
@@ -192,7 +195,13 @@
 
                 <template x-if="activeChat && !detailLoading && !readerAppMode">
                     <div class="chat-message-list">
-                        <div x-show="hasEarlierReaderWindow" class="chat-window-switcher">
+                        <div x-show="isReaderPageMode" class="chat-window-switcher">
+                            <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(-1)" :disabled="!hasPreviousReaderPageGroup">上一页</button>
+                            <span x-text="readerPageGroupStatusText"></span>
+                            <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(1)" :disabled="!hasNextReaderPageGroup">下一页</button>
+                        </div>
+
+                        <div x-show="!isReaderPageMode && hasEarlierReaderWindow" class="chat-window-switcher">
                             <button type="button" class="chat-toolbar-btn" @click="loadPreviousReaderWindow()">加载更早楼层</button>
                             <span x-text="'当前从 #' + readerWindowStartFloor + ' 开始显示'"></span>
                         </div>
@@ -241,9 +250,15 @@
                             </article>
                         </template>
 
-                        <div x-show="hasLaterReaderWindow" class="chat-window-switcher chat-window-switcher--tail">
+                        <div x-show="!isReaderPageMode && hasLaterReaderWindow" class="chat-window-switcher chat-window-switcher--tail">
                             <span x-text="'当前显示到 #' + readerWindowEndFloor"></span>
                             <button type="button" class="chat-toolbar-btn" @click="loadNextReaderWindow()">加载更晚楼层</button>
+                        </div>
+
+                        <div x-show="isReaderPageMode" class="chat-window-switcher chat-window-switcher--tail">
+                            <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(-1)" :disabled="!hasPreviousReaderPageGroup">上一页</button>
+                            <span x-text="readerPageGroupStatusText"></span>
+                            <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(1)" :disabled="!hasNextReaderPageGroup">下一页</button>
                         </div>
                     </div>
                 </template>

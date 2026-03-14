@@ -5,6 +5,7 @@ const CHAT_APP_STAGE_CHANNEL = 'st-manager:chat-app-stage';
 const CHAT_APP_VIEWPORT_VAR = 'var(--TH-viewport-height)';
 const DEFAULT_STAGE_MIN_HEIGHT = 260;
 const DEFAULT_STAGE_MAX_HEIGHT = 3200;
+const DEFAULT_EMBEDDED_STAGE_MIN_HEIGHT = 96;
 
 
 function cloneValue(value) {
@@ -212,16 +213,21 @@ function createSupportStyle(initialViewportHeight, options = {}) {
             '  margin: 0 !important;',
             '  padding: 0 !important;',
             '  overflow-x: hidden !important;',
-            '  background: transparent !important;',
+            '  background: transparent;',
             '}',
             'body {',
             '  display: block !important;',
             '  position: relative !important;',
             '  min-height: auto !important;',
             '  min-width: 0 !important;',
+            '  padding: 0 !important;',
             '}',
             'body, body * {',
             '  min-width: 0 !important;',
+            '}',
+            'body > :not(script):not(style):not(link):not(meta) {',
+            '  margin-top: 0 !important;',
+            '  margin-bottom: 0 !important;',
             '}',
             'body > * {',
             '  max-width: 100% !important;',
@@ -229,6 +235,18 @@ function createSupportStyle(initialViewportHeight, options = {}) {
             '  margin-left: auto !important;',
             '  margin-right: auto !important;',
             '  overflow-x: hidden !important;',
+            '}',
+            'body > header,',
+            'body > .header,',
+            'body > nav,',
+            'body > .nav,',
+            'body > .toolbar,',
+            'body > .top-bar {',
+            '  position: static !important;',
+            '  top: auto !important;',
+            '  right: auto !important;',
+            '  bottom: auto !important;',
+            '  left: auto !important;',
             '}',
             'input, textarea, select, button {',
             '  max-width: 100% !important;',
@@ -833,6 +851,10 @@ export class ChatAppStage {
 
         if (this.minHeight > 0) {
             return Math.max(24, Math.ceil(this.minHeight));
+        }
+
+        if (this.shouldApplyEmbeddedStageStyle()) {
+            return DEFAULT_EMBEDDED_STAGE_MIN_HEIGHT;
         }
 
         return Math.max(DEFAULT_STAGE_MIN_HEIGHT, detectAppFrameHeight(this.currentHtmlPayload));

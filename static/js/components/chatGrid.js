@@ -25,6 +25,8 @@ import { clearActiveRuntimeContext, setActiveRuntimeContext } from '../runtime/r
 
 const CHAT_READER_VIEW_SETTINGS_KEY = 'st_manager.chat_reader.view_settings.v1';
 const CHAT_READER_RENDER_PREFS_KEY = 'st_manager.chat_reader.render_prefs.v1';
+const CHAT_READER_AUTO_PAGE_THRESHOLD = 240;
+const CHAT_READER_PAGE_GROUP_PREFETCH_RADIUS = 1;
 
 const DEFAULT_CHAT_READER_REGEX_CONFIG = {
     displayRules: [],
@@ -55,6 +57,7 @@ const DEFAULT_CHAT_READER_VIEW_SETTINGS = {
 const DEFAULT_CHAT_READER_RENDER_PREFS = {
     renderMode: 'markdown',
     componentMode: true,
+    browseMode: 'auto',
 };
 
 const CHAT_READER_PAGE_SIZE = 96;
@@ -80,6 +83,13 @@ const READER_ANCHOR_SOURCES = {
     APP_STAGE: 'app_stage',
 };
 
+const READER_BROWSE_MODES = {
+    AUTO: 'auto',
+    SCROLL: 'scroll',
+    PAGE_NON_USER: 'page_non_user',
+    PAGE_PAIR: 'page_pair',
+};
+
 
 function normalizeReaderAnchorMode(mode) {
     switch (String(mode || '').trim()) {
@@ -90,6 +100,37 @@ function normalizeReaderAnchorMode(mode) {
         default:
             return READER_ANCHOR_MODES.FOLLOW_VIEWPORT;
     }
+}
+
+
+function normalizeReaderBrowseMode(mode) {
+    switch (String(mode || '').trim()) {
+        case READER_BROWSE_MODES.SCROLL:
+            return READER_BROWSE_MODES.SCROLL;
+        case READER_BROWSE_MODES.PAGE_NON_USER:
+            return READER_BROWSE_MODES.PAGE_NON_USER;
+        case READER_BROWSE_MODES.PAGE_PAIR:
+            return READER_BROWSE_MODES.PAGE_PAIR;
+        default:
+            return READER_BROWSE_MODES.AUTO;
+    }
+}
+
+
+function resolveEffectiveReaderBrowseMode(mode, totalMessages = 0) {
+    const normalized = normalizeReaderBrowseMode(mode);
+    if (normalized === READER_BROWSE_MODES.AUTO) {
+        return Number(totalMessages || 0) >= CHAT_READER_AUTO_PAGE_THRESHOLD
+            ? READER_BROWSE_MODES.PAGE_PAIR
+            : READER_BROWSE_MODES.SCROLL;
+    }
+    return normalized;
+}
+
+
+function isReaderPageBrowseMode(mode) {
+    const normalized = normalizeReaderBrowseMode(mode);
+    return normalized === READER_BROWSE_MODES.PAGE_NON_USER || normalized === READER_BROWSE_MODES.PAGE_PAIR;
 }
 
 
@@ -661,6 +702,84 @@ function createReaderManifestMessages(messageIndex, totalCount = 0) {
 }
 
 
+function createReaderPageGroup(floors = [], index = 0, mode = READER_BROWSE_MODES.SCROLL) {
+    const normalizedFloors = [...new Set(
+        (Array.isArray(floors) ? floors : [])
+            .map(item => Number(item || 0))
+            .filter(Boolean),
+    )].sort((left, right) => left - right);
+
+    if (!normalizedFloors.length) {
+        return null;
+    }
+
+    const startFloor = normalizedFloors[0];
+    const endFloor = normalizedFloors[normalizedFloors.length - 1];
+    const anchorFloor = endFloor;
+
+    return {
+        id: `${mode}:${startFloor}:${endFloor}:${index}`,
+        index,
+        floors: normalizedFloors,
+        startFloor,
+        endFloor,
+        anchorFloor,
+    };
+}
+
+
+function buildReaderPageGroups(activeChat, mode = READER_BROWSE_MODES.SCROLL) {
+    const effectiveMode = normalizeReaderBrowseMode(mode);
+    const messages = Array.isArray(activeChat?.messages) ? activeChat.messages : [];
+    const total = messages.length;
+    if (!total || !isReaderPageBrowseMode(effectiveMode)) {
+        return [];
+    }
+
+    if (effectiveMode === READER_BROWSE_MODES.PAGE_NON_USER) {
+        const groups = messages
+            .filter(message => message && typeof message === 'object' && !message.is_user)
+            .map((message, index) => createReaderPageGroup([Number(message.floor || 0)], index, effectiveMode))
+            .filter(Boolean);
+
+        if (groups.length) {
+            return groups;
+        }
+    }
+
+    const groups = [];
+    const leadInFloors = [];
+    for (let floor = 1; floor <= Math.min(total, 3); floor += 1) {
+        leadInFloors.push(floor);
+    }
+    if (leadInFloors.length) {
+        groups.push(createReaderPageGroup(leadInFloors, groups.length, effectiveMode));
+    }
+
+    for (let startFloor = 4; startFloor <= total; startFloor += 2) {
+        const floors = [startFloor];
+        if (startFloor + 1 <= total) {
+            floors.push(startFloor + 1);
+        }
+        const group = createReaderPageGroup(floors, groups.length, effectiveMode);
+        if (group) {
+            groups.push(group);
+        }
+    }
+
+    return groups.filter(Boolean);
+}
+
+
+function normalizeReaderScopedFloors(floors = []) {
+    return [...new Set(
+        (Array.isArray(floors) ? floors : [])
+            .map(item => Number(item || 0))
+            .filter(Boolean),
+    )].sort((left, right) => left - right);
+}
+
+
 function isReaderIgnorableTailPlaceholder(entry) {
     const source = entry && typeof entry === 'object'
         ? (entry.message && typeof entry.message === 'object' ? entry.message : entry)
@@ -728,6 +847,8 @@ function createReaderVisibleMessagesCache() {
         messagesRef: null,
         bookmarksRef: null,
         detailBookmarkedOnly: false,
+        browseMode: '',
+        pageGroupId: '',
         currentFloor: 0,
         anchorMode: '',
         anchorSource: '',
@@ -830,6 +951,7 @@ function normalizeRenderPreferences(raw) {
     return {
         renderMode,
         componentMode: source.componentMode !== false,
+        browseMode: normalizeReaderBrowseMode(source.browseMode || source.readerBrowseMode),
     };
 }
 
@@ -1001,6 +1123,7 @@ export function applyDisplayRules(text, config) {
     const isPrompt = options.isPrompt === true;
     const isEdit = options.isEdit === true;
     const readerDisplayRules = options.readerDisplayRules === true;
+    const ignoreDepthLimits = options.ignoreDepthLimits === true;
     const rules = readerDisplayRules ? orderReaderDisplayRules(sourceRules) : sourceRules;
     const macroContext = options.macroContext && typeof options.macroContext === 'object' ? options.macroContext : {};
     const depth = typeof options.depth === 'number' ? options.depth : null;
@@ -1050,25 +1173,27 @@ export function applyDisplayRules(text, config) {
         }
         if (isEdit && rule.runOnEdit === false) continue;
         if (Array.isArray(rule.placement) && rule.placement.length > 0 && !rule.placement.includes(placement)) continue;
-        const minDepth = normalizeDepthBound(rule.minDepth);
-        const maxDepth = normalizeDepthBound(rule.maxDepth);
-        const readerDepthMode = normalizeReaderDepthMode(rule.readerDepthMode || rule.reader_depth_mode);
-        const readerMinDepth = normalizeDepthBound(rule.readerMinDepth ?? rule.reader_min_depth);
-        const readerMaxDepth = normalizeDepthBound(rule.readerMaxDepth ?? rule.reader_max_depth);
-        if (legacyReaderDepthMode && !readerDepthMode && (minDepth !== null || maxDepth !== null)) {
-            const legacyReaderDepth = resolveReaderDepthValue(legacyReaderDepthMode);
-            if (legacyReaderDepth === null) continue;
-            if (minDepth !== null && minDepth >= -1 && legacyReaderDepth < minDepth) continue;
-            if (maxDepth !== null && maxDepth >= 0 && legacyReaderDepth > maxDepth) continue;
-        } else if (depth !== null) {
-            if (minDepth !== null && minDepth >= -1 && depth < minDepth) continue;
-            if (maxDepth !== null && maxDepth >= 0 && depth > maxDepth) continue;
-        }
-        if (readerDepthMode && (readerMinDepth !== null || readerMaxDepth !== null)) {
-            const readerDepth = resolveReaderDepthValue(readerDepthMode);
-            if (readerDepth === null) continue;
-            if (readerMinDepth !== null && readerDepth < readerMinDepth) continue;
-            if (readerMaxDepth !== null && readerDepth > readerMaxDepth) continue;
+        if (!ignoreDepthLimits) {
+            const minDepth = normalizeDepthBound(rule.minDepth);
+            const maxDepth = normalizeDepthBound(rule.maxDepth);
+            const readerDepthMode = normalizeReaderDepthMode(rule.readerDepthMode || rule.reader_depth_mode);
+            const readerMinDepth = normalizeDepthBound(rule.readerMinDepth ?? rule.reader_min_depth);
+            const readerMaxDepth = normalizeDepthBound(rule.readerMaxDepth ?? rule.reader_max_depth);
+            if (legacyReaderDepthMode && !readerDepthMode && (minDepth !== null || maxDepth !== null)) {
+                const legacyReaderDepth = resolveReaderDepthValue(legacyReaderDepthMode);
+                if (legacyReaderDepth === null) continue;
+                if (minDepth !== null && minDepth >= -1 && legacyReaderDepth < minDepth) continue;
+                if (maxDepth !== null && maxDepth >= 0 && legacyReaderDepth > maxDepth) continue;
+            } else if (depth !== null) {
+                if (minDepth !== null && minDepth >= -1 && depth < minDepth) continue;
+                if (maxDepth !== null && maxDepth >= 0 && depth > maxDepth) continue;
+            }
+            if (readerDepthMode && (readerMinDepth !== null || readerMaxDepth !== null)) {
+                const readerDepth = resolveReaderDepthValue(readerDepthMode);
+                if (readerDepth === null) continue;
+                if (readerMinDepth !== null && readerDepth < readerMinDepth) continue;
+                if (readerMaxDepth !== null && readerDepth > readerMaxDepth) continue;
+            }
         }
         try {
             const regex = parseDisplayRuleRegex(getDisplayRuleRegexSource(rule, { macroContext }));
@@ -1208,9 +1333,17 @@ function resolveReaderLegacyDepthMode(anchorMode = READER_ANCHOR_MODES.FOLLOW_VI
 }
 
 
-function buildReaderDisplaySourceCacheKey(config, anchorFloor = 0, anchorMode = READER_ANCHOR_MODES.FOLLOW_VIEWPORT) {
+function buildReaderDisplaySourceCacheKey(
+    config,
+    anchorFloor = 0,
+    anchorMode = READER_ANCHOR_MODES.FOLLOW_VIEWPORT,
+    options = {},
+) {
     const rules = Array.isArray(config?.displayRules) ? config.displayRules : [];
-    const legacyReaderDepthMode = resolveReaderLegacyDepthMode(anchorMode);
+    const ignoreDepthLimits = options.ignoreDepthLimits === true;
+    const scopedFloors = normalizeReaderScopedFloors(options.scopedFloors);
+    const normalizedAnchorMode = normalizeReaderAnchorMode(anchorMode);
+    const legacyReaderDepthMode = ignoreDepthLimits ? '' : resolveReaderLegacyDepthMode(anchorMode);
     const signature = rules.map((rule, index) => {
         const normalized = normalizeDisplayRule(rule, index);
         return [
@@ -1232,7 +1365,12 @@ function buildReaderDisplaySourceCacheKey(config, anchorFloor = 0, anchorMode = 
         ].join('~');
     }).join('||');
 
-    return `${normalizeReaderAnchorMode(anchorMode)}::${legacyReaderDepthMode}::${Number(anchorFloor || 0)}::${signature}`;
+    const anchorScope = ignoreDepthLimits
+        ? `page:${scopedFloors.join(',') || 'all'}`
+        : Number(anchorFloor || 0);
+    const depthModeScope = ignoreDepthLimits ? 'page_ignore_depth' : legacyReaderDepthMode;
+    const anchorModeScope = ignoreDepthLimits ? `${normalizedAnchorMode}:page` : normalizedAnchorMode;
+    return `${anchorModeScope}::${depthModeScope}::${anchorScope}::${signature}`;
 }
 
 
@@ -1410,6 +1548,7 @@ function getExecutableMessageFloors(
     viewSettings = null,
     anchorFloor = null,
     anchorMode = READER_ANCHOR_MODES.FOLLOW_VIEWPORT,
+    pageFloors = null,
 ) {
     if (!activeChat || typeof activeChat !== 'object') {
         return [];
@@ -1420,11 +1559,15 @@ function getExecutableMessageFloors(
         return [];
     }
 
+    const normalizedPageFloors = normalizeReaderScopedFloors(pageFloors);
+    const pageFloorSet = normalizedPageFloors.length ? new Set(normalizedPageFloors) : null;
     const resolvedAnchorFloor = Number(anchorFloor || activeChat?.last_view_floor || messages.length || 1);
     const normalizedAnchorMode = normalizeReaderAnchorMode(anchorMode);
-    const scanFloors = getRuntimeScanCandidateFloors(activeChat, viewSettings, resolvedAnchorFloor, normalizedAnchorMode);
+    const scanFloors = pageFloorSet
+        ? normalizedPageFloors
+        : getRuntimeScanCandidateFloors(activeChat, viewSettings, resolvedAnchorFloor, normalizedAnchorMode);
     const floorSet = new Set(scanFloors);
-    const key = `${normalizedAnchorMode}|${resolvedAnchorFloor}|${messages
+    const key = `${pageFloorSet ? `page:${normalizedPageFloors.join(',')}` : normalizedAnchorMode}|${resolvedAnchorFloor}|${messages
         .filter(message => floorSet.has(Number(message?.floor || 0)))
         .map(message => `${Number(message?.floor || 0)}:${getRenderedDisplayHtmlForMessage(message, renderedFloorHtmlCache).length}`)
         .join('|')}`;
@@ -1670,41 +1813,64 @@ function resolveReaderAnchorMessageIndex(usableMessages, anchorFloor) {
 }
 
 
-function resolveReaderMessageDepthInfo(rawMessages, floor, anchorFloor = 0) {
+function createReaderDepthLookup(rawMessages, anchorFloor = 0) {
     const list = Array.isArray(rawMessages) ? rawMessages : [];
     const usableMessages = trimReaderIgnorableTailEntries(
         list
             .map((item, index) => ({ message: item, index: index + 1 }))
             .filter(entry => !entry.message?.is_system),
     );
-    const currentIndex = usableMessages.findIndex(entry => entry.index === Number(floor || 0));
-    if (currentIndex === -1) {
-        return {
-            tailDepth: null,
-            anchorAbsDepth: null,
-            anchorBackwardDepth: null,
-            anchorRelativeDepth: null,
-        };
+    const floorPositionMap = new Map();
+    usableMessages.forEach((entry, position) => {
+        floorPositionMap.set(Number(entry.index || 0), position);
+    });
+
+    return {
+        usableCount: usableMessages.length,
+        anchorIndex: resolveReaderAnchorMessageIndex(usableMessages, anchorFloor),
+        floorPositionMap,
+    };
+}
+
+
+function resolveReaderDepthInfoFromLookup(lookup, floor = 0) {
+    const empty = {
+        tailDepth: null,
+        anchorAbsDepth: null,
+        anchorBackwardDepth: null,
+        anchorRelativeDepth: null,
+    };
+    const position = lookup?.floorPositionMap instanceof Map
+        ? lookup.floorPositionMap.get(Number(floor || 0))
+        : undefined;
+    if (!Number.isInteger(position)) {
+        return empty;
     }
 
-    const tailDepth = usableMessages.length - currentIndex - 1;
-    const anchorIndex = resolveReaderAnchorMessageIndex(usableMessages, anchorFloor);
-    if (anchorIndex === -1) {
+    const tailDepth = Math.max(0, Number(lookup?.usableCount || 0) - position - 1);
+    const anchorIndex = Number.isInteger(lookup?.anchorIndex) ? lookup.anchorIndex : -1;
+    if (anchorIndex < 0) {
         return {
+            ...empty,
             tailDepth,
-            anchorAbsDepth: null,
-            anchorBackwardDepth: null,
-            anchorRelativeDepth: null,
         };
     }
 
-    const relativeDepth = currentIndex - anchorIndex;
+    const relativeDepth = position - anchorIndex;
     return {
         tailDepth,
         anchorAbsDepth: Math.abs(relativeDepth),
         anchorBackwardDepth: relativeDepth <= 0 ? Math.abs(relativeDepth) : null,
         anchorRelativeDepth: relativeDepth,
     };
+}
+
+
+function resolveReaderMessageDepthInfo(rawMessages, floor, anchorFloor = 0) {
+    return resolveReaderDepthInfoFromLookup(
+        createReaderDepthLookup(rawMessages, anchorFloor),
+        floor,
+    );
 }
 
 
@@ -2041,6 +2207,8 @@ export default function chatGrid() {
 
         readerRenderMode: DEFAULT_CHAT_READER_RENDER_PREFS.renderMode,
         readerComponentMode: DEFAULT_CHAT_READER_RENDER_PREFS.componentMode,
+        readerBrowseMode: DEFAULT_CHAT_READER_RENDER_PREFS.browseMode,
+        readerPageGroupIndex: 0,
         regexConfigOpen: false,
         regexConfigTab: 'extract',
         regexConfigDraft: normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false }),
@@ -2137,6 +2305,85 @@ export default function chatGrid() {
                 : 0;
         },
 
+        get effectiveReaderBrowseMode() {
+            return resolveEffectiveReaderBrowseMode(this.readerBrowseMode, this.readerTotalMessages);
+        },
+
+        get isReaderPageMode() {
+            return isReaderPageBrowseMode(this.effectiveReaderBrowseMode);
+        },
+
+        get readerPageGroups() {
+            return buildReaderPageGroups(this.activeChat, this.effectiveReaderBrowseMode);
+        },
+
+        get currentReaderPageGroup() {
+            const groups = this.readerPageGroups;
+            if (!groups.length) {
+                return null;
+            }
+
+            const currentFloor = Number(
+                this.readerViewportFloor
+                || this.effectiveReaderAnchorFloor
+                || this.activeChat?.last_view_floor
+                || groups[0]?.anchorFloor
+                || 1,
+            );
+            const exactIndex = groups.findIndex(group => group.floors.includes(currentFloor));
+            const fallbackIndex = exactIndex >= 0
+                ? exactIndex
+                : groups
+                    .map((group, index) => ({
+                        index,
+                        distance: Math.abs(Number(group.anchorFloor || group.endFloor || group.startFloor || 0) - currentFloor),
+                    }))
+                    .sort((left, right) => left.distance - right.distance || left.index - right.index)[0]?.index ?? 0;
+            const safeIndex = Math.max(0, Math.min(groups.length - 1, Number(this.readerPageGroupIndex || fallbackIndex)));
+            return groups[safeIndex] || groups[fallbackIndex] || groups[0] || null;
+        },
+
+        get hasPreviousReaderPageGroup() {
+            if (!this.isReaderPageMode) return false;
+            const currentGroup = this.currentReaderPageGroup;
+            return Boolean(currentGroup && Number(currentGroup.index || 0) > 0);
+        },
+
+        get hasNextReaderPageGroup() {
+            if (!this.isReaderPageMode) return false;
+            const groups = this.readerPageGroups;
+            const currentGroup = this.currentReaderPageGroup;
+            return Boolean(groups.length && currentGroup && Number(currentGroup.index || 0) < groups.length - 1);
+        },
+
+        get readerBrowseModeLabel() {
+            switch (this.effectiveReaderBrowseMode) {
+                case READER_BROWSE_MODES.PAGE_NON_USER:
+                    return '单页·非用户';
+                case READER_BROWSE_MODES.PAGE_PAIR:
+                    return '单页·对话';
+                default:
+                    return '滚动';
+            }
+        },
+
+        get readerPageGroupStatusText() {
+            if (!this.isReaderPageMode) {
+                return '滚动浏览';
+            }
+
+            const groups = this.readerPageGroups;
+            const currentGroup = this.currentReaderPageGroup;
+            if (!groups.length || !currentGroup) {
+                return '单页浏览';
+            }
+
+            const floorLabel = currentGroup.floors.length === 1
+                ? `#${currentGroup.startFloor}`
+                : `#${currentGroup.startFloor}-#${currentGroup.endFloor}`;
+            return `${this.readerBrowseModeLabel} ${Number(currentGroup.index || 0) + 1}/${groups.length} · ${floorLabel}`;
+        },
+
         get effectiveReaderAnchorFloor() {
             const total = this.readerTotalMessages;
             if (!total) return 0;
@@ -2187,6 +2434,10 @@ export default function chatGrid() {
             const bookmarkSet = new Set(bookmarks.map(item => Number(item.floor || 0)).filter(Boolean));
             const total = this.activeChat.messages.length;
             const anchorFloor = Number(this.effectiveReaderAnchorFloor || this.activeChat.last_view_floor || total || 1);
+            const browseMode = this.effectiveReaderBrowseMode;
+            const pageGroups = this.readerPageGroups;
+            const currentPageGroup = this.currentReaderPageGroup;
+            const pageFloorSet = currentPageGroup ? new Set(currentPageGroup.floors) : null;
             const windowStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
             const windowEndFloor = Math.min(total, Math.max(windowStartFloor, Number(this.readerWindowEndFloor || total)));
             const rawTailKeepaliveCount = resolveReaderTailKeepaliveCount(
@@ -2221,6 +2472,8 @@ export default function chatGrid() {
                 && cache.messagesRef === this.activeChat.messages
                 && cache.bookmarksRef === bookmarksRef
                 && cache.detailBookmarkedOnly === this.detailBookmarkedOnly
+                && cache.browseMode === browseMode
+                && cache.pageGroupId === String(currentPageGroup?.id || '')
                 && cache.currentFloor === anchorFloor
                 && cache.anchorMode === this.readerAnchorMode
                 && cache.anchorSource === this.readerAnchorSource
@@ -2240,6 +2493,10 @@ export default function chatGrid() {
 
             let messages = this.activeChat.messages
                 .slice(Math.max(0, windowStartFloor - 1), windowEndFloor)
+                .filter((message) => {
+                    if (!pageFloorSet) return true;
+                    return pageFloorSet.has(Number(message?.floor || 0));
+                })
                 .map((message) => ({
                 ...message,
                 is_bookmarked: bookmarkSet.has(Number(message.floor || 0)),
@@ -2265,7 +2522,9 @@ export default function chatGrid() {
                     && floorDistance > hiddenHistoryThreshold;
 
                 let renderTier = 'hidden';
-                if (isTailKeepaliveFloor || inFullBand) {
+                if (pageFloorSet) {
+                    renderTier = 'full';
+                } else if (isTailKeepaliveFloor || inFullBand) {
                     renderTier = 'full';
                 } else if (inSimpleBand) {
                     renderTier = 'simple';
@@ -2302,6 +2561,8 @@ export default function chatGrid() {
                 messagesRef: this.activeChat.messages,
                 bookmarksRef,
                 detailBookmarkedOnly: this.detailBookmarkedOnly,
+                browseMode,
+                pageGroupId: String(currentPageGroup?.id || ''),
                 currentFloor: anchorFloor,
                 anchorMode: this.readerAnchorMode,
                 anchorSource: this.readerAnchorSource,
@@ -2447,12 +2708,14 @@ export default function chatGrid() {
         },
 
         get executableMessageFloors() {
+            const pageFloors = this.isReaderPageMode ? this.getCurrentReaderPageFloors() : null;
             return getExecutableMessageFloors(
                 this.activeChat,
                 this.renderedFloorHtmlCache,
                 this.readerViewSettings,
                 this.effectiveReaderAnchorFloor,
                 this.readerAnchorMode,
+                pageFloors,
             );
         },
 
@@ -2510,6 +2773,7 @@ export default function chatGrid() {
             this.readerWindowStartFloor = total > 0 ? 1 : 0;
             this.readerWindowEndFloor = 0;
             this._renderedFloorHtmlCache = new Map();
+            this._readerDepthLookupCache = null;
 
             if (this.activeChat) {
                 this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
@@ -2596,6 +2860,179 @@ export default function chatGrid() {
             }
             const item = this.activeChat.messages[targetFloor - 1];
             return item && typeof item === 'object' ? item : null;
+        },
+
+        resolveReaderPageGroupIndexForFloor(floor = 0, groups = null) {
+            const resolvedGroups = Array.isArray(groups) && groups.length ? groups : this.readerPageGroups;
+            if (!resolvedGroups.length) {
+                return -1;
+            }
+
+            const targetFloor = Number(
+                floor
+                || this.readerViewportFloor
+                || this.effectiveReaderAnchorFloor
+                || resolvedGroups[0]?.anchorFloor
+                || resolvedGroups[0]?.startFloor
+                || 1,
+            );
+            const exactIndex = resolvedGroups.findIndex(group => group.floors.includes(targetFloor));
+            if (exactIndex >= 0) {
+                return exactIndex;
+            }
+
+            return resolvedGroups
+                .map((group, index) => ({
+                    index,
+                    distance: Math.abs(Number(group.anchorFloor || group.endFloor || group.startFloor || 0) - targetFloor),
+                }))
+                .sort((left, right) => left.distance - right.distance || left.index - right.index)[0]?.index ?? 0;
+        },
+
+        syncReaderPageGroupForFloor(floor = 0, options = {}) {
+            if (!this.isReaderPageMode) {
+                this.readerPageGroupIndex = 0;
+                resetReaderVisibleMessagesCache(this);
+                return -1;
+            }
+
+            const groups = this.readerPageGroups;
+            if (!groups.length) {
+                this.readerPageGroupIndex = 0;
+                resetReaderVisibleMessagesCache(this);
+                return -1;
+            }
+
+            const nextIndex = this.resolveReaderPageGroupIndexForFloor(floor, groups);
+            const safeIndex = Math.max(0, Math.min(groups.length - 1, nextIndex));
+            const targetGroup = groups[safeIndex];
+            this.readerPageGroupIndex = safeIndex;
+
+            if (options.syncAnchor !== false && targetGroup) {
+                const targetFloor = Number(
+                    options.anchorFloor
+                    || floor
+                    || targetGroup.anchorFloor
+                    || targetGroup.endFloor
+                    || targetGroup.startFloor
+                    || 0,
+                );
+                if (targetFloor > 0) {
+                    this.readerViewportFloor = targetFloor;
+                    this.readerAnchorFloor = targetFloor;
+                }
+                if (options.source) {
+                    this.readerAnchorSource = options.source;
+                }
+            }
+
+            resetReaderVisibleMessagesCache(this);
+            return safeIndex;
+        },
+
+        getCurrentReaderPageFloors(group = null) {
+            if (!this.isReaderPageMode) {
+                return [];
+            }
+            const targetGroup = group && typeof group === 'object' ? group : this.currentReaderPageGroup;
+            return normalizeReaderScopedFloors(targetGroup?.floors);
+        },
+
+        isReaderCurrentPageFloor(floor = 0, group = null) {
+            const targetFloor = Number(floor || 0);
+            if (!targetFloor) {
+                return false;
+            }
+            return this.getCurrentReaderPageFloors(group).includes(targetFloor);
+        },
+
+        resolveReaderPageDepthOverride(floor = 0, group = null) {
+            const scopedFloors = this.getCurrentReaderPageFloors(group);
+            if (!scopedFloors.length) {
+                return {
+                    ignoreDepthLimits: false,
+                    scopedFloors: [],
+                };
+            }
+
+            const targetFloor = Number(floor || 0);
+            return {
+                ignoreDepthLimits: targetFloor > 0 ? scopedFloors.includes(targetFloor) : true,
+                scopedFloors,
+            };
+        },
+
+        resolveReaderDepthLookup(anchorFloor = null, messages = null) {
+            const sourceMessages = Array.isArray(messages)
+                ? messages
+                : (Array.isArray(this.activeChat?.messages) ? this.activeChat.messages : []);
+            const resolvedAnchorFloor = Number(
+                anchorFloor
+                || this.effectiveReaderAnchorFloor
+                || this.readerViewportFloor
+                || this.activeChat?.last_view_floor
+                || 0,
+            );
+            const cached = this._readerDepthLookupCache;
+            if (
+                cached
+                && cached.messagesRef === sourceMessages
+                && cached.anchorFloor === resolvedAnchorFloor
+            ) {
+                return cached.lookup;
+            }
+
+            const lookup = createReaderDepthLookup(sourceMessages, resolvedAnchorFloor);
+            this._readerDepthLookupCache = {
+                messagesRef: sourceMessages,
+                anchorFloor: resolvedAnchorFloor,
+                lookup,
+            };
+            return lookup;
+        },
+
+        collectReaderPageWarmupFloors(groupIndex = null, radius = CHAT_READER_PAGE_GROUP_PREFETCH_RADIUS) {
+            const groups = this.readerPageGroups;
+            if (!groups.length) {
+                return [];
+            }
+
+            const resolvedRadius = Math.max(0, Number(radius || 0));
+            const fallbackIndex = Math.max(0, Number(this.currentReaderPageGroup?.index || this.readerPageGroupIndex || 0));
+            const requestedIndex = Number(groupIndex);
+            const hasExplicitIndex = groupIndex !== null && groupIndex !== undefined && groupIndex !== '';
+            const baseIndex = hasExplicitIndex && Number.isFinite(requestedIndex)
+                ? Math.max(0, Math.min(groups.length - 1, requestedIndex))
+                : fallbackIndex;
+            const floorSet = new Set();
+
+            for (
+                let index = Math.max(0, baseIndex - resolvedRadius);
+                index <= Math.min(groups.length - 1, baseIndex + resolvedRadius);
+                index += 1
+            ) {
+                const floors = Array.isArray(groups[index]?.floors) ? groups[index].floors : [];
+                floors.forEach((floor) => {
+                    const normalizedFloor = Number(floor || 0);
+                    if (normalizedFloor > 0) {
+                        floorSet.add(normalizedFloor);
+                    }
+                });
+            }
+
+            return Array.from(floorSet).sort((left, right) => left - right);
+        },
+
+        scrollReaderCenterToTop(behavior = 'auto') {
+            const root = document.querySelector('.chat-reader-overlay--fullscreen');
+            const center = root ? root.querySelector('.chat-reader-center') : null;
+            if (!(center instanceof Element)) {
+                return;
+            }
+            center.scrollTo({
+                top: 0,
+                behavior,
+            });
         },
 
         applyReaderPagePayload(range) {
@@ -2733,17 +3170,24 @@ export default function chatGrid() {
             const resolvedAnchorFloor = Number(anchorFloor || this.effectiveReaderAnchorFloor || targetFloor);
             const resolvedConfig = normalizeRegexConfig(config || this.readerResolvedRegexConfig || this.activeRegexConfig);
             const fallbackMessage = this.getReaderMessageForFloor(targetFloor) || {};
-            const depthInfo = resolveReaderMessageDepthInfo(fullMessages, targetFloor, resolvedAnchorFloor);
+            const pageDepthOverride = this.resolveReaderPageDepthOverride(targetFloor);
+            const depthInfo = resolveReaderDepthInfoFromLookup(
+                this.resolveReaderDepthLookup(resolvedAnchorFloor, fullMessages),
+                targetFloor,
+            );
             const legacyReaderDepthMode = resolveReaderLegacyDepthMode(this.readerAnchorMode);
             return {
                 ...depthInfo,
                 placement: resolveReaderRegexPlacement(normalizedRawMessage || fallbackMessage),
                 macroContext: this.buildReaderRegexMacroContext(normalizedRawMessage || fallbackMessage, targetFloor),
                 legacyReaderDepthMode,
+                ignoreDepthLimits: pageDepthOverride.ignoreDepthLimits,
+                scopedFloors: pageDepthOverride.scopedFloors,
                 cacheKey: buildReaderDisplaySourceCacheKey(
                     resolvedConfig,
                     resolvedAnchorFloor,
                     this.readerAnchorMode,
+                    pageDepthOverride,
                 ),
             };
         },
@@ -2866,35 +3310,49 @@ export default function chatGrid() {
                 this.readerAnchorSource,
             );
             const warmupFloors = new Set();
-            const warmupStart = Math.max(1, Math.min(
-                renderBands.expansionStartFloor,
-                renderBands.simpleStartFloor,
-            ));
-            const warmupEnd = Math.min(total, Math.max(
-                renderBands.expansionEndFloor,
-                renderBands.simpleEndFloor,
-                resolvedAnchorFloor + Number(this.readerViewSettings.instanceRenderDepth ?? DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth),
-                tailKeepaliveCount > 0 ? total : 0,
-            ));
-
-            for (let floor = warmupStart; floor <= warmupEnd; floor += 1) {
-                warmupFloors.add(floor);
-            }
-
-            if (tailKeepaliveCount > 0) {
-                const tailStart = Math.max(1, total - tailKeepaliveCount + 1);
-                for (let floor = tailStart; floor <= total; floor += 1) {
+            const pageGroupFloors = this.isReaderPageMode
+                ? this.collectReaderPageWarmupFloors(null, CHAT_READER_PAGE_GROUP_PREFETCH_RADIUS)
+                : [];
+            if (pageGroupFloors.length) {
+                pageGroupFloors.forEach((floor) => {
                     warmupFloors.add(floor);
+                });
+            } else {
+                const warmupStart = Math.max(1, Math.min(
+                    renderBands.expansionStartFloor,
+                    renderBands.simpleStartFloor,
+                ));
+                const warmupEnd = Math.min(total, Math.max(
+                    renderBands.expansionEndFloor,
+                    renderBands.simpleEndFloor,
+                    resolvedAnchorFloor + Number(this.readerViewSettings.instanceRenderDepth ?? DEFAULT_CHAT_READER_VIEW_SETTINGS.instanceRenderDepth),
+                    tailKeepaliveCount > 0 ? total : 0,
+                ));
+
+                for (let floor = warmupStart; floor <= warmupEnd; floor += 1) {
+                    warmupFloors.add(floor);
+                }
+
+                if (tailKeepaliveCount > 0) {
+                    const tailStart = Math.max(1, total - tailKeepaliveCount + 1);
+                    for (let floor = tailStart; floor <= total; floor += 1) {
+                        warmupFloors.add(floor);
+                    }
                 }
             }
 
             this._renderedFloorHtmlCache = new Map();
             this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
-
-            messages.forEach((message) => {
-                if (!message || typeof message !== 'object') return;
+            const clearStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
+            const clearEndFloor = Math.min(
+                total,
+                Math.max(clearStartFloor, Number(this.readerWindowEndFloor || total)),
+            );
+            for (let floor = clearStartFloor; floor <= clearEndFloor; floor += 1) {
+                const message = messages[floor - 1];
+                if (!message || typeof message !== 'object') continue;
                 message.rendered_display_html = '';
-            });
+            }
 
             warmupFloors.forEach((floor) => {
                 const message = messages[floor - 1];
@@ -2907,6 +3365,66 @@ export default function chatGrid() {
                 resolvedAnchorFloor,
                 warmupCount: warmupFloors.size,
             });
+        },
+
+        setReaderBrowseMode(mode) {
+            const nextMode = normalizeReaderBrowseMode(mode);
+            this.readerBrowseMode = nextMode;
+            this.clearReaderViewportSync();
+            resetReaderVisibleMessagesCache(this);
+
+            if (!this.activeChat) {
+                return;
+            }
+
+            const currentFloor = Number(this.readerViewportFloor || this.effectiveReaderAnchorFloor || this.activeChat.last_view_floor || 1);
+            const effectiveMode = this.effectiveReaderBrowseMode;
+            if (isReaderPageBrowseMode(effectiveMode)) {
+                this.syncReaderPageGroupForFloor(currentFloor, {
+                    anchorFloor: currentFloor,
+                    source: READER_ANCHOR_SOURCES.JUMP,
+                });
+                const focusFloor = Number(this.currentReaderPageGroup?.anchorFloor || currentFloor || 1);
+                void this.ensureReaderWindowForFloor(focusFloor, 'center').then(() => {
+                    this.refreshReaderAnchorState(focusFloor);
+                    this.$nextTick(() => this.scrollReaderCenterToTop('auto'));
+                });
+            } else {
+                this.readerPageGroupIndex = 0;
+                void this.ensureReaderWindowForFloor(currentFloor, 'center').then(() => {
+                    this.refreshReaderAnchorState(currentFloor);
+                });
+            }
+
+            this.$store.global.showToast(`阅读模式已切换为${this.readerBrowseModeLabel}`, 1500);
+        },
+
+        async stepReaderPageGroup(offset = 1) {
+            if (!this.isReaderPageMode) return;
+
+            const groups = this.readerPageGroups;
+            if (!groups.length) return;
+
+            const currentGroup = this.currentReaderPageGroup;
+            const currentIndex = currentGroup ? Number(currentGroup.index || 0) : 0;
+            const nextIndex = Math.max(0, Math.min(groups.length - 1, currentIndex + Number(offset || 0)));
+            if (nextIndex === currentIndex) return;
+
+            const nextGroup = groups[nextIndex];
+            this.readerPageGroupIndex = nextIndex;
+            resetReaderVisibleMessagesCache(this);
+
+            const focusFloor = Number(nextGroup?.anchorFloor || nextGroup?.endFloor || nextGroup?.startFloor || 0);
+            if (!focusFloor) return;
+
+            this.readerViewportFloor = focusFloor;
+            this.readerAnchorFloor = focusFloor;
+            this.readerAnchorSource = READER_ANCHOR_SOURCES.JUMP;
+            this.jumpFloorInput = String(nextGroup.startFloor || focusFloor);
+
+            await this.ensureReaderWindowForFloor(focusFloor, 'center');
+            this.refreshReaderAnchorState(focusFloor);
+            this.$nextTick(() => this.scrollReaderCenterToTop('auto'));
         },
 
         setReaderAnchorMode(mode) {
@@ -3001,6 +3519,8 @@ export default function chatGrid() {
                 depth: depthInfo.tailDepth,
                 depthInfo,
                 legacyReaderDepthMode: depthInfo.legacyReaderDepthMode,
+                ignoreDepthLimits: depthInfo.ignoreDepthLimits === true,
+                scopedFloors: depthInfo.scopedFloors,
                 cacheKey: depthInfo.cacheKey,
             });
         },
@@ -3155,6 +3675,19 @@ export default function chatGrid() {
                 return '暂无楼层';
             }
 
+            if (this.isReaderPageMode) {
+                const currentGroup = this.currentReaderPageGroup;
+                const groups = this.readerPageGroups;
+                const fullVisible = messages.filter(item => item.is_full_display).length;
+                const renderedNow = messages.filter(item => item.should_render_full).length;
+                const groupLabel = currentGroup
+                    ? (currentGroup.floors.length === 1
+                        ? `#${currentGroup.startFloor}`
+                        : `#${currentGroup.startFloor}-#${currentGroup.endFloor}`)
+                    : '当前页';
+                return `当前模式 ${this.readerBrowseModeLabel} · 第 ${currentGroup ? Number(currentGroup.index || 0) + 1 : 1}/${Math.max(1, groups.length)} 页 · ${groupLabel} · 完整显示 ${fullVisible} 楼，当前高渲染 ${renderedNow} 楼`;
+            }
+
             const total = Number(this.readerTotalMessages || messages.length || 0);
             const windowStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
             const windowEndFloor = Math.min(total || messages.length, Math.max(windowStartFloor, Number(this.readerWindowEndFloor || messages[messages.length - 1]?.floor || windowStartFloor)));
@@ -3218,6 +3751,7 @@ export default function chatGrid() {
             const renderPreferences = loadStoredRenderPreferences();
             this.readerRenderMode = renderPreferences.renderMode;
             this.readerComponentMode = renderPreferences.componentMode;
+            this.readerBrowseMode = renderPreferences.browseMode;
             this.activeCardRegexConfig = normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false });
 
             this.$watch('$store.global.chatSearchQuery', () => {
@@ -3245,6 +3779,7 @@ export default function chatGrid() {
                 storeRenderPreferences({
                     renderMode: value,
                     componentMode: this.readerComponentMode,
+                    browseMode: this.readerBrowseMode,
                 });
             });
 
@@ -3252,6 +3787,15 @@ export default function chatGrid() {
                 storeRenderPreferences({
                     renderMode: this.readerRenderMode,
                     componentMode: value,
+                    browseMode: this.readerBrowseMode,
+                });
+            });
+
+            this.$watch('readerBrowseMode', (value) => {
+                storeRenderPreferences({
+                    renderMode: this.readerRenderMode,
+                    componentMode: this.readerComponentMode,
+                    browseMode: value,
                 });
             });
 
@@ -3413,6 +3957,8 @@ export default function chatGrid() {
             const renderPreferences = loadStoredRenderPreferences();
             this.readerRenderMode = renderPreferences.renderMode;
             this.readerComponentMode = renderPreferences.componentMode;
+            this.readerBrowseMode = renderPreferences.browseMode;
+            this.readerPageGroupIndex = 0;
             this.regexConfigOpen = false;
             this.regexConfigTab = 'extract';
             this.regexConfigStatus = '';
@@ -3429,6 +3975,7 @@ export default function chatGrid() {
             this.readerWindowStartFloor = 1;
             this.readerWindowEndFloor = 0;
             this._renderedFloorHtmlCache = new Map();
+            this._readerDepthLookupCache = null;
             if (this.activeChat) {
                 this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
             }
@@ -3493,6 +4040,11 @@ export default function chatGrid() {
                     initialFloor,
                     totalMessages: Number(this.readerTotalMessages || 0),
                     pageSize: Number(this.readerPageSize || 0),
+                    browseMode: this.effectiveReaderBrowseMode,
+                });
+                this.syncReaderPageGroupForFloor(initialFloor, {
+                    anchorFloor: initialFloor,
+                    source: READER_ANCHOR_SOURCES.RESTORE,
                 });
                 await this.setReaderWindowAroundFloor(this.effectiveReaderAnchorFloor || 1, 'center');
                 if (requestToken !== this.readerPageRequestToken) return;
@@ -3538,6 +4090,7 @@ export default function chatGrid() {
             this.detailOpen = false;
             this.detailLoading = false;
             this.activeChat = null;
+            this._readerDepthLookupCache = null;
             clearActiveRuntimeContext('chat');
             this.detailSearchQuery = '';
             this.detailSearchResults = [];
@@ -4233,6 +4786,10 @@ export default function chatGrid() {
         },
 
         syncReaderViewportFloor(options = {}) {
+            if (this.isReaderPageMode) {
+                return;
+            }
+
             const run = () => {
                 const root = document.querySelector('.chat-reader-overlay--fullscreen');
                 const container = root ? root.querySelector('.chat-reader-center') : null;
@@ -4302,7 +4859,7 @@ export default function chatGrid() {
         },
 
         scheduleReaderViewportSync() {
-            if (!this.detailOpen || this.readerAppMode) return;
+            if (!this.detailOpen || this.readerAppMode || this.isReaderPageMode) return;
 
             if (!this.readerScrollRaf) {
                 this.readerScrollRaf = window.requestAnimationFrame(() => {
@@ -4322,6 +4879,9 @@ export default function chatGrid() {
         },
 
         handleReaderScroll() {
+            if (this.isReaderPageMode) {
+                return;
+            }
             this.scheduleReaderViewportSync();
         },
 
@@ -4426,6 +4986,10 @@ export default function chatGrid() {
             await this.loadBoundCardRegexConfig(this.activeChat);
             if (requestToken !== this.readerPageRequestToken) return;
             this.readerResolvedRegexConfig = normalizeRegexConfig(this.activeRegexConfig);
+            this.syncReaderPageGroupForFloor(this.effectiveReaderAnchorFloor || this.readerViewportFloor || 1, {
+                anchorFloor: this.effectiveReaderAnchorFloor || this.readerViewportFloor || 1,
+                source: READER_ANCHOR_SOURCES.RESTORE,
+            });
             await this.setReaderWindowAroundFloor(this.effectiveReaderAnchorFloor || this.readerViewportFloor || 1, 'center');
             if (requestToken !== this.readerPageRequestToken) return;
             this.detectChatAppMode();
@@ -4767,15 +5331,17 @@ export default function chatGrid() {
             const tailKeepaliveCount = this.readerAnchorMode === READER_ANCHOR_MODES.FOLLOW_VIEWPORT
                 ? 0
                 : rawTailKeepaliveCount;
-            const cacheKey = buildReaderDisplaySourceCacheKey(nextConfig, anchorFloor, this.readerAnchorMode);
             const legacyReaderDepthMode = resolveReaderLegacyDepthMode(this.readerAnchorMode);
+            const depthLookup = createReaderDepthLookup(messages, anchorFloor);
+            const currentPageFloors = this.getCurrentReaderPageFloors();
+            const currentPageFloorSet = currentPageFloors.length ? new Set(currentPageFloors) : null;
             this.logReaderScrollDebug('rebuild_active_chat_messages_start', {
                 anchorFloor,
                 total,
                 tailKeepaliveCount,
             });
 
-            this.activeChat.messages = messages.map((baseMessage, index) => {
+            const nextMessages = messages.map((baseMessage, index) => {
                 const floor = index + 1;
                 const manifest = baseMessage && typeof baseMessage === 'object'
                     ? baseMessage
@@ -4783,14 +5349,30 @@ export default function chatGrid() {
                 const rawMessage = rawMessages[index] && typeof rawMessages[index] === 'object'
                     ? rawMessages[index]
                     : null;
-                const depthInfo = resolveReaderMessageDepthInfo(messages, floor, anchorFloor);
+                const depthInfo = resolveReaderDepthInfoFromLookup(depthLookup, floor);
                 const macroContext = this.buildReaderRegexMacroContext(rawMessage || manifest, floor);
+                const pageDepthOverride = currentPageFloorSet?.has(floor)
+                    ? {
+                        ignoreDepthLimits: true,
+                        scopedFloors: currentPageFloors,
+                    }
+                    : {
+                        ignoreDepthLimits: false,
+                        scopedFloors: [],
+                    };
                 const runtimeDepthInfo = {
                     ...depthInfo,
                     placement: resolveReaderRegexPlacement(rawMessage || manifest),
                     macroContext,
                     legacyReaderDepthMode,
-                    cacheKey,
+                    ignoreDepthLimits: pageDepthOverride.ignoreDepthLimits,
+                    scopedFloors: pageDepthOverride.scopedFloors,
+                    cacheKey: buildReaderDisplaySourceCacheKey(
+                        nextConfig,
+                        anchorFloor,
+                        this.readerAnchorMode,
+                        pageDepthOverride,
+                    ),
                 };
 
                 if (!rawMessage) {
@@ -4821,6 +5403,12 @@ export default function chatGrid() {
                     __readerDepthInfo: runtimeDepthInfo,
                 };
             });
+            this.activeChat.messages = nextMessages;
+            this._readerDepthLookupCache = {
+                messagesRef: nextMessages,
+                anchorFloor,
+                lookup: depthLookup,
+            };
             this._renderedFloorHtmlCache = new Map();
             this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
             this.readerAnchorFloor = anchorFloor;
@@ -4840,12 +5428,25 @@ export default function chatGrid() {
                 renderBands.simpleEndFloor,
                 tailKeepaliveCount > 0 ? total : 0,
             ));
-            this.activeChat.messages.forEach((message) => {
-                const floor = Number(message.floor || 0);
-                if (message.__loaded && floor >= warmupStart && floor <= warmupEnd) {
-                    this.ensureMessageDisplaySource(message);
+
+            const pageWarmupFloors = this.isReaderPageMode
+                ? this.collectReaderPageWarmupFloors(null, CHAT_READER_PAGE_GROUP_PREFETCH_RADIUS)
+                : [];
+            if (pageWarmupFloors.length) {
+                pageWarmupFloors.forEach((floor) => {
+                    const message = this.activeChat.messages[floor - 1];
+                    if (message?.__loaded) {
+                        this.ensureMessageDisplaySource(message);
+                    }
+                });
+            } else {
+                for (let floor = warmupStart; floor <= warmupEnd; floor += 1) {
+                    const message = this.activeChat.messages[floor - 1];
+                    if (message?.__loaded) {
+                        this.ensureMessageDisplaySource(message);
+                    }
                 }
-            });
+            }
             resetReaderVisibleMessagesCache(this);
             this.logReaderScrollDebug('rebuild_active_chat_messages_done', {
                 anchorFloor,
@@ -5195,6 +5796,10 @@ export default function chatGrid() {
         shouldRenderMessageAsApp(message) {
             if (!message) return false;
             if (String(message.render_tier || '') !== 'full') return false;
+            if (!this.readerComponentMode) return false;
+            if (this.isReaderPageMode) {
+                return Boolean(this.currentReaderPageGroup?.floors?.includes(Number(message.floor || 0)));
+            }
             return this.readerComponentMode
                 && shouldExecuteMessageSegments(
                     message,
@@ -5374,6 +5979,7 @@ export default function chatGrid() {
                             console.error('[ChatMessageAppStage]', error);
                             this.$store.global.showToast(`实例错误: ${error.message}`, 2600);
                         },
+                        embeddedStageStyle: true,
                     });
                     this.readerPartStages.set(runtimeHost, stage);
                 }
@@ -5841,6 +6447,42 @@ export default function chatGrid() {
                 return;
             }
 
+            if (this.isReaderPageMode) {
+                if (this.detailBookmarkedOnly && !this.isBookmarked(targetFloor)) {
+                    this.detailBookmarkedOnly = false;
+                }
+
+                this.jumpFloorInput = String(targetFloor);
+                this.syncReaderPageGroupForFloor(targetFloor, {
+                    anchorFloor: targetFloor,
+                    source: anchorSource,
+                });
+                await this.ensureReaderWindowForFloor(targetFloor, 'center');
+                this.refreshReaderAnchorState(targetFloor);
+                this.$nextTick(() => {
+                    const root = document.querySelector('.chat-reader-overlay--fullscreen');
+                    const el = root ? root.querySelector(`[data-chat-floor="${targetFloor}"]`) : null;
+                    if (el) {
+                        this.scrollElementToTop(el, behavior);
+                    } else {
+                        this.scrollReaderCenterToTop(behavior);
+                    }
+                });
+
+                if (persist) {
+                    this.activeChat.last_view_floor = targetFloor;
+                    updateChatMeta({ id: this.activeChat.id, last_view_floor: targetFloor }).then((res) => {
+                        if (res.success && res.chat) {
+                            const index = this.chatList.findIndex(item => item.id === res.chat.id);
+                            if (index > -1) {
+                                this.chatList.splice(index, 1, { ...this.chatList[index], ...res.chat });
+                            }
+                        }
+                    }).catch(() => {});
+                }
+                return;
+            }
+
             if (this.detailBookmarkedOnly && !this.isBookmarked(targetFloor)) {
                 this.detailBookmarkedOnly = false;
             }
@@ -6027,6 +6669,10 @@ export default function chatGrid() {
                 options.focusFloor,
                 preserveAnchorFloor || this.readerViewportFloor || this.activeChat.last_view_floor || total,
             );
+            this.syncReaderPageGroupForFloor(focusFloor, {
+                anchorFloor: focusFloor,
+                source: READER_ANCHOR_SOURCES.RESTORE,
+            });
             await this.setReaderWindowAroundFloor(focusFloor || 1, 'center');
             const runtimeConfig = normalizeRegexConfig(options.rebuildConfig || this.activeRegexConfig || preserveReaderResolvedRegexConfig);
             this.readerResolvedRegexConfig = runtimeConfig;
