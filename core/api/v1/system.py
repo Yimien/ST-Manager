@@ -4,8 +4,6 @@ import platform
 import subprocess
 import shutil
 import logging
-import base64
-import requests
 import time
 import re
 import uuid
@@ -26,6 +24,7 @@ from core.services.scan_service import request_scan, suppress_fs_events
 from core.services.cache_service import schedule_reload, invalidate_wi_list_cache, update_card_cache
 from core.services.card_service import resolve_ui_key
 from core.services.st_client import refresh_st_client
+from core.services.st_auth import STAuthError, build_st_http_client
 
 # === 工具函数 ===
 from core.utils.filesystem import (
@@ -38,6 +37,46 @@ from core.utils.hash import _calculate_data_hash
 bp = Blueprint('system', __name__)
 
 logger = logging.getLogger(__name__)
+
+
+def _format_st_auth_error(error):
+    if error.stage == 'basic_auth':
+        status = error.status_code or 401
+        return f"ST Basic/Auth 认证失败 ({status}): 请检查 Basic/Auth 用户名和密码。"
+    if error.stage == 'web_login':
+        status = error.status_code or 401
+        return f"ST Web 登录失败 ({status}): 请检查 Web 用户名和密码。"
+    if error.stage == 'connection':
+        return error.message
+
+    status = f" ({error.status_code})" if error.status_code else ''
+    return f"ST 连接失败{status}: {error.message}"
+
+
+def _format_st_response_error(response, auth_type):
+    if response.status_code == 400:
+        return f"ST 请求错误 (400): {response.text}"
+
+    if response.status_code == 401:
+        if auth_type == 'web':
+            return 'ST 认证失败 (401): Web 登录会话无效，请检查账号或重新登录。'
+        if auth_type == 'auth_web':
+            return 'ST 认证失败 (401): Basic/Auth 已通过，但 Web 会话无效，请检查 Web 登录信息或 ST 日志。'
+        return 'ST 认证失败 (401): Basic/Auth 用户名或密码错误。'
+
+    if response.status_code == 403:
+        if auth_type in ('web', 'auth_web'):
+            return (
+                'ST 权限拒绝 (403): 认证已通过，但请求被 ST 的会话或 CSRF 校验拦截。'
+                '请检查 ST 日志，或在 config.yaml 中确认 disableCsrfProtection 配置。'
+            )
+        return (
+            'ST 权限拒绝 (403): 认证已通过，但请求被 ST 的 CSRF 校验拦截。'
+            "请在 SillyTavern 的 config.yaml 中检查 'disableCsrfProtection'，"
+            '或改用 Web Login / Basic Auth + Web Login 模式。'
+        )
+
+    return f"ST Error: {response.status_code} - {response.text}"
 
 def _is_under_base(path: str, base: str) -> bool:
     """检查路径是否在 base 目录内"""
@@ -1049,6 +1088,45 @@ def api_send_to_st():
         
         if not os.path.exists(file_path):
             return jsonify({"success": False, "msg": "Local file not found"})
+        st_client = build_st_http_client(cfg, timeout=10)
+        file_ext = os.path.splitext(file_path)[1].lower()
+        with open(file_path, 'rb') as f:
+            if file_ext == '.json':
+                files = {'avatar': ('card.json', f, 'application/json')}
+                data = {'file_type': 'json'}
+            else:
+                files = {'avatar': ('card.png', f, 'image/png')}
+                data = {'file_type': 'png'}
+
+            try:
+                response = st_client.post(
+                    '/api/characters/import',
+                    files=files,
+                    data=data,
+                    timeout=10,
+                )
+            except STAuthError as error:
+                return jsonify({"success": False, "msg": _format_st_auth_error(error)})
+
+        if response.status_code == 200:
+            st_response = response.json() if response.content else 'OK'
+            ui_data = load_ui_data()
+            ui_key = resolve_ui_key(card_id)
+            _, last_sent_to_st = set_last_sent_to_st(ui_data, ui_key, time.time())
+            save_ui_data(ui_data)
+
+            target_id = card_id
+            if ui_key in ctx.cache.bundle_map:
+                target_id = ctx.cache.bundle_map[ui_key]
+            ctx.cache.update_card_data(target_id, {'last_sent_to_st': last_sent_to_st})
+
+            return jsonify({
+                'success': True,
+                'st_response': st_response,
+                'last_sent_to_st': last_sent_to_st,
+            })
+
+        return jsonify({"success": False, "msg": _format_st_response_error(response, auth_type)})
 
         # 3. 创建 Session (保持 Cookie)
         session = requests.Session()

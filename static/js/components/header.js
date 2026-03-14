@@ -70,6 +70,28 @@ export default function header() {
         get isDarkMode() { return this.$store.global.isDarkMode; },
         get deviceType() { return this.$store.global.deviceType; },
         toggleDarkMode() { this.$store.global.toggleDarkMode(); },
+        get showFavoriteFilter() {
+            return this.currentMode === 'cards' || this.currentMode === 'chats';
+        },
+        get activeFavFilter() {
+            return this.$store.global.getFavoriteFilter(this.currentMode);
+        },
+        get favoriteFilterTitle() {
+            if (this.activeFavFilter === 'included') return '当前：只显示收藏';
+            if (this.activeFavFilter === 'excluded') return '当前：排除收藏';
+            return '当前：显示全部';
+        },
+        get favoriteFilterLabel() {
+            if (this.activeFavFilter === 'included') return '只看收藏';
+            if (this.activeFavFilter === 'excluded') return '排除收藏';
+            return '收藏筛选';
+        },
+        get canOpenUrlImport() {
+            return this.currentMode === 'cards';
+        },
+        get urlImportTitle() {
+            return this.canOpenUrlImport ? 'URL 导入角色卡' : 'URL 导入仅支持角色卡模式';
+        },
 
         // 移动端菜单状态
         showMobileMenu: false,
@@ -210,22 +232,19 @@ export default function header() {
             return false;
         },
         set showImportUrlModal(val) {
-            if (val) {
-                if (this.currentMode !== 'cards') {
-                    if (this.currentMode === 'chats') {
-                        this.triggerChatImport();
-                        return;
-                    }
-                    alert('暂不支持当前模式的 URL 导入');
-                    return;
-                }
-                // 获取当前浏览的分类作为默认导入位置
-                const currentCat = this.$store.global.viewState.filterCategory;
-                // 触发 importModal 打开
-                window.dispatchEvent(new CustomEvent('open-import-url', {
-                    detail: { category: currentCat }
-                }));
-            }
+            if (!val || !this.canOpenUrlImport) return;
+
+            // 获取当前浏览的分类作为默认导入位置
+            const currentCat = this.$store.global.viewState.filterCategory;
+            // 触发 importModal 打开
+            window.dispatchEvent(new CustomEvent('open-import-url', {
+                detail: { category: currentCat }
+            }));
+        },
+
+        openUrlImport() {
+            if (!this.canOpenUrlImport) return;
+            this.showImportUrlModal = true;
         },
 
         // 打开设置模态框
@@ -248,22 +267,7 @@ export default function header() {
 
         // 触发导入弹窗
         triggerImport() {
-            if (this.currentMode === 'chats') {
-                this.triggerChatImport();
-                return;
-            }
-
-            if (this.currentMode !== 'cards') {
-                alert('暂不支持世界书URL导入');
-                return;
-            }
-
-            // 获取当前浏览的分类 (作为默认导入位置)
-            const currentCat = this.$store.global.viewState.filterCategory;
-
-            window.dispatchEvent(new CustomEvent('open-import-url', {
-                detail: { category: currentCat }
-            }));
+            this.openUrlImport();
         },
 
         async deleteSelectedCards() {
@@ -383,7 +387,13 @@ export default function header() {
                 return;
             }
 
-            const res = await listChats({ page: 1, page_size: 100, search: this.chatSearchQuery || '', filter: this.$store.global.chatFilterType || 'all' });
+            const res = await listChats({
+                page: 1,
+                page_size: 100,
+                search: this.chatSearchQuery || '',
+                filter: this.$store.global.chatFilterType || 'all',
+                fav_filter: this.$store.global.getFavoriteFilter('chats'),
+            });
             if (!res.success || !Array.isArray(res.items) || res.items.length === 0) {
                 alert('当前没有可用聊天记录');
                 return;
@@ -473,7 +483,8 @@ export default function header() {
 
         // 收藏显示切换
         toggleFavFilter() {
-            this.$store.global.toggleFavFilter();
+            if (!this.showFavoriteFilter) return;
+            this.$store.global.toggleFavFilter(this.currentMode);
         },
 
         // 全选/取消全选（仅针对当前页）

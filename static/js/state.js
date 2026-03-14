@@ -136,7 +136,8 @@ export function initState() {
         // 聊天记录共享状态
         chatList: [],
         chatSearchQuery: '',
-        chatFilterType: 'all', // all | bound | unbound | favorites
+        chatFilterType: 'all', // all | bound | unbound
+        chatFavFilter: 'none', // 'none' | 'included' | 'excluded'
         chatCurrentPage: 1,
         chatTotalItems: 0,
         chatTotalPages: 1,
@@ -162,6 +163,10 @@ export function initState() {
             st_data_dir: '',
             st_username: '',
             st_password: '',
+            st_basic_username: '',
+            st_basic_password: '',
+            st_web_username: '',
+            st_web_password: '',
             st_auth_type: 'basic',
             st_proxy: '', 
             host: '127.0.0.1',
@@ -296,6 +301,10 @@ export function initState() {
                         default_sort: settings.default_sort || 'date_desc',
                         show_header_sort: settings.show_header_sort !== false,
                         st_auth_type: settings.st_auth_type || 'basic',
+                        st_basic_username: settings.st_basic_username || '',
+                        st_basic_password: settings.st_basic_password || '',
+                        st_web_username: settings.st_web_username || '',
+                        st_web_password: settings.st_web_password || '',
                         st_proxy: settings.st_proxy || '',
                         items_per_page: localPerPage ? parseInt(localPerPage) : (settings.items_per_page || 0),
                         items_per_page_wi: localPerPageWi ? parseInt(localPerPageWi) : (settings.items_per_page_wi || 0)
@@ -678,18 +687,43 @@ export function initState() {
             // 触发列表刷新
             window.dispatchEvent(new CustomEvent('refresh-card-list'));
         },
-        //  切换收藏筛选 (三态循环)
-        toggleFavFilter() {
-            const vs = this.viewState;
-            if (vs.favFilter === 'none') {
-                vs.favFilter = 'included';
-            } else if (vs.favFilter === 'included') {
-                vs.favFilter = 'excluded';
-            } else {
-                vs.favFilter = 'none';
+        getFavoriteFilter(mode = '') {
+            const targetMode = String(mode || this.currentMode || '').trim().toLowerCase();
+            if (targetMode === 'chats') {
+                return this.chatFavFilter || 'none';
             }
-            // 触发列表刷新
-            window.dispatchEvent(new CustomEvent('refresh-card-list'));
+            if (targetMode === 'cards') {
+                return this.viewState.favFilter || 'none';
+            }
+            return 'none';
+        },
+
+        setFavoriteFilter(mode = '', value = 'none') {
+            const targetMode = String(mode || this.currentMode || '').trim().toLowerCase();
+            const nextValue = ['none', 'included', 'excluded'].includes(value) ? value : 'none';
+
+            if (targetMode === 'chats') {
+                this.chatFavFilter = nextValue;
+                return;
+            }
+
+            if (targetMode === 'cards') {
+                this.viewState.favFilter = nextValue;
+            }
+        },
+
+        //  切换收藏筛选 (三态循环)
+        toggleFavFilter(mode = '') {
+            const targetMode = String(mode || this.currentMode || '').trim().toLowerCase();
+            const current = this.getFavoriteFilter(targetMode);
+
+            if (current === 'none') {
+                this.setFavoriteFilter(targetMode, 'included');
+            } else if (current === 'included') {
+                this.setFavoriteFilter(targetMode, 'excluded');
+            } else {
+                this.setFavoriteFilter(targetMode, 'none');
+            }
         },
     });
 }

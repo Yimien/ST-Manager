@@ -368,7 +368,60 @@
                             </label>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer mb-4">
+                            <input type="radio" name="auth_type" value="auth_web" x-model="settingsForm.st_auth_type"
+                                class="w-4 h-4">
+                            <span class="text-sm">Basic Auth + Web Login</span>
+                        </label>
+
+                        <div class="text-xs text-[var(--text-dim)] mb-4 leading-5">
+                            <div>`basicAuthMode: true` 时使用 Basic/Auth；`enableUserAccounts: true` 时使用 Web Login。</div>
+                            <div>`basicAuthMode: true` 且两者同时开启时，请选择 <span class="text-[var(--accent-main)] font-semibold">Basic Auth + Web Login</span>。</div>
+                        </div>
+
+                        <div x-show="settingsForm.st_auth_type === 'basic' || settingsForm.st_auth_type === 'auth_web'" x-transition class="mb-4">
+                            <div class="rounded border border-[var(--border-light)] bg-[var(--bg-panel)] p-3">
+                                <div class="text-xs uppercase tracking-wide text-[var(--text-dim)] mb-2">Basic/Auth</div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="text-xs text-[var(--text-dim)] uppercase">Auth 用户名</label>
+                                        <input type="text" x-model="settingsForm.st_basic_username" class="form-input mt-1"
+                                            placeholder="basicAuthUser.username">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-[var(--text-dim)] uppercase">Auth 密码</label>
+                                        <input type="password" x-model="settingsForm.st_basic_password" class="form-input mt-1"
+                                            placeholder="basicAuthUser.password">
+                                    </div>
+                                </div>
+                                <div class="mt-2 text-xs text-[var(--text-dim)]">
+                                    `perUserBasicAuth: true` 时，这里可以直接填写 Web 用户的 handle/password。
+                                </div>
+                            </div>
+                        </div>
+
+                        <div x-show="settingsForm.st_auth_type === 'web' || settingsForm.st_auth_type === 'auth_web'" x-transition class="mb-4">
+                            <div class="rounded border border-[var(--border-light)] bg-[var(--bg-panel)] p-3">
+                                <div class="text-xs uppercase tracking-wide text-[var(--text-dim)] mb-2">Web/Login</div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="text-xs text-[var(--text-dim)] uppercase">Web 用户名</label>
+                                        <input type="text" x-model="settingsForm.st_web_username" class="form-input mt-1"
+                                            placeholder="handle，例如 default-user">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-[var(--text-dim)] uppercase">Web 密码</label>
+                                        <input type="password" x-model="settingsForm.st_web_password" class="form-input mt-1"
+                                            placeholder="SillyTavern 用户密码">
+                                    </div>
+                                </div>
+                                <div class="mt-2 text-xs text-[var(--text-dim)]">
+                                    Web handle 可在 Account / Manage Users 中查看；密码无法直接查询，只能验证、修改或重置。
+                                </div>
+                            </div>
+                        </div>
+
+                        <div x-show="false" class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="text-xs text-[var(--text-dim)] uppercase">用户名</label>
                                 <input type="text" x-model="settingsForm.st_username" class="form-input mt-1">
@@ -805,6 +858,44 @@
                 <!-- 连接与服务帮助 -->
                 <div x-show="activeSettingTab === 'connection'" x-transition>
                     <div class="space-y-4">
+                        <div class="bg-[var(--bg-sub)] rounded border border-[var(--border-light)] p-4">
+                            <h4 class="font-bold text-emerald-400 mb-2">ST 认证模式排查</h4>
+                            <div class="space-y-3 text-xs text-[var(--text-dim)]">
+                                <p>先打开 SillyTavern 根目录下的 <code class="font-mono">config.yaml</code>，重点检查 <code class="font-mono">basicAuthMode</code>、<code class="font-mono">enableUserAccounts</code>、<code class="font-mono">perUserBasicAuth</code>、<code class="font-mono">basicAuthUser</code>。</p>
+                                <ul class="list-disc list-inside space-y-1">
+                                    <li><strong>Basic/Auth</strong>：适合 <code class="font-mono">basicAuthMode: true</code> 且未使用 Web 账号登录。</li>
+                                    <li><strong>Web/Login</strong>：适合 <code class="font-mono">basicAuthMode: false</code> 且 <code class="font-mono">enableUserAccounts: true</code>。</li>
+                                    <li><strong>Basic Auth + Web Login</strong>：适合两者同时开启。</li>
+                                    <li><code class="font-mono">perUserBasicAuth: true</code> 时，Basic/Auth 直接复用 Web 账号的 handle/password。</li>
+                                    <li><code class="font-mono">perUserBasicAuth: false</code> 时，Basic/Auth 必须填写 <code class="font-mono">basicAuthUser.username/password</code>。</li>
+                                </ul>
+                                <div class="rounded bg-[var(--bg-code)] p-3 space-y-2">
+                                    <div class="text-[var(--text-main)] font-semibold">三种常见配置示例</div>
+                                    <pre class="overflow-x-auto text-[10px]"># Basic/Auth
+basicAuthMode: true
+enableUserAccounts: false
+perUserBasicAuth: false
+basicAuthUser:
+  username: admin
+  password: change-me
+
+# Web/Login
+basicAuthMode: false
+enableUserAccounts: true
+
+# Basic/Auth + Web/Login
+basicAuthMode: true
+enableUserAccounts: true
+perUserBasicAuth: false
+basicAuthUser:
+  username: admin
+  password: change-me</pre>
+                                </div>
+                                <div class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200">
+                                    Web 用户名是账号 handle，可在 Account / Manage Users 中查看；Web 密码无法直接查询，只能验证、修改，忘记时请使用官方 <code class="font-mono">recover.js</code> 流程重置。
+                                </div>
+                            </div>
+                        </div>
                         <div class="bg-[var(--bg-sub)] rounded border border-[var(--border-light)] p-4">
                             <h4 class="font-bold text-[var(--accent-main)] mb-2">🔗 SillyTavern 集成</h4>
                             <p class="text-[var(--text-dim)] text-xs mb-3">

@@ -36,10 +36,22 @@ bp = Blueprint('chats', __name__)
 
 CHAT_BINDING_FIELD = 'chat_ids'
 CHAT_RANGE_PAGE_SIZE = 96
+CHAT_NAV_BATCH_SIZE = 200
+CHAT_DETAIL_FULL_INDEX_THRESHOLD = 600
 
 
 def _get_chats_root() -> str:
     return os.path.abspath(os.fspath(CHATS_FOLDER))
+
+
+def _coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
 
 
 def _normalize_chat_id(chat_id: str) -> str:
@@ -557,7 +569,11 @@ def api_list_chats():
 
         query = str(request.args.get('search', '') or '').strip().lower()
         filter_type = str(request.args.get('filter', 'all') or 'all').strip().lower()
+        fav_filter = str(request.args.get('fav_filter', 'none') or 'none').strip().lower()
         card_id = str(request.args.get('card_id', '') or '').strip()
+
+        if fav_filter not in ('none', 'included', 'excluded'):
+            fav_filter = 'none'
 
         chat_data = load_chat_data()
         ui_data = load_ui_data()
@@ -586,6 +602,10 @@ def api_list_chats():
             if filter_type == 'unbound' and item.get('bound_card_count', 0) > 0:
                 continue
             if filter_type == 'favorites' and not item.get('favorite'):
+                continue
+            if fav_filter == 'included' and not item.get('favorite'):
+                continue
+            if fav_filter == 'excluded' and item.get('favorite'):
                 continue
 
             if not _search_match(query, item):
@@ -634,7 +654,8 @@ def api_chat_detail():
     try:
         data = request.get_json() or {}
         chat_id = _normalize_chat_id(data.get('id'))
-        include_messages = bool(data.get('include_messages', False))
+        include_messages = _coerce_bool(data.get('include_messages'), default=False)
+        include_message_index = _coerce_bool(data.get('include_message_index'), default=True)
         if not _is_safe_chat_rel(chat_id):
             return jsonify({'success': False, 'msg': '非法聊天路径'}), 400
 
@@ -659,8 +680,14 @@ def api_chat_detail():
             index_data.get('metadata') if isinstance(index_data.get('metadata'), dict) else {}
         )
         item['bookmarks'] = list((entry or {}).get('bookmarks') or [])
-        item['message_index'] = index_data.get('message_index') if isinstance(index_data.get('message_index'), list) else []
+        full_message_index = index_data.get('message_index') if isinstance(index_data.get('message_index'), list) else []
+        should_include_message_index = include_message_index or len(full_message_index) <= CHAT_DETAIL_FULL_INDEX_THRESHOLD
+        item['message_index'] = full_message_index if should_include_message_index else []
+        item['message_index_included'] = should_include_message_index
+        item['message_index_total'] = len(full_message_index)
+        item['message_index_truncated'] = not should_include_message_index
         item['page_size'] = CHAT_RANGE_PAGE_SIZE
+        item['nav_batch_size'] = CHAT_NAV_BATCH_SIZE
         if include_messages:
             item['raw_messages'] = raw_messages
             item['messages'] = parsed_messages
@@ -676,6 +703,7 @@ def api_chat_range():
     try:
         data = request.get_json() or {}
         chat_id = _normalize_chat_id(data.get('id'))
+        include_messages = _coerce_bool(data.get('include_messages'), default=True)
         if not _is_safe_chat_rel(chat_id):
             return jsonify({'success': False, 'msg': '非法聊天路径'}), 400
 
@@ -708,12 +736,16 @@ def api_chat_range():
 
         start_floor = (page - 1) * page_size + 1 if total_messages > 0 else 0
         end_floor = min(total_messages, start_floor + page_size - 1) if total_messages > 0 else 0
-        metadata, raw_messages, parsed_messages = read_chat_jsonl_range(
-            full_path,
-            start_floor=start_floor,
-            end_floor=end_floor,
-            index_data=index_data,
-        )
+        metadata = index_data.get('metadata') if isinstance(index_data.get('metadata'), dict) else {}
+        raw_messages = []
+        parsed_messages = []
+        if include_messages and total_messages > 0:
+            metadata, raw_messages, parsed_messages = read_chat_jsonl_range(
+                full_path,
+                start_floor=start_floor,
+                end_floor=end_floor,
+                index_data=index_data,
+            )
 
         return jsonify({
             'success': True,
@@ -729,6 +761,7 @@ def api_chat_range():
                 'index_items': message_index[start_floor - 1:end_floor] if start_floor > 0 else [],
                 'raw_messages': raw_messages,
                 'messages': parsed_messages,
+                'include_messages': include_messages,
                 'has_previous': start_floor > 1,
                 'has_next': end_floor < total_messages,
                 'last_view_floor': int((entry or {}).get('last_view_floor') or 0),

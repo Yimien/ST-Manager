@@ -15,9 +15,9 @@ import base64
 import struct
 import zlib
 import logging
-import requests
 from typing import Optional, Dict, List, Any, Tuple
 from core.config import load_config, BASE_DIR
+from core.services.st_auth import STAuthError, build_st_http_client
 from core.utils.regex import extract_regex_from_preset_data, extract_global_regex_from_settings
 
 logger = logging.getLogger(__name__)
@@ -62,16 +62,26 @@ class STClient:
             st_url: SillyTavern API URL（API 模式）
         """
         config = load_config()
+        self.config = config
         self.st_data_dir = st_data_dir or config.get('st_data_dir', '')
         self.st_url = st_url or config.get('st_url', 'http://127.0.0.1:8000')
-        self.st_username = config.get('st_username', '')
-        self.st_password = config.get('st_password', '')
         self.timeout = 30
         self.cache = {}
         self.cache_ttl = 60  # 缓存60秒
         
     # ==================== 路径探测 ====================
     
+    def _create_http_client(self):
+        return build_st_http_client(self.config, st_url=self.st_url, timeout=self.timeout)
+
+    def _api_get(self, path: str, timeout: Optional[int] = None):
+        client = self._create_http_client()
+        return client.get(path, timeout=timeout or self.timeout)
+
+    def _api_post(self, path: str, payload: Optional[Dict[str, Any]] = None, timeout: Optional[int] = None):
+        client = self._create_http_client()
+        return client.post(path, json=payload or {}, timeout=timeout or self.timeout)
+
     def detect_st_path(self) -> Optional[str]:
         """
         自动探测 SillyTavern 安装路径
@@ -388,11 +398,7 @@ class STClient:
         
         # 测试 API 连接
         try:
-            resp = requests.get(
-                f"{self.st_url}/api/plugins/st-external-bridge/health",
-                timeout=5,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._create_http_client().get('/api/plugins/st-external-bridge/health', timeout=5)
             if resp.ok:
                 data = resp.json()
                 result["api"]["available"] = True
@@ -403,7 +409,7 @@ class STClient:
         # 尝试原生 ST API
         if not result["api"]["available"]:
             try:
-                resp = requests.get(f"{self.st_url}/api/status", timeout=5)
+                resp = self._create_http_client().get('/api/status', timeout=5)
                 if resp.ok:
                     result["api"]["available"] = True
                     result["api"]["version"] = "native"
@@ -510,12 +516,7 @@ class STClient:
         """通过 API 读取角色卡列表"""
         try:
             # 尝试 st-api-wrapper
-            resp = requests.post(
-                f"{self.st_url}/api/st-api/character/list",
-                json={"full": False},
-                timeout=self.timeout,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._api_post('/api/st-api/character/list', {"full": False})
             if resp.ok:
                 data = resp.json()
                 return data.get("characters", [])
@@ -546,12 +547,7 @@ class STClient:
     def _get_character_api(self, char_id: str) -> Optional[Dict[str, Any]]:
         """通过 API 读取角色卡详情"""
         try:
-            resp = requests.post(
-                f"{self.st_url}/api/st-api/character/get",
-                json={"name": char_id},
-                timeout=self.timeout,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._api_post('/api/st-api/character/get', {"name": char_id})
             if resp.ok:
                 data = resp.json()
                 return data.get("character")
@@ -628,12 +624,7 @@ class STClient:
     def _list_world_books_api(self) -> List[Dict[str, Any]]:
         """通过 API 读取世界书列表"""
         try:
-            resp = requests.post(
-                f"{self.st_url}/api/st-api/worldbook/list",
-                json={},
-                timeout=self.timeout,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._api_post('/api/st-api/worldbook/list', {})
             if resp.ok:
                 data = resp.json()
                 return data.get("worldBooks", [])
@@ -689,12 +680,7 @@ class STClient:
     def _list_presets_api(self) -> List[Dict[str, Any]]:
         """通过 API 读取预设列表"""
         try:
-            resp = requests.post(
-                f"{self.st_url}/api/st-api/preset/list",
-                json={},
-                timeout=self.timeout,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._api_post('/api/st-api/preset/list', {})
             if resp.ok:
                 data = resp.json()
                 return data.get("presets", [])
@@ -713,12 +699,7 @@ class STClient:
     def _list_regex_scripts_api(self) -> List[Dict[str, Any]]:
         """通过 API 读取正则脚本列表（若支持 st-api-wrapper）"""
         try:
-            resp = requests.post(
-                f"{self.st_url}/api/st-api/regex/list",
-                json={},
-                timeout=self.timeout,
-                auth=(self.st_username, self.st_password) if self.st_username else None
-            )
+            resp = self._api_post('/api/st-api/regex/list', {})
             if resp.ok:
                 data = resp.json()
                 return data.get("scripts", []) or data.get("regexScripts", []) or []

@@ -49,9 +49,13 @@ DEFAULT_CONFIG = {
     "resources_dir": "data/assets/card_assets",
     "st_url": "http://127.0.0.1:8000",
     "st_data_dir": "",  # SillyTavern 安装目录，留空则自动探测
-    "st_auth_type": "basic",  # 'basic' or 'web'
+    "st_auth_type": "basic",  # 'basic', 'web' or 'auth_web'
     "st_username": "",
     "st_password": "",
+    "st_basic_username": "",
+    "st_basic_password": "",
+    "st_web_username": "",
+    "st_web_password": "",
     "st_proxy": "",
     "items_per_page": 0,
     "items_per_page_wi": 0,
@@ -129,14 +133,69 @@ DEFAULT_CONFIG = {
     "automation_slash_is_tag_separator": False,
 }
 
+VALID_ST_AUTH_TYPES = {'basic', 'web', 'auth_web'}
+
+
+def _normalize_st_auth_type(auth_type):
+    if auth_type in VALID_ST_AUTH_TYPES:
+        return auth_type
+    return 'basic'
+
+
+def _normalize_st_credentials(cfg):
+    normalized = dict(cfg or {})
+    auth_type = _normalize_st_auth_type(normalized.get('st_auth_type', 'basic'))
+    normalized['st_auth_type'] = auth_type
+
+    legacy_username = normalized.get('st_username', '') or ''
+    legacy_password = normalized.get('st_password', '') or ''
+
+    basic_username = normalized.get('st_basic_username', '') or ''
+    basic_password = normalized.get('st_basic_password', '') or ''
+    web_username = normalized.get('st_web_username', '') or ''
+    web_password = normalized.get('st_web_password', '') or ''
+
+    if auth_type == 'basic':
+        if not basic_username and legacy_username:
+            basic_username = legacy_username
+        if not basic_password and legacy_password:
+            basic_password = legacy_password
+    elif auth_type == 'web':
+        if not web_username and legacy_username:
+            web_username = legacy_username
+        if not web_password and legacy_password:
+            web_password = legacy_password
+
+    normalized['st_basic_username'] = basic_username
+    normalized['st_basic_password'] = basic_password
+    normalized['st_web_username'] = web_username
+    normalized['st_web_password'] = web_password
+
+    if auth_type == 'basic':
+        normalized['st_username'] = basic_username
+        normalized['st_password'] = basic_password
+    elif auth_type == 'web':
+        normalized['st_username'] = web_username
+        normalized['st_password'] = web_password
+    else:
+        normalized['st_username'] = ''
+        normalized['st_password'] = ''
+
+    return normalized
+
+
+def normalize_config(cfg=None):
+    return _normalize_st_credentials({**DEFAULT_CONFIG, **(cfg or {})})
+
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
+                return normalize_config(json.load(f))
         except:
-            return DEFAULT_CONFIG
-    return DEFAULT_CONFIG
+            return normalize_config()
+    return normalize_config()
 
 class ConfigProxy:
     def _load(self):
@@ -165,8 +224,9 @@ class ConfigProxy:
 
 def save_config(cfg):
     try:
+        normalized_cfg = normalize_config(cfg)
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            json.dump(normalized_cfg, f, ensure_ascii=False, indent=2)
         return True
     except:
         return False

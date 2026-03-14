@@ -171,14 +171,15 @@
         <!-- 搜索与筛选区 -->
         <div class="header-search-block ml-auto mr-4">
             <button
+                x-show="showFavoriteFilter"
                 @click="toggleFavFilter()"
                 class="header-favorite-btn"
                 :class="{
-                    'is-included': $store.global.viewState.favFilter === 'included',
-                    'is-excluded': $store.global.viewState.favFilter === 'excluded',
-                    'is-neutral': $store.global.viewState.favFilter === 'none'
+                    'is-included': activeFavFilter === 'included',
+                    'is-excluded': activeFavFilter === 'excluded',
+                    'is-neutral': activeFavFilter === 'none'
                 }"
-                :title="$store.global.viewState.favFilter === 'included' ? '当前：只显示收藏' : ($store.global.viewState.favFilter === 'excluded' ? '当前：排除收藏' : '当前：显示全部')">
+                :title="favoriteFilterTitle">
                 <span class="header-favorite-icon">♥</span>
             </button>
 
@@ -256,9 +257,10 @@
                 style="padding: 0.5rem; background: linear-gradient(135deg, var(--accent-main), #7c3aed); border: 1px solid var(--accent-light); border-radius: 0.5rem; cursor: pointer; color: white; display: flex; align-items: center; justify-content: center;">
                 🎲
             </button>
-            <button @click="currentMode==='cards' ? showImportUrlModal=true : (currentMode==='chats' ? triggerChatImport() : alert('暂不支持世界书URL导入'))"
-                :class="(currentMode === 'cards' || currentMode === 'chats') ? 'btn-secondary hover:scale-105' : 'opacity-50 cursor-not-allowed btn-secondary'"
-                :title="currentMode === 'chats' ? '导入聊天记录' : '导入 (仅角色卡或聊天可用)'" class="btn-secondary transition-all">
+            <button @click="openUrlImport()"
+                :disabled="!canOpenUrlImport"
+                :class="canOpenUrlImport ? 'btn-secondary hover:scale-105' : 'opacity-50 cursor-not-allowed btn-secondary'"
+                :title="urlImportTitle" class="btn-secondary transition-all">
                 🌐
             </button>
             <button @click="currentMode === 'cards' ? fetchCards() : (currentMode === 'worldinfo' ? fetchWorldInfoList() : fetchChats())" title="刷新"
@@ -390,10 +392,11 @@
                 <div class="menu-icon">🎲</div>
                 <div class="menu-label">随机</div>
             </button>
-            <button @click="if(currentMode==='cards') showImportUrlModal=true; else if(currentMode==='chats') triggerChatImport(); else alert('暂不支持世界书URL导入'); closeMobileMenu()"
-                :class="(currentMode === 'cards' || currentMode === 'chats') ? 'mobile-menu-btn-item' : 'mobile-menu-btn-item opacity-50'">
+            <button @click="openUrlImport(); closeMobileMenu()"
+                :disabled="!canOpenUrlImport"
+                :class="canOpenUrlImport ? 'mobile-menu-btn-item' : 'mobile-menu-btn-item opacity-50'">
                 <div class="menu-icon">🌐</div>
-                <div class="menu-label" x-text="currentMode === 'chats' ? '导入聊天' : '导入'"></div>
+                <div class="menu-label">URL导入</div>
             </button>
             <button @click="currentMode === 'cards' ? fetchCards() : (currentMode === 'worldinfo' ? fetchWorldInfoList() : fetchChats()); closeMobileMenu()"
                 class="mobile-menu-btn-item">
@@ -420,16 +423,16 @@
         </div>
 
         <!-- 收藏筛选（移动端） -->
-        <button @click="toggleFavFilter(); closeMobileMenu()"
+        <button x-show="showFavoriteFilter" @click="toggleFavFilter(); closeMobileMenu()"
             class="mobile-favorite-btn transition-colors"
             :class="{
-                'active': $store.global.viewState.favFilter === 'included',
-                'excluded': $store.global.viewState.favFilter === 'excluded'
+                'active': activeFavFilter === 'included',
+                'excluded': activeFavFilter === 'excluded'
             }">
             
             <span class="favorite-icon">♥</span>
             
-            <span x-text="$store.global.viewState.favFilter === 'included' ? '只看收藏' : ($store.global.viewState.favFilter === 'excluded' ? '排除收藏' : '收藏筛选')"></span>
+            <span x-text="favoriteFilterLabel"></span>
         </button>
     </div>
 </div>
