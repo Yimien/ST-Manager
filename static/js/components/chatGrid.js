@@ -41,7 +41,7 @@ const REGEX_RULE_SOURCE_META = {
     preset_import: { label: 'ST 预设导入', order: 2, tone: 'accent' },
     regex_import: { label: 'Regex 导入', order: 3, tone: 'info' },
     manual: { label: '手写', order: 4, tone: 'accent' },
-    chat: { label: '聊天旧规则', order: 5, tone: 'muted' },
+    chat: { label: '聊天自定义', order: 5, tone: 'muted' },
     unknown: { label: '来源未识别', order: 9, tone: 'muted' },
 };
 
@@ -213,6 +213,8 @@ function normalizeDisplayRule(rule, index = 0) {
         readerMaxDepth: normalizeNullableNumber(source.readerMaxDepth ?? source.reader_max_depth),
         placement: Array.isArray(source.placement) ? source.placement : [],
         expanded: Boolean(source.expanded),
+        deleted: Boolean(source.deleted),
+        overrideKey: String(source.overrideKey || source.override_key || '').trim(),
         source: normalizeRegexRuleSource(source.source),
     };
 }
@@ -228,9 +230,173 @@ const READER_REGEX_PLACEMENT = {
 };
 
 
+const READER_REGEX_PLACEMENT_LABELS = {
+    [READER_REGEX_PLACEMENT.MD_DISPLAY]: 'Markdown 显示',
+    [READER_REGEX_PLACEMENT.USER_INPUT]: '用户输入',
+    [READER_REGEX_PLACEMENT.AI_OUTPUT]: 'AI 输出',
+    [READER_REGEX_PLACEMENT.SLASH_COMMAND]: 'Slash 命令',
+    [READER_REGEX_PLACEMENT.WORLD_INFO]: '世界书',
+    [READER_REGEX_PLACEMENT.REASONING]: '思维链',
+};
+
+const READER_REGEX_DEPTH_MODE_LABELS = {
+    anchor_abs: '锚点绝对距离',
+    anchor_backward: '仅锚点之前',
+    anchor_relative: '锚点相对距离',
+};
+
+const DISPLAY_RULE_SUBSTITUTE_LABELS = {
+    0: '不替换',
+    1: 'Raw',
+    2: 'Escaped',
+};
+
+
+function getDisplayRuleRegexDescriptor(findRegex) {
+    const raw = String(findRegex || '').trim();
+    if (!raw) {
+        return {
+            raw: '',
+            pattern: '',
+            flags: '',
+            standard: '未填写匹配正则',
+            valid: false,
+            error: '',
+        };
+    }
+
+    try {
+        const compiled = parseDisplayRuleRegex(raw);
+        const flags = compiled.flags || 'g';
+        return {
+            raw,
+            pattern: compiled.source,
+            flags,
+            standard: `/${compiled.source}/${flags}`,
+            valid: true,
+            error: '',
+        };
+    } catch (error) {
+        return {
+            raw,
+            pattern: raw,
+            flags: '',
+            standard: raw,
+            valid: false,
+            error: error?.message || '正则无效',
+        };
+    }
+}
+
+
+function describeRegexRulePlacements(placements) {
+    const values = Array.isArray(placements) ? placements : [];
+    if (!values.length) return '全部位置';
+    return values
+        .map((value) => READER_REGEX_PLACEMENT_LABELS[value] || `位置 ${value}`)
+        .join(' · ');
+}
+
+
+function summarizeRegexRulePlacements(placements) {
+    const values = Array.isArray(placements) ? placements : [];
+    if (!values.length) return '全部位置';
+    if (values.length === 1) {
+        return READER_REGEX_PLACEMENT_LABELS[values[0]] || `位置 ${values[0]}`;
+    }
+    return `${values.length} 个位置`;
+}
+
+
+function describeRegexRuleDepth(rule) {
+    const normalizedMode = normalizeReaderDepthMode(rule?.readerDepthMode);
+    const parts = [];
+    if (normalizedMode) {
+        parts.push(READER_REGEX_DEPTH_MODE_LABELS[normalizedMode] || normalizedMode);
+    }
+    if (rule?.readerMinDepth !== null && rule?.readerMinDepth !== undefined) {
+        parts.push(`min ${rule.readerMinDepth}`);
+    }
+    if (rule?.readerMaxDepth !== null && rule?.readerMaxDepth !== undefined) {
+        parts.push(`max ${rule.readerMaxDepth}`);
+    }
+    return parts.length ? parts.join(' · ') : '未限制';
+}
+
+
+function describeRegexRuleScope(rule) {
+    const scopes = [];
+    if (rule?.markdownOnly) scopes.push('仅 Markdown');
+    if (rule?.promptOnly) scopes.push('仅 Prompt');
+    return scopes.length ? scopes.join(' · ') : '常规消息';
+}
+
+
+function inspectRegexDisplayRule(rule, index = 0) {
+    if (!rule) return null;
+
+    const normalized = normalizeDisplayRule(rule, index);
+    const regexDescriptor = getDisplayRuleRegexDescriptor(normalized.findRegex);
+    const sourceMeta = getRegexRuleSourceMeta(rule?.source || normalized.source);
+    const placementSummary = describeRegexRulePlacements(normalized.placement);
+    const placementShort = summarizeRegexRulePlacements(normalized.placement);
+    const trimPreview = normalized.trimStrings.join('\n');
+    const hasReplacement = String(normalized.replaceString || '').length > 0;
+    const showRawPattern = Boolean(
+        regexDescriptor.valid
+        && normalized.findRegex
+        && normalized.findRegex !== regexDescriptor.standard,
+    );
+
+    return {
+        ...normalized,
+        sourceLabel: rule?.sourceLabel || sourceMeta.label,
+        sourceTone: rule?.sourceTone || sourceMeta.tone,
+        standardPattern: regexDescriptor.standard,
+        rawPattern: normalized.findRegex || '',
+        showRawPattern,
+        regexError: regexDescriptor.error,
+        flagsLabel: regexDescriptor.flags || '无',
+        macroModeLabel: DISPLAY_RULE_SUBSTITUTE_LABELS[Number(normalized.substituteRegex || 0)] || '不替换',
+        placementSummary,
+        placementShort,
+        depthSummary: describeRegexRuleDepth(normalized),
+        scopeSummary: describeRegexRuleScope(normalized),
+        runtimeSummary: normalized.runOnEdit === false ? '仅显示解析时运行' : '编辑和显示解析都会运行',
+        trimSummary: normalized.trimStrings.length ? `${normalized.trimStrings.length} 条` : '无',
+        trimPreview,
+        hasTrimStrings: normalized.trimStrings.length > 0,
+        replacementDisplay: hasReplacement ? normalized.replaceString : '(空字符串，命中后会删除匹配内容)',
+        replacementSummary: hasReplacement ? '命中后替换为上方文本' : '命中后删除匹配内容',
+        stateLabel: normalized.deleted ? '已删除' : (normalized.disabled ? '已禁用' : '生效中'),
+        stateTone: normalized.deleted || normalized.disabled ? 'muted' : 'accent',
+        listPattern: regexDescriptor.standard || '未填写匹配正则',
+        listMeta: [
+            normalized.disabled ? '已禁用' : '启用',
+            regexDescriptor.flags ? `/${regexDescriptor.flags}` : '未编译',
+            placementShort,
+            hasReplacement ? '有替换' : '删除匹配',
+        ].filter(Boolean).join(' · '),
+        orderLabel: `#${index + 1}`,
+    };
+}
+
+
 function buildDisplayRuleKey(rule) {
     const normalized = normalizeDisplayRule(rule);
     return `${normalized.scriptName}__${normalized.findRegex}`;
+}
+
+
+function resolveDisplayRuleMatchKeys(rule) {
+    const normalized = normalizeDisplayRule(rule);
+    const currentKey = buildDisplayRuleKey(normalized);
+    const overrideKey = String(normalized.overrideKey || '').trim();
+    return {
+        currentKey,
+        overrideKey,
+        primaryKey: overrideKey || currentKey,
+    };
 }
 
 
@@ -251,22 +417,25 @@ function markRegexConfigRuleSource(config, source) {
 }
 
 
-function decorateRegexDisplayRules(config, fallbackSource = 'unknown') {
+function decorateRegexDisplayRules(config, fallbackSource = 'unknown', options = {}) {
+    const includeDeleted = options.includeDeleted === true;
     const sourceRules = Array.isArray(config?.displayRules) ? config.displayRules : [];
-    return sourceRules.map((rule, index) => {
-        const normalized = normalizeDisplayRule(rule, index);
-        const source = normalized.source !== 'unknown'
-            ? normalized.source
-            : normalizeRegexRuleSource(fallbackSource);
-        const meta = getRegexRuleSourceMeta(source);
-        return {
-            ...normalized,
-            source,
-            sourceLabel: meta.label,
-            sourceTone: meta.tone,
-            sourceOrder: meta.order,
-        };
-    });
+    return sourceRules
+        .map((rule, index) => {
+            const normalized = normalizeDisplayRule(rule, index);
+            const source = normalized.source !== 'unknown'
+                ? normalized.source
+                : normalizeRegexRuleSource(fallbackSource);
+            const meta = getRegexRuleSourceMeta(source);
+            return {
+                ...normalized,
+                source,
+                sourceLabel: meta.label,
+                sourceTone: meta.tone,
+                sourceOrder: meta.order,
+            };
+        })
+        .filter(rule => includeDeleted || !rule.deleted);
 }
 
 
@@ -403,12 +572,42 @@ function detectImportedRegexSource(jsonData) {
 }
 
 
-function filterReaderDisplayRules(rules) {
+function filterReaderDisplayRules(rules, options = {}) {
+    const includeDisabled = options.includeDisabled === true;
+    const includeDeleted = options.includeDeleted === true;
     return rules.filter((rule) => {
-        if (!rule || rule.disabled || rule.promptOnly) return false;
-        if (!Array.isArray(rule.placement) || rule.placement.length === 0) return true;
-        return rule.placement.includes(2);
+        const normalized = normalizeDisplayRule(rule);
+        if (!normalized.findRegex) return false;
+        if (!includeDeleted && normalized.deleted) return false;
+        if (!includeDisabled && normalized.disabled) return false;
+        if (normalized.promptOnly) return false;
+        if (!Array.isArray(normalized.placement) || normalized.placement.length === 0) return true;
+        return normalized.placement.includes(READER_REGEX_PLACEMENT.AI_OUTPUT);
     });
+}
+
+
+function buildReaderEffectiveRegexConfig(config) {
+    const normalized = normalizeRegexConfig(config, { fillDefaults: false });
+    return {
+        ...normalized,
+        displayRules: filterReaderDisplayRules(Array.isArray(normalized.displayRules) ? normalized.displayRules : []),
+    };
+}
+
+
+function buildReaderInspectorRegexConfig(config, options = {}) {
+    const normalized = normalizeRegexConfig(config, { fillDefaults: false });
+    return {
+        ...normalized,
+        displayRules: filterReaderDisplayRules(
+            Array.isArray(normalized.displayRules) ? normalized.displayRules : [],
+            {
+                includeDisabled: true,
+                includeDeleted: options.includeDeleted === true,
+            },
+        ),
+    };
 }
 
 
@@ -533,26 +732,51 @@ function mergeRegexConfigs(baseConfig, overrideConfig) {
 
     const mergedRules = [];
     const seen = new Map();
+    const rememberSeenKey = (key, index) => {
+        if (!key) return;
+        seen.set(key, index);
+    };
     const feedRule = (rule, expanded = false, replaceExisting = false) => {
         const normalized = normalizeDisplayRule({ ...rule, expanded });
-        const key = `${normalized.scriptName}__${normalized.findRegex}`;
+        const { currentKey, overrideKey, primaryKey } = resolveDisplayRuleMatchKeys(normalized);
         if (!normalized.findRegex) return;
 
-        if (seen.has(key)) {
-            if (replaceExisting) {
-                mergedRules[seen.get(key)] = normalized;
-            }
+        if (!replaceExisting && seen.has(currentKey)) {
             return;
         }
 
-        seen.set(key, mergedRules.length);
+        const existingIndex = replaceExisting
+            ? (seen.has(primaryKey)
+                ? seen.get(primaryKey)
+                : (seen.has(currentKey) ? seen.get(currentKey) : -1))
+            : -1;
+        if (existingIndex >= 0) {
+            mergedRules[existingIndex] = normalized;
+            rememberSeenKey(primaryKey, existingIndex);
+            rememberSeenKey(currentKey, existingIndex);
+            rememberSeenKey(overrideKey, existingIndex);
+            return;
+        }
+
+        const nextIndex = mergedRules.length;
         mergedRules.push(normalized);
+        rememberSeenKey(currentKey, nextIndex);
+        rememberSeenKey(primaryKey, nextIndex);
+        rememberSeenKey(overrideKey, nextIndex);
     };
 
     base.displayRules.forEach(rule => feedRule(rule, false, false));
     override.displayRules.forEach(rule => feedRule(rule, false, true));
     next.displayRules = mergedRules;
     return next;
+}
+
+
+function dedupeRegexConfig(config) {
+    return mergeRegexConfigs(
+        EMPTY_CHAT_READER_REGEX_CONFIG,
+        normalizeRegexConfig(config, { fillDefaults: false }),
+    );
 }
 
 
@@ -1233,7 +1457,7 @@ export function applyDisplayRules(text, config) {
     };
 
     for (const rule of rules) {
-        if (!rule || rule.disabled || !rule.findRegex) continue;
+        if (!rule || rule.deleted || rule.disabled || !rule.findRegex) continue;
         if (rule.promptOnly && !isPrompt) continue;
         if (!readerDisplayRules) {
             if ((rule.markdownOnly && isMarkdown)
@@ -2284,6 +2508,8 @@ export default function chatGrid() {
         readerPageGroupIndex: 0,
         regexConfigOpen: false,
         regexConfigTab: 'extract',
+        selectedActiveRegexRuleIndex: 0,
+        selectedDraftRegexRuleIndex: 0,
         regexConfigDraft: normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false }),
         regexConfigStatus: '',
         regexTestInput: '',
@@ -2748,24 +2974,84 @@ export default function chatGrid() {
             return this.resolveEffectiveRegexConfig(this.regexConfigDraft);
         },
 
+        get activeReaderRegexConfig() {
+            return buildReaderEffectiveRegexConfig(this.activeRegexConfig);
+        },
+
+        get regexDraftResolvedReaderConfig() {
+            return buildReaderEffectiveRegexConfig(this.regexDraftResolvedConfig);
+        },
+
+        get regexWorkbenchEffectiveConfig() {
+            return this.regexConfigOpen ? this.regexDraftResolvedConfig : this.activeRegexConfig;
+        },
+
         get activeRegexDisplayRules() {
-            return decorateRegexDisplayRules(this.activeRegexConfig);
+            return decorateRegexDisplayRules(buildReaderInspectorRegexConfig(this.regexWorkbenchEffectiveConfig));
         },
 
         get regexDraftResolvedDisplayRules() {
-            return decorateRegexDisplayRules(this.regexDraftResolvedConfig);
+            return decorateRegexDisplayRules(buildReaderInspectorRegexConfig(this.regexDraftResolvedConfig));
+        },
+
+        get selectedActiveRegexRuleIndexSafe() {
+            if (!this.activeRegexDisplayRules.length) return -1;
+            const normalizedIndex = Number(this.selectedActiveRegexRuleIndex);
+            if (!Number.isFinite(normalizedIndex) || normalizedIndex < 0) return 0;
+            return Math.min(normalizedIndex, this.activeRegexDisplayRules.length - 1);
+        },
+
+        get selectedActiveRegexRule() {
+            const index = this.selectedActiveRegexRuleIndexSafe;
+            if (index < 0) return null;
+            return this.activeRegexDisplayRules[index] || null;
+        },
+
+        get selectedActiveRegexRuleDetail() {
+            const index = this.selectedActiveRegexRuleIndexSafe;
+            if (index < 0) return null;
+            return inspectRegexDisplayRule(this.selectedActiveRegexRule, index);
+        },
+
+        get selectedDraftRegexRuleIndexSafe() {
+            if (!this.regexDraftDisplayRules.length) return -1;
+            const normalizedIndex = Number(this.selectedDraftRegexRuleIndex);
+            if (!Number.isFinite(normalizedIndex) || normalizedIndex < 0) return 0;
+            return Math.min(normalizedIndex, this.regexDraftDisplayRules.length - 1);
+        },
+
+        get selectedDraftRegexRule() {
+            const index = this.selectedDraftRegexRuleIndexSafe;
+            if (index < 0) return null;
+            return this.regexDraftDisplayRules[index] || null;
+        },
+
+        get selectedDraftRegexRuleDetail() {
+            const index = this.selectedDraftRegexRuleIndexSafe;
+            if (index < 0) return null;
+            return inspectRegexDisplayRule(this.selectedDraftRegexRule, index);
         },
 
         get savedChatRegexRuleCount() {
-            return Array.isArray(this.savedChatRegexConfig?.displayRules) ? this.savedChatRegexConfig.displayRules.length : 0;
+            return decorateRegexDisplayRules(this.savedChatRegexConfig, 'chat').length;
+        },
+
+        get savedChatRegexDeletionCount() {
+            return decorateRegexDisplayRules(this.savedChatRegexConfig, 'chat', { includeDeleted: true })
+                .filter(rule => rule.deleted)
+                .length;
         },
 
         get cardRegexRuleCount() {
-            return Array.isArray(this.activeCardRegexConfig?.displayRules) ? this.activeCardRegexConfig.displayRules.length : 0;
+            return decorateRegexDisplayRules(this.activeCardRegexConfig, 'card').length;
         },
 
         get regexEffectiveRuleCount() {
             return this.activeRegexDisplayRules.length;
+        },
+
+        get regexEffectiveDisabledCount() {
+            return this.activeRegexDisplayRules.filter(rule => rule.disabled).length;
         },
 
         get regexEffectiveSourceSummary() {
@@ -2774,24 +3060,44 @@ export default function chatGrid() {
 
         get regexDraftOutcomeSummary() {
             const total = this.regexDraftResolvedDisplayRules.length;
+            const runnableCount = Array.isArray(this.regexDraftResolvedReaderConfig?.displayRules)
+                ? this.regexDraftResolvedReaderConfig.displayRules.length
+                : 0;
+            const disabledCount = this.regexDraftResolvedDisplayRules.filter(rule => rule.disabled).length;
+            const deletedCount = this.regexDraftDeletionCount;
             if (!total) {
-                return '保存后当前聊天不会使用显示替换规则。';
+                return deletedCount > 0
+                    ? `保存后当前聊天不会使用显示替换规则（含 ${deletedCount} 个删除覆盖）。`
+                    : '保存后当前聊天不会使用显示替换规则。';
             }
             const summary = summarizeRegexRuleSources(this.regexDraftResolvedDisplayRules);
-            return `保存后预计生效 ${total} 条${summary ? `：${summary}` : ''}`;
+            const extras = [];
+            if (disabledCount > 0) extras.push(`已禁用 ${disabledCount} 条`);
+            if (deletedCount > 0) extras.push(`删除覆盖 ${deletedCount} 条`);
+            return `保存后规则面板显示 ${total} 条，实际参与替换 ${runnableCount} 条${summary ? `：${summary}` : ''}${extras.length ? `（${extras.join('，')}）` : ''}`;
         },
 
         get regexStateCards() {
             const hasBoundCard = Boolean(this.activeChat?.bound_card_id);
-            const hasSavedChatRules = this.savedChatRegexRuleCount > 0;
-            const hasDraftRules = this.regexDraftRuleCount > 0;
+            const hasSavedChatRules = hasCustomRegexConfig(this.savedChatRegexConfig);
+            const hasDraftRules = hasCustomRegexConfig(this.regexConfigDraft);
+            const effectiveState = this.regexEffectiveDisabledCount > 0
+                ? `${this.regexEffectiveRuleCount} 条 / 禁用 ${this.regexEffectiveDisabledCount}`
+                : `${this.regexEffectiveRuleCount} 条`;
+            const savedState = hasSavedChatRules
+                ? `${this.savedChatRegexRuleCount} 条${this.savedChatRegexDeletionCount > 0 ? ` / 删除 ${this.savedChatRegexDeletionCount}` : ''}`
+                : '未保存';
+            const draftState = `${this.regexDraftRuleCount} 条${this.regexDraftDeletionCount > 0 ? ` / 删除 ${this.regexDraftDeletionCount}` : ''}`;
+            const effectiveDetail = this.regexConfigOpen
+                ? '这里实时预览当前草稿合并后的显示替换规则，保存前不会写回聊天文件。'
+                : '这里显示当前聊天合并后的显示替换规则，已禁用项也会保留在列表里并单独标记。';
             return [
                 {
                     id: 'effective',
                     title: '当前生效',
-                    state: `${this.regexEffectiveRuleCount} 条`,
+                    state: effectiveState,
                     detail: this.regexEffectiveRuleCount
-                        ? `这里显示当前聊天真正用于解析的规则。${this.regexEffectiveSourceSummary || ''}`
+                        ? `${effectiveDetail}${this.regexEffectiveSourceSummary || ''}`
                         : '当前聊天还没有生效的显示替换规则。',
                     tone: this.regexEffectiveRuleCount ? 'accent' : 'muted',
                 },
@@ -2809,17 +3115,21 @@ export default function chatGrid() {
                 {
                     id: 'saved',
                     title: '聊天已保存',
-                    state: hasSavedChatRules ? `${this.savedChatRegexRuleCount} 条` : '未保存',
+                    state: savedState,
                     detail: hasSavedChatRules
-                        ? '这些是已经写入当前聊天文件的自定义规则。'
+                        ? (this.savedChatRegexDeletionCount > 0
+                            ? `这些是已经写入当前聊天文件的自定义规则，另外还有 ${this.savedChatRegexDeletionCount} 个删除覆盖。`
+                            : '这些是已经写入当前聊天文件的自定义规则。')
                         : '当前聊天没有已保存的自定义规则。',
                     tone: hasSavedChatRules ? 'info' : 'muted',
                 },
                 {
                     id: 'draft',
                     title: '当前草稿',
-                    state: `${this.regexDraftRuleCount} 条`,
-                    detail: hasDraftRules ? this.regexDraftOutcomeSummary : '当前没有聊天自定义草稿，保存时会直接继承角色卡规则。',
+                    state: draftState,
+                    detail: hasDraftRules
+                        ? this.regexDraftOutcomeSummary
+                        : '当前没有聊天自定义草稿，保存时会直接继承角色卡规则。',
                     tone: hasDraftRules ? 'accent' : 'muted',
                 },
             ];
@@ -3927,7 +4237,7 @@ export default function chatGrid() {
         },
 
         get hasChatRegexConfig() {
-            return this.savedChatRegexRuleCount > 0;
+            return hasCustomRegexConfig(this.savedChatRegexConfig);
         },
 
         get hasBoundCardRegexConfig() {
@@ -3935,7 +4245,21 @@ export default function chatGrid() {
         },
 
         get regexDraftRuleCount() {
-            return Array.isArray(this.regexConfigDraft?.displayRules) ? this.regexConfigDraft.displayRules.length : 0;
+            return this.regexDraftDisplayRules.length;
+        },
+
+        get hasRegexDraftEntries() {
+            return Array.isArray(this.regexConfigDraft?.displayRules) && this.regexConfigDraft.displayRules.length > 0;
+        },
+
+        get canRestoreRegexInheritance() {
+            return this.hasRegexDraftEntries || Boolean(this.activeChat?.bound_card_id);
+        },
+
+        get regexDraftDeletionCount() {
+            return decorateRegexDisplayRules(this.regexConfigDraft, 'chat', { includeDeleted: true })
+                .filter(rule => rule.deleted)
+                .length;
         },
 
         get regexRuleSourceSummary() {
@@ -3989,6 +4313,17 @@ export default function chatGrid() {
         },
 
         get resolvedRegexConfigSourceLabel() {
+            if (this.regexConfigOpen) {
+                const hasBoundCard = Boolean(this.activeChat?.bound_card_id);
+                const hasCardRules = this.cardRegexRuleCount > 0;
+                const hasDraftImpact = this.hasRegexDraftEntries || this.regexDraftDeletionCount > 0;
+                const hasPreviewRules = this.activeRegexDisplayRules.length > 0;
+                if (hasPreviewRules && hasCardRules && hasDraftImpact) return '左侧预览：角色卡继承 + 当前草稿';
+                if (hasPreviewRules && hasDraftImpact) return '左侧预览：当前草稿';
+                if (hasPreviewRules && hasCardRules) return '左侧预览：角色卡继承';
+                if (hasBoundCard) return '左侧预览：已绑定角色卡，但当前没有可用解析规则';
+                return '左侧预览：当前没有可用解析规则';
+            }
             return this.regexConfigSourceLabel || this.describeRegexConfigSource();
         },
 
@@ -4347,6 +4682,8 @@ export default function chatGrid() {
                 if (requestToken !== this.readerPageRequestToken) return;
                 this.detectChatAppMode();
                 this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
+                this.selectedActiveRegexRuleIndex = 0;
+                this.selectedDraftRegexRuleIndex = 0;
                 this.regexConfigSourceLabel = this.describeRegexConfigSource(this.activeChat);
                 this.$nextTick(() => {
                     this.mountChatAppStage();
@@ -5311,6 +5648,8 @@ export default function chatGrid() {
             if (requestToken !== this.readerPageRequestToken) return;
             this.detectChatAppMode();
             this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
+            this.selectedActiveRegexRuleIndex = 0;
+            this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigSourceLabel = this.describeRegexConfigSource(this.activeChat);
             this.$nextTick(() => {
                 this.mountChatAppStage();
@@ -5348,7 +5687,7 @@ export default function chatGrid() {
                     }
                     return;
                 }
-                this.activeCardRegexConfig = deriveReaderConfigFromCard(detail);
+                this.activeCardRegexConfig = dedupeRegexConfig(deriveReaderConfigFromCard(detail));
                 if (target && typeof target === 'object') {
                     target.bound_card_resource_folder = detail.card?.resource_folder || '';
                 }
@@ -5780,13 +6119,89 @@ export default function chatGrid() {
             };
         },
 
+        setRegexDraftDisplayRules(nextRules) {
+            this.regexConfigDraft = {
+                ...this.regexConfigDraft,
+                displayRules: nextRules,
+            };
+        },
+
+        selectActiveRegexRule(index) {
+            const normalizedIndex = Number(index);
+            this.selectedActiveRegexRuleIndex = Number.isFinite(normalizedIndex) && normalizedIndex >= 0
+                ? normalizedIndex
+                : 0;
+        },
+
+        selectDraftRegexRule(index) {
+            const normalizedIndex = Number(index);
+            this.selectedDraftRegexRuleIndex = Number.isFinite(normalizedIndex) && normalizedIndex >= 0
+                ? normalizedIndex
+                : 0;
+        },
+
+        getRegexRuleInspector(rule, index = 0) {
+            return inspectRegexDisplayRule(rule, index);
+        },
+
+        findRegexDraftRuleRawIndex(targetRule) {
+            const normalizedTarget = normalizeDisplayRule(targetRule);
+            const rawRules = Array.isArray(this.regexConfigDraft?.displayRules) ? this.regexConfigDraft.displayRules : [];
+            const targetKeys = resolveDisplayRuleMatchKeys(normalizedTarget);
+            const idMatchIndex = rawRules.findIndex((item) => normalizeDisplayRule(item).id === normalizedTarget.id);
+            if (idMatchIndex >= 0) {
+                return idMatchIndex;
+            }
+
+            return rawRules.findIndex((item) => {
+                const normalizedItem = normalizeDisplayRule(item);
+                const itemKeys = resolveDisplayRuleMatchKeys(normalizedItem);
+                return itemKeys.currentKey === targetKeys.currentKey
+                    || itemKeys.currentKey === targetKeys.primaryKey
+                    || itemKeys.overrideKey === targetKeys.currentKey
+                    || itemKeys.overrideKey === targetKeys.primaryKey;
+            });
+        },
+
+        cardRegexRuleExists(ruleKey = '') {
+            const targetKey = String(ruleKey || '').trim();
+            if (!targetKey) return false;
+            return decorateRegexDisplayRules(this.activeCardRegexConfig, 'card', { includeDeleted: true })
+                .some(rule => buildDisplayRuleKey(rule) === targetKey);
+        },
+
+        upsertRegexDraftRuleFromSource(targetRule, patch = {}) {
+            const normalizedTarget = normalizeDisplayRule(targetRule);
+            const rawRules = Array.isArray(this.regexConfigDraft?.displayRules) ? [...this.regexConfigDraft.displayRules] : [];
+            const rawIndex = this.findRegexDraftRuleRawIndex(normalizedTarget);
+            const existingRule = rawIndex >= 0 ? normalizeDisplayRule(rawRules[rawIndex], rawIndex) : null;
+            const targetKeys = resolveDisplayRuleMatchKeys(normalizedTarget);
+            const nextRule = normalizeDisplayRule({
+                ...(existingRule || normalizedTarget),
+                ...patch,
+                source: existingRule?.source || (normalizedTarget.source === 'card' ? 'chat' : normalizedTarget.source || 'chat'),
+                overrideKey: existingRule?.overrideKey
+                    || normalizedTarget.overrideKey
+                    || (normalizedTarget.source === 'card' ? targetKeys.currentKey : ''),
+                expanded: true,
+                deleted: patch.deleted === undefined ? Boolean(existingRule?.deleted) : Boolean(patch.deleted),
+            }, rawIndex >= 0 ? rawIndex : rawRules.length);
+
+            if (rawIndex >= 0) {
+                rawRules[rawIndex] = nextRule;
+            } else {
+                rawRules.push(nextRule);
+            }
+
+            this.setRegexDraftDisplayRules(rawRules);
+            return nextRule;
+        },
+
         addRegexDisplayRule() {
             const next = Array.isArray(this.regexConfigDraft.displayRules) ? [...this.regexConfigDraft.displayRules] : [];
             next.push(normalizeDisplayRule({ expanded: true, source: 'manual' }, next.length));
-            this.regexConfigDraft = {
-                ...this.regexConfigDraft,
-                displayRules: next,
-            };
+            this.setRegexDraftDisplayRules(next);
+            this.selectedDraftRegexRuleIndex = Math.max(0, this.regexDraftDisplayRules.length - 1);
         },
 
         updateRegexDisplayRule(index, field, value) {
@@ -5801,10 +6216,7 @@ export default function chatGrid() {
                     return currentId === targetId ? { ...item, [field]: value } : item;
                 })
                 : [];
-            this.regexConfigDraft = {
-                ...this.regexConfigDraft,
-                displayRules: next,
-            };
+            this.setRegexDraftDisplayRules(next);
         },
 
         updateRegexDisplayRuleDepthMode(index, value) {
@@ -5828,10 +6240,7 @@ export default function chatGrid() {
                     return currentId === targetId ? { ...item, expanded: !item.expanded } : item;
                 })
                 : [];
-            this.regexConfigDraft = {
-                ...this.regexConfigDraft,
-                displayRules: next,
-            };
+            this.setRegexDraftDisplayRules(next);
         },
 
         removeRegexDisplayRule(index) {
@@ -5843,10 +6252,57 @@ export default function chatGrid() {
             const next = Array.isArray(this.regexConfigDraft.displayRules)
                 ? this.regexConfigDraft.displayRules.filter((item) => normalizeDisplayRule(item).id !== targetId)
                 : [];
-            this.regexConfigDraft = {
-                ...this.regexConfigDraft,
-                displayRules: next,
-            };
+            this.setRegexDraftDisplayRules(next);
+            this.regexConfigStatus = `已从聊天自定义草稿移除规则“${target.scriptName || `规则 ${index + 1}`}”。`;
+        },
+
+        updateSelectedActiveRegexRule(field, value) {
+            const target = this.selectedActiveRegexRule;
+            if (!target) return;
+            this.upsertRegexDraftRuleFromSource(target, {
+                [field]: value,
+                deleted: false,
+            });
+        },
+
+        updateSelectedActiveRegexRuleDepthMode(value) {
+            const normalizedMode = normalizeReaderDepthMode(value);
+            this.updateSelectedActiveRegexRule('readerDepthMode', normalizedMode);
+            if (!normalizedMode) {
+                this.updateSelectedActiveRegexRule('readerMinDepth', null);
+                this.updateSelectedActiveRegexRule('readerMaxDepth', null);
+            }
+        },
+
+        removeSelectedActiveRegexRule() {
+            const target = this.selectedActiveRegexRule;
+            if (!target) return;
+
+            const normalizedTarget = normalizeDisplayRule(target);
+            const rawIndex = this.findRegexDraftRuleRawIndex(normalizedTarget);
+            const targetKeys = resolveDisplayRuleMatchKeys(normalizedTarget);
+            const existingRule = rawIndex >= 0
+                ? normalizeDisplayRule(this.regexConfigDraft.displayRules[rawIndex], rawIndex)
+                : null;
+            const shouldWriteDeletionOverride = Boolean(
+                normalizedTarget.source === 'card'
+                || existingRule?.overrideKey
+                || this.cardRegexRuleExists(targetKeys.primaryKey)
+                || this.cardRegexRuleExists(targetKeys.currentKey)
+            );
+
+            if (!shouldWriteDeletionOverride && existingRule) {
+                const next = this.regexConfigDraft.displayRules.filter((_, index) => index !== rawIndex);
+                this.setRegexDraftDisplayRules(next);
+            } else {
+                this.upsertRegexDraftRuleFromSource(existingRule || normalizedTarget, {
+                    deleted: true,
+                    disabled: false,
+                    expanded: false,
+                });
+            }
+
+            this.regexConfigStatus = `已从当前合并结果移除规则“${normalizedTarget.scriptName}”，保存后生效。`;
         },
 
         importRegexConfigFile(event) {
@@ -5903,9 +6359,21 @@ export default function chatGrid() {
             reader.readAsText(file, 'utf-8');
         },
 
-        clearRegexDraft() {
+        async clearRegexDraft() {
+            const hasBoundCard = Boolean(this.activeChat?.bound_card_id);
+            if (hasBoundCard) {
+                await this.loadBoundCardRegexConfig(this.activeChat);
+            }
             this.regexConfigDraft = normalizeRegexConfig(EMPTY_CHAT_READER_REGEX_CONFIG, { fillDefaults: false });
-            this.regexConfigStatus = '已清空聊天自定义规则，保存后将恢复为角色卡继承';
+            this.selectedActiveRegexRuleIndex = 0;
+            this.selectedDraftRegexRuleIndex = 0;
+            if (hasBoundCard) {
+                this.regexConfigStatus = this.cardRegexRuleCount > 0
+                    ? `已重新读取角色卡规则并自动去重，当前可继承 ${this.cardRegexRuleCount} 条；保存后将恢复为角色卡继承`
+                    : '已清空聊天自定义规则并重新读取角色卡规则，但当前角色卡没有可继承规则';
+                return;
+            }
+            this.regexConfigStatus = '已清空聊天自定义规则，当前聊天未绑定角色卡';
         },
 
         downloadRegexConfigExport(payload, filenamePrefix, statusMessage) {
@@ -5920,7 +6388,9 @@ export default function chatGrid() {
         },
 
         exportEffectiveRegexConfig() {
-            const payload = normalizeRegexConfig(this.activeRegexConfig, { fillDefaults: false });
+            const payload = normalizeRegexConfig({
+                displayRules: this.activeRegexDisplayRules,
+            }, { fillDefaults: false });
             this.downloadRegexConfigExport(
                 payload,
                 'chat-reader-effective-regex',
@@ -5941,6 +6411,8 @@ export default function chatGrid() {
             this.readerResolvedRegexConfig = normalizeRegexConfig(this.activeRegexConfig);
             this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
             this.regexTestInput = '';
+            this.selectedActiveRegexRuleIndex = 0;
+            this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigOpen = true;
             this.regexConfigTab = 'extract';
             this.regexConfigSourceLabel = this.describeRegexConfigSource();
@@ -5949,6 +6421,8 @@ export default function chatGrid() {
 
         closeRegexConfig() {
             this.regexConfigOpen = false;
+            this.selectedActiveRegexRuleIndex = 0;
+            this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigStatus = '';
             this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
             this.regexConfigSourceLabel = this.describeRegexConfigSource();
@@ -6015,6 +6489,8 @@ export default function chatGrid() {
             this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
             this.rebuildActiveChatMessages(this.activeRegexConfig);
             this.regexConfigOpen = false;
+            this.selectedActiveRegexRuleIndex = 0;
+            this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigStatus = '';
             this.regexConfigSourceLabel = this.describeRegexConfigSource();
             if (this.detailSearchQuery) {

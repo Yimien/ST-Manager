@@ -380,7 +380,7 @@
                         <input type="file" accept=".json" hidden @change="importRegexConfigFile($event)">
                     </label>
                     <button class="chat-toolbar-btn" @click="addRegexDisplayRule()">新增手写规则</button>
-                    <button class="chat-toolbar-btn" @click="clearRegexDraft()" :disabled="regexDraftRuleCount === 0">恢复角色卡继承</button>
+                    <button class="chat-toolbar-btn" @click="clearRegexDraft()" :disabled="!canRestoreRegexInheritance">恢复角色卡继承</button>
                 </div>
                 <div class="chat-reader-regex-toolbar-group">
                     <span class="chat-reader-regex-toolbar-label">操作</span>
@@ -406,77 +406,97 @@
                 </template>
             </div>
             <div class="chat-reader-replace-status">
-                当前实际生效规则始终以左侧“当前实际生效规则”为准。你现在编辑的是聊天自定义草稿，只有保存后才会写回聊天文件。
+                左侧“当前实际生效规则”会实时预览当前草稿合并后的结果；只有保存后才会真正写回聊天文件。
             </div>
             <div class="chat-reader-replace-status" x-text="regexDraftOutcomeSummary"></div>
             <div class="chat-reader-replace-status" x-show="regexConfigStatus" x-text="regexConfigStatus"></div>
         </div>
 
         <div class="chat-reader-editor-grid chat-reader-editor-grid--balanced custom-scrollbar">
-            <div class="chat-reader-editor-section chat-reader-editor-section--split">
-                <div class="chat-reader-sideblock-stack">
-                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+            <div class="chat-reader-editor-section chat-reader-editor-section--stack">
+                <div class="chat-reader-regex-workbench">
+                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch chat-reader-sideblock-card--browser">
                         <div class="chat-reader-panel-title">当前实际生效规则</div>
-                        <div class="chat-reader-replace-status">这里展示当前聊天真正用于解析的规则集合，来源标签就是当前实际来源。</div>
-                        <div class="chat-reader-regex-rule-list custom-scrollbar">
-                            <template x-for="(rule, index) in activeRegexDisplayRules" :key="'active-' + (rule.id || rule.scriptName + rule.findRegex)">
-                                <div class="chat-reader-regex-rule-card">
-                                    <div class="chat-reader-rule-summary chat-reader-rule-summary--static">
-                                        <div>
-                                            <div class="chat-reader-rule-title-row">
-                                                <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
-                                                <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
+                        <div class="chat-reader-replace-status">这里实时显示当前草稿合并后的显示替换规则。已禁用规则会保留在列表里并单独标记；保存前不会改动聊天文件，在右侧修改时会自动写入聊天自定义草稿。</div>
+                        <div class="chat-reader-regex-browser" :class="{ 'is-empty': activeRegexDisplayRules.length === 0 }">
+                            <div class="chat-reader-regex-browser-list custom-scrollbar" x-show="activeRegexDisplayRules.length > 0">
+                                <template x-for="(rule, index) in activeRegexDisplayRules" :key="'active-inspector-' + index + '-' + (rule.id || rule.scriptName + rule.findRegex)">
+                                    <button
+                                        type="button"
+                                        class="chat-reader-regex-browser-item"
+                                        :class="{ 'is-active': selectedActiveRegexRuleIndexSafe === index, 'is-disabled': rule.disabled }"
+                                        :aria-pressed="selectedActiveRegexRuleIndexSafe === index ? 'true' : 'false'"
+                                        @click="selectActiveRegexRule(index)">
+                                        <div class="chat-reader-regex-browser-head">
+                                            <div class="chat-reader-regex-browser-head-main">
+                                                <div class="chat-reader-rule-title-row">
+                                                    <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
+                                                    <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
+                                                    <span x-show="rule.disabled" class="chat-reader-regex-state-pill is-muted">已禁用</span>
+                                                </div>
+                                                <div class="chat-reader-regex-browser-pattern" x-text="getRegexRuleInspector(rule, index).listPattern || '未填写匹配正则'"></div>
                                             </div>
-                                            <span x-text="rule.findRegex || '未填写匹配正则'"></span>
+                                            <span class="chat-reader-regex-browser-index" x-text="'#' + (index + 1)"></span>
                                         </div>
-                                    </div>
-                                    <div class="chat-reader-rule-snippet" x-show="rule.replaceString" x-text="rule.replaceString"></div>
-                                </div>
-                            </template>
-                            <div x-show="activeRegexDisplayRules.length === 0" class="chat-reader-replace-status">当前聊天没有实际生效的显示替换规则。</div>
-                        </div>
-                    </div>
-
-                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
-                        <div class="chat-reader-panel-title">聊天自定义草稿</div>
-                        <div class="chat-reader-replace-status">这里编辑的是会写入当前聊天文件的自定义规则。保存后会和角色卡继承规则合并，同名规则由聊天自定义覆盖。</div>
-                        <div class="chat-reader-regex-rule-list custom-scrollbar">
-                            <template x-for="(rule, index) in regexDraftDisplayRules" :key="rule.id || rule.scriptName + rule.findRegex">
-                                <div class="chat-reader-regex-rule-card">
-                                    <button type="button" class="chat-reader-rule-summary" @click="toggleRegexRuleExpanded(index)">
-                                        <div>
-                                            <div class="chat-reader-rule-title-row">
-                                                <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
-                                                <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
-                                            </div>
-                                            <span x-text="rule.findRegex || '未填写匹配正则'"></span>
+                                        <div class="chat-reader-regex-browser-meta">
+                                            <span x-text="getRegexRuleInspector(rule, index).listMeta || ''"></span>
                                         </div>
-                                        <span x-text="rule.expanded ? '收起' : '展开'"></span>
                                     </button>
-                                    <div x-show="rule.expanded" class="chat-reader-rule-body">
+                                </template>
+                            </div>
+
+                            <template x-if="selectedActiveRegexRuleDetail">
+                                <div class="chat-reader-regex-browser-detail custom-scrollbar">
+                                    <div class="chat-reader-regex-inspector">
+                                        <div class="chat-reader-regex-inspector-header">
+                                            <div class="chat-reader-regex-inspector-heading">
+                                                <div class="chat-reader-rule-title-row">
+                                                    <strong x-text="selectedActiveRegexRuleDetail.scriptName"></strong>
+                                                    <span class="chat-reader-rule-source-pill" :class="'is-' + selectedActiveRegexRuleDetail.sourceTone" x-text="selectedActiveRegexRuleDetail.sourceLabel"></span>
+                                                    <span class="chat-reader-regex-state-pill" :class="'is-' + selectedActiveRegexRuleDetail.stateTone" x-text="selectedActiveRegexRuleDetail.stateLabel"></span>
+                                                </div>
+                                                <div class="chat-reader-replace-status" x-text="selectedActiveRegexRuleDetail.listMeta"></div>
+                                            </div>
+                                            <span class="chat-reader-regex-order-pill" x-text="selectedActiveRegexRuleDetail.orderLabel"></span>
+                                        </div>
+
+                                        <div class="chat-reader-replace-status" x-text="selectedActiveRegexRule && selectedActiveRegexRule.source === 'card'
+                                            ? '当前选中的是继承自角色卡的规则。这里的修改只会写入聊天草稿覆盖层，不会改动角色卡原始规则；删除会为当前聊天写入删除覆盖。'
+                                            : '当前选中的是已经进入聊天草稿层的规则。修改、禁用和删除都会落到当前聊天草稿里。'"></div>
+
                                         <label class="chat-reader-field">
                                             <span>规则名</span>
-                                            <input type="text" class="form-input" :value="rule.scriptName" @input="updateRegexDisplayRule(index, 'scriptName', $event.target.value)">
+                                            <input type="text" class="form-input" :value="selectedActiveRegexRule.scriptName" @input="updateSelectedActiveRegexRule('scriptName', $event.target.value)">
                                         </label>
+
                                         <label class="chat-reader-field">
                                             <span>匹配正则</span>
-                                            <textarea class="form-textarea chat-reader-config-textarea" :value="rule.findRegex" @input="updateRegexDisplayRule(index, 'findRegex', $event.target.value)"></textarea>
+                                            <textarea class="form-textarea chat-reader-config-textarea chat-reader-config-textarea--pattern" :value="selectedActiveRegexRule.findRegex" @input="updateSelectedActiveRegexRule('findRegex', $event.target.value)"></textarea>
                                         </label>
+
+                                        <div class="chat-reader-regex-inspector-section">
+                                            <div class="chat-reader-regex-inspector-label">标准正则</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--pattern custom-scrollbar" :value="selectedActiveRegexRuleDetail.standardPattern"></textarea>
+                                            <div class="chat-reader-replace-status" x-show="selectedActiveRegexRuleDetail.regexError" x-text="'编译提示：' + selectedActiveRegexRuleDetail.regexError"></div>
+                                        </div>
+
                                         <label class="chat-reader-field">
                                             <span>替换为</span>
-                                            <textarea class="form-textarea chat-reader-config-textarea" :value="rule.replaceString" @input="updateRegexDisplayRule(index, 'replaceString', $event.target.value)"></textarea>
+                                            <textarea class="form-textarea chat-reader-config-textarea" :value="selectedActiveRegexRule.replaceString" @input="updateSelectedActiveRegexRule('replaceString', $event.target.value)"></textarea>
                                         </label>
+
                                         <div class="chat-inline-actions">
                                             <label class="chat-inline-checkbox">
-                                                <input type="checkbox" :checked="rule.disabled" @change="updateRegexDisplayRule(index, 'disabled', $event.target.checked)">
+                                                <input type="checkbox" :checked="selectedActiveRegexRule.disabled" @change="updateSelectedActiveRegexRule('disabled', $event.target.checked)">
                                                 <span>禁用</span>
                                             </label>
-                                            <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="removeRegexDisplayRule(index)">删除</button>
+                                            <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="removeSelectedActiveRegexRule()">删除</button>
                                         </div>
-                                        <div class="chat-reader-editor-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem;">
+
+                                        <div class="chat-reader-regex-depth-grid">
                                             <label class="chat-reader-field">
                                                 <span>阅读器深度模式</span>
-                                                <select class="form-input" :value="rule.readerDepthMode || ''" @change="updateRegexDisplayRuleDepthMode(index, $event.target.value)">
+                                                <select class="form-input" :value="selectedActiveRegexRule.readerDepthMode || ''" @change="updateSelectedActiveRegexRuleDepthMode($event.target.value)">
                                                     <option value="">关闭</option>
                                                     <option value="anchor_abs">锚点绝对距离</option>
                                                     <option value="anchor_backward">仅锚点之前</option>
@@ -485,33 +505,220 @@
                                             </label>
                                             <label class="chat-reader-field">
                                                 <span>阅读器最小深度</span>
-                                                <input type="number" class="form-input" :value="rule.readerMinDepth ?? ''" @input="updateRegexDisplayRule(index, 'readerMinDepth', $event.target.value === '' ? null : Number($event.target.value))">
+                                                <input type="number" class="form-input" :value="selectedActiveRegexRule.readerMinDepth ?? ''" @input="updateSelectedActiveRegexRule('readerMinDepth', $event.target.value === '' ? null : Number($event.target.value))">
                                             </label>
                                             <label class="chat-reader-field">
                                                 <span>阅读器最大深度</span>
-                                                <input type="number" class="form-input" :value="rule.readerMaxDepth ?? ''" @input="updateRegexDisplayRule(index, 'readerMaxDepth', $event.target.value === '' ? null : Number($event.target.value))">
+                                                <input type="number" class="form-input" :value="selectedActiveRegexRule.readerMaxDepth ?? ''" @input="updateSelectedActiveRegexRule('readerMaxDepth', $event.target.value === '' ? null : Number($event.target.value))">
                                             </label>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-grid">
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>来源</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.sourceLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>运行标记</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.flagsLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>宏替换</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.macroModeLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>作用位置</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.placementSummary"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>作用范围</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.scopeSummary"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>运行时机</span>
+                                                <strong x-text="selectedActiveRegexRuleDetail.runtimeSummary"></strong>
+                                            </div>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-section" x-show="selectedActiveRegexRuleDetail.showRawPattern">
+                                            <div class="chat-reader-regex-inspector-label">原始配置</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--raw custom-scrollbar" :value="selectedActiveRegexRuleDetail.rawPattern"></textarea>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-section" x-show="selectedActiveRegexRuleDetail.hasTrimStrings">
+                                            <div class="chat-reader-regex-inspector-label">Trim Strings</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--trim custom-scrollbar" :value="selectedActiveRegexRuleDetail.trimPreview"></textarea>
                                         </div>
                                     </div>
                                 </div>
                             </template>
-                            <div x-show="regexConfigDraft.displayRules.length === 0" class="chat-reader-replace-status">当前没有聊天自定义规则，保存时会直接继承角色卡规则。</div>
+
+                            <div x-show="activeRegexDisplayRules.length === 0" class="chat-reader-regex-browser-empty">
+                                当前聊天没有实际生效的显示替换规则。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch chat-reader-sideblock-card--browser">
+                        <div class="chat-reader-panel-title">聊天自定义草稿</div>
+                        <div class="chat-reader-replace-status">这里编辑的是会写入当前聊天文件的自定义规则。保存后会和角色卡继承规则合并；删除草稿项后，如果存在同名继承规则，会恢复为继承结果。</div>
+                        <div class="chat-reader-regex-browser" :class="{ 'is-empty': regexDraftDisplayRules.length === 0 }">
+                            <div class="chat-reader-regex-browser-list custom-scrollbar" x-show="regexDraftDisplayRules.length > 0">
+                                <template x-for="(rule, index) in regexDraftDisplayRules" :key="'draft-inspector-' + index + '-' + (rule.id || rule.scriptName + rule.findRegex)">
+                                    <button
+                                        type="button"
+                                        class="chat-reader-regex-browser-item"
+                                        :class="{ 'is-active': selectedDraftRegexRuleIndexSafe === index, 'is-disabled': rule.disabled }"
+                                        :aria-pressed="selectedDraftRegexRuleIndexSafe === index ? 'true' : 'false'"
+                                        @click="selectDraftRegexRule(index)">
+                                        <div class="chat-reader-regex-browser-head">
+                                            <div class="chat-reader-regex-browser-head-main">
+                                                <div class="chat-reader-rule-title-row">
+                                                    <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
+                                                    <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
+                                                    <span x-show="rule.disabled" class="chat-reader-regex-state-pill is-muted">已禁用</span>
+                                                </div>
+                                                <div class="chat-reader-regex-browser-pattern" x-text="getRegexRuleInspector(rule, index).listPattern || '未填写匹配正则'"></div>
+                                            </div>
+                                            <span class="chat-reader-regex-browser-index" x-text="'#' + (index + 1)"></span>
+                                        </div>
+                                        <div class="chat-reader-regex-browser-meta">
+                                            <span x-text="getRegexRuleInspector(rule, index).listMeta || ''"></span>
+                                        </div>
+                                    </button>
+                                </template>
+                            </div>
+
+                            <template x-if="selectedDraftRegexRuleDetail">
+                                <div class="chat-reader-regex-browser-detail custom-scrollbar">
+                                    <div class="chat-reader-regex-inspector">
+                                        <div class="chat-reader-regex-inspector-header">
+                                            <div class="chat-reader-regex-inspector-heading">
+                                                <div class="chat-reader-rule-title-row">
+                                                    <strong x-text="selectedDraftRegexRuleDetail.scriptName"></strong>
+                                                    <span class="chat-reader-rule-source-pill" :class="'is-' + selectedDraftRegexRuleDetail.sourceTone" x-text="selectedDraftRegexRuleDetail.sourceLabel"></span>
+                                                    <span class="chat-reader-regex-state-pill" :class="'is-' + selectedDraftRegexRuleDetail.stateTone" x-text="selectedDraftRegexRuleDetail.stateLabel"></span>
+                                                </div>
+                                                <div class="chat-reader-replace-status" x-text="selectedDraftRegexRuleDetail.listMeta"></div>
+                                            </div>
+                                            <span class="chat-reader-regex-order-pill" x-text="selectedDraftRegexRuleDetail.orderLabel"></span>
+                                        </div>
+
+                                        <div class="chat-reader-replace-status">这里只编辑聊天草稿本身。保存后才会写回聊天文件；如果删除的是覆盖继承规则的草稿项，保存后会恢复为继承结果。</div>
+
+                                        <label class="chat-reader-field">
+                                            <span>规则名</span>
+                                            <input type="text" class="form-input" :value="selectedDraftRegexRule.scriptName" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'scriptName', $event.target.value)">
+                                        </label>
+
+                                        <label class="chat-reader-field">
+                                            <span>匹配正则</span>
+                                            <textarea class="form-textarea chat-reader-config-textarea chat-reader-config-textarea--pattern" :value="selectedDraftRegexRule.findRegex" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'findRegex', $event.target.value)"></textarea>
+                                        </label>
+
+                                        <div class="chat-reader-regex-inspector-section">
+                                            <div class="chat-reader-regex-inspector-label">标准正则</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--pattern custom-scrollbar" :value="selectedDraftRegexRuleDetail.standardPattern"></textarea>
+                                            <div class="chat-reader-replace-status" x-show="selectedDraftRegexRuleDetail.regexError" x-text="'编译提示：' + selectedDraftRegexRuleDetail.regexError"></div>
+                                        </div>
+
+                                        <label class="chat-reader-field">
+                                            <span>替换为</span>
+                                            <textarea class="form-textarea chat-reader-config-textarea" :value="selectedDraftRegexRule.replaceString" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'replaceString', $event.target.value)"></textarea>
+                                        </label>
+
+                                        <div class="chat-inline-actions">
+                                            <label class="chat-inline-checkbox">
+                                                <input type="checkbox" :checked="selectedDraftRegexRule.disabled" @change="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'disabled', $event.target.checked)">
+                                                <span>禁用</span>
+                                            </label>
+                                            <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="removeRegexDisplayRule(selectedDraftRegexRuleIndexSafe)">删除</button>
+                                        </div>
+
+                                        <div class="chat-reader-regex-depth-grid">
+                                            <label class="chat-reader-field">
+                                                <span>阅读器深度模式</span>
+                                                <select class="form-input" :value="selectedDraftRegexRule.readerDepthMode || ''" @change="updateRegexDisplayRuleDepthMode(selectedDraftRegexRuleIndexSafe, $event.target.value)">
+                                                    <option value="">关闭</option>
+                                                    <option value="anchor_abs">锚点绝对距离</option>
+                                                    <option value="anchor_backward">仅锚点之前</option>
+                                                    <option value="anchor_relative">锚点相对距离</option>
+                                                </select>
+                                            </label>
+                                            <label class="chat-reader-field">
+                                                <span>阅读器最小深度</span>
+                                                <input type="number" class="form-input" :value="selectedDraftRegexRule.readerMinDepth ?? ''" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'readerMinDepth', $event.target.value === '' ? null : Number($event.target.value))">
+                                            </label>
+                                            <label class="chat-reader-field">
+                                                <span>阅读器最大深度</span>
+                                                <input type="number" class="form-input" :value="selectedDraftRegexRule.readerMaxDepth ?? ''" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'readerMaxDepth', $event.target.value === '' ? null : Number($event.target.value))">
+                                            </label>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-grid">
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>来源</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.sourceLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>运行标记</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.flagsLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>宏替换</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.macroModeLabel"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>作用位置</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.placementSummary"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>作用范围</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.scopeSummary"></strong>
+                                            </div>
+                                            <div class="chat-reader-regex-meta-card">
+                                                <span>运行时机</span>
+                                                <strong x-text="selectedDraftRegexRuleDetail.runtimeSummary"></strong>
+                                            </div>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-section" x-show="selectedDraftRegexRuleDetail.showRawPattern">
+                                            <div class="chat-reader-regex-inspector-label">原始配置</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--raw custom-scrollbar" :value="selectedDraftRegexRuleDetail.rawPattern"></textarea>
+                                        </div>
+
+                                        <div class="chat-reader-regex-inspector-section" x-show="selectedDraftRegexRuleDetail.hasTrimStrings">
+                                            <div class="chat-reader-regex-inspector-label">Trim Strings</div>
+                                            <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--trim custom-scrollbar" :value="selectedDraftRegexRuleDetail.trimPreview"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div x-show="regexDraftRuleCount === 0" class="chat-reader-regex-browser-empty" x-text="regexDraftDeletionCount > 0
+                                ? `当前草稿没有可见规则，但包含 ${regexDraftDeletionCount} 个删除覆盖。`
+                                : '当前没有聊天自定义规则，保存时会直接继承角色卡规则。'"></div>
                         </div>
                     </div>
                 </div>
 
-                <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+                <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch chat-reader-sideblock-card--test">
                     <div class="chat-reader-panel-title">显示结果测试</div>
-                    <div class="chat-reader-replace-status">右侧预览基于“当前草稿”计算保存后的展示结果，不会直接改动当前聊天。</div>
+                    <div class="chat-reader-replace-status">下面的预览基于“当前草稿”实时计算保存后的展示结果，不会直接改动当前聊天。</div>
                     <div class="chat-inline-actions">
                         <button class="chat-toolbar-btn" @click="loadRegexTestInputFromCurrentFloor()">加载当前定位楼层</button>
                         <button class="chat-toolbar-btn" @click="clearRegexTestInput()" :disabled="!regexTestInput">清空测试区</button>
                     </div>
                     <div class="chat-reader-replace-status">不再自动扫描或载入聊天内容；需要测试时手动把当前定位楼层放进测试区。</div>
-                    <textarea x-model="regexTestInput" class="form-textarea chat-reader-floor-editor chat-reader-floor-editor--raw" style="min-height: 14rem;" placeholder="手动粘贴原始消息文本，或点击上方按钮载入当前定位楼层"></textarea>
-                    <div class="chat-reader-sideblock-card">
-                        <div class="chat-message-sideblock-title">渲染预览</div>
-                        <div class="chat-message-content markdown-body st-reader-floor-0 chat-reader-regex-preview custom-scrollbar" x-html="renderMessageDisplayHtml(regexTestPreview)" x-effect="mountMessageDisplay($el, regexTestPreview)"></div>
+                    <div class="chat-reader-regex-test-grid">
+                        <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+                            <div class="chat-message-sideblock-title">测试输入</div>
+                            <textarea x-model="regexTestInput" class="form-textarea chat-reader-floor-editor chat-reader-floor-editor--raw chat-reader-regex-test-input" placeholder="手动粘贴原始消息文本，或点击上方按钮载入当前定位楼层"></textarea>
+                        </div>
+                        <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+                            <div class="chat-message-sideblock-title">渲染预览</div>
+                            <div class="chat-message-content markdown-body st-reader-floor-0 chat-reader-regex-preview custom-scrollbar" x-html="renderMessageDisplayHtml(regexTestPreview)" x-effect="mountMessageDisplay($el, regexTestPreview)"></div>
+                        </div>
                     </div>
                 </div>
             </div>
