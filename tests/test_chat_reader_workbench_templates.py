@@ -37,3 +37,10 @@ def test_header_component_does_not_wire_runtime_inspector_events():
 
     assert 'openRuntimeInspector' not in header_source
     assert 'open-runtime-inspector' not in header_source
+
+
+def test_advanced_editor_no_longer_listens_for_runtime_inspector_bridge_events():
+    advanced_editor_source = read_project_file('static/js/components/advancedEditor.js')
+
+    assert 'runtime-inspector-control' not in advanced_editor_source
+    assert 'focus-script-runtime-owner' not in advanced_editor_source

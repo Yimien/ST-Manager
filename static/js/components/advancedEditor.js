@@ -144,42 +144,6 @@ export default function advancedEditor() {
                 });
             });
 
-            window.addEventListener('focus-script-runtime-owner', (e) => {
-                const scriptId = e.detail?.scriptId;
-                if (!scriptId) return;
-
-                const scripts = this.getTavernScripts();
-                const targetIndex = scripts.findIndex(script => script.id === scriptId);
-                if (targetIndex === -1) {
-                    this.$store.global.showToast('当前上下文未找到对应脚本', 1800);
-                    return;
-                }
-
-                this.showAdvancedModal = true;
-                this.activeTab = 'scripts';
-                this.activeScriptIndex = targetIndex;
-                this.$nextTick(() => {
-                    this.mountScriptRuntimeHost();
-                    this.syncRuntimeContext();
-                });
-            });
-
-            window.addEventListener('runtime-inspector-control', (e) => {
-                const runtimeId = e.detail?.runtimeId;
-                const action = e.detail?.action;
-                if (!runtimeId || !action || !this.scriptRuntime) return;
-                if (this.scriptRuntime.runtimeId !== runtimeId) return;
-
-                if (action === 'stop') {
-                    this.stopScriptRuntime();
-                    return;
-                }
-
-                if (action === 'reload') {
-                    this.reloadScriptRuntime();
-                }
-            });
-
             this.$watch('activeScriptIndex', (idx) => {
                 if (idx > -1) {
                     const script = this.getTavernScripts()[idx];
