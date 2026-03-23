@@ -44,3 +44,19 @@ def test_advanced_editor_no_longer_listens_for_runtime_inspector_bridge_events()
 
     assert 'runtime-inspector-control' not in advanced_editor_source
     assert 'focus-script-runtime-owner' not in advanced_editor_source
+
+
+def test_chat_reader_css_defines_workbench_theme_tokens():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    required_tokens = [
+        '--chat-reader-accent-soft',
+        '--chat-reader-accent-strong',
+        '--chat-reader-accent-border',
+        '--chat-reader-accent-text',
+        '--chat-reader-surface-raised',
+        '--chat-reader-danger-soft',
+    ]
+
+    for token in required_tokens:
+        assert token in chat_reader_css
