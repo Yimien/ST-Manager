@@ -99,6 +99,14 @@ def test_chat_reader_css_defines_workbench_theme_tokens():
                 assert '#' not in stripped_line
 
 
+def test_chat_reader_icon_buttons_define_focus_visible_state():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    assert '.chat-reader-icon-button:focus-visible' in chat_reader_css
+    assert 'outline: 2px solid var(--chat-reader-focus-ring)' in chat_reader_css
+    assert 'outline-offset: 2px' in chat_reader_css
+
+
 def test_chat_reader_template_contains_workbench_regions():
     reader_template = read_project_file('templates/modals/detail_chat_reader.html')
     shell = extract_chat_reader_shell(reader_template)

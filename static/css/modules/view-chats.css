@@ -778,6 +778,12 @@
     background: color-mix(in srgb, var(--accent-main), transparent 90%)
 }
 
+.chat-reader-icon-button:focus-visible,
+.chat-reader-rail-close:focus-visible {
+    outline: 2px solid var(--chat-reader-focus-ring);
+    outline-offset: 2px
+}
+
 .chat-reader-rail-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
