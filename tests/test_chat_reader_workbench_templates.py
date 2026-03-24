@@ -152,3 +152,15 @@ def test_chat_grid_tracks_mobile_reader_panel_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'readerMobilePanel' in chat_grid_source
+
+
+def test_chat_grid_reconciles_reader_panel_state_on_device_type_changes():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert 'reconcileReaderPanelsForDeviceType' in chat_grid_source
+    assert "this.$watch('$store.global.deviceType'" in chat_grid_source
+    assert 'this.reconcileReaderPanelsForDeviceType(deviceType);' in chat_grid_source
+    assert "if (deviceType === 'mobile')" in chat_grid_source
+    assert "this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : (this.readerRightTab === 'floors' ? 'navigator' : 'search');" in chat_grid_source
+    assert "this.readerShowLeftPanel = this.readerMobilePanel === 'tools';" in chat_grid_source
+    assert "this.readerShowRightPanel = true;" in chat_grid_source

@@ -4346,18 +4346,7 @@ export default function chatGrid() {
 
             this.$watch('$store.global.deviceType', (deviceType) => {
                 if (!this.detailOpen) return;
-
-                if (deviceType === 'mobile' && this.readerShowLeftPanel && this.readerShowRightPanel) {
-                    this.hideReaderPanels();
-                    return;
-                }
-
-                if (deviceType === 'mobile' && this.readerMobilePanel) {
-                    this.syncMobileReaderPanelState(this.readerMobilePanel);
-                    return;
-                }
-
-                this.updateReaderLayoutMetrics();
+                this.reconcileReaderPanelsForDeviceType(deviceType);
             });
 
             this.$watch('readerRenderMode', (value) => {
@@ -5392,6 +5381,36 @@ export default function chatGrid() {
                     { force: true },
                 );
             }
+            this.updateReaderLayoutMetrics();
+        },
+
+        reconcileReaderPanelsForDeviceType(deviceType) {
+            if (deviceType === 'mobile') {
+                if (!this.readerMobilePanel && (this.readerShowLeftPanel || this.readerShowRightPanel)) {
+                    this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : (this.readerRightTab === 'floors' ? 'navigator' : 'search');
+                }
+
+                if (this.readerMobilePanel) {
+                    this.readerShowLeftPanel = this.readerMobilePanel === 'tools';
+                    this.readerShowRightPanel = true;
+                    this.syncMobileReaderPanelState(this.readerMobilePanel);
+                    return;
+                }
+
+                this.hideReaderPanels();
+                return;
+            }
+
+            if (this.readerMobilePanel === 'tools') {
+                this.readerShowLeftPanel = true;
+                this.readerShowRightPanel = false;
+            } else if (this.readerMobilePanel === 'search' || this.readerMobilePanel === 'navigator') {
+                this.readerShowLeftPanel = false;
+                this.readerShowRightPanel = true;
+                this.readerRightTab = this.readerMobilePanel === 'navigator' ? 'floors' : 'search';
+            }
+
+            this.readerMobilePanel = '';
             this.updateReaderLayoutMetrics();
         },
 
