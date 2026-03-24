@@ -17,7 +17,7 @@ def extract_css_block(css_source, selector):
 
 
 def extract_chat_reader_shell(template_source):
-    shell_start = template_source.index('<div class="chat-reader-modal chat-reader-modal--fullscreen">')
+    shell_start = template_source.index('<div class="chat-reader-modal chat-reader-modal--fullscreen" role="dialog" aria-modal="true" aria-label="聊天阅读器">')
     settings_overlay_start = template_source.index('<div x-show="readerViewSettingsOpen"')
     return template_source[shell_start:settings_overlay_start]
 
@@ -176,3 +176,23 @@ def test_chat_reader_template_keeps_all_nested_modal_entry_points():
         'bindPickerOpen',
     ):
         assert entry_point in reader_template
+
+
+def test_chat_reader_template_exposes_reader_status_and_accessibility_hooks():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'role="dialog"' in reader_template
+    assert 'aria-modal="true"' in reader_template
+    assert 'aria-label="聊天阅读器"' in reader_template
+    assert 'role="status"' in reader_template
+    assert 'aria-live="polite"' in reader_template
+    assert 'role="alert"' in reader_template
+    assert 'aria-live="assertive"' in reader_template
+    assert 'aria-label="关闭工具栏"' in reader_template
+    assert 'aria-label="关闭检索栏"' in reader_template
+    assert 'aria-label="关闭聊天阅读器"' in reader_template
+    assert ":aria-label=\"isBookmarked(message.floor) ? '取消收藏楼层' : '收藏楼层'\"" in reader_template
+    assert '危险操作 · 删除会直接移除当前聊天记录' in reader_template
+    assert 'role="note"' in reader_template
+    assert 'readerShellStatusText' in reader_template
+    assert 'readerSaveFeedbackTone' in reader_template

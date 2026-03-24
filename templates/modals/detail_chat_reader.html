@@ -1,5 +1,7 @@
 <div x-show="detailOpen" x-cloak class="chat-reader-overlay chat-reader-overlay--fullscreen" @click.self="closeChatDetail()">
-    <div class="chat-reader-modal chat-reader-modal--fullscreen">
+    <div class="chat-reader-modal chat-reader-modal--fullscreen" role="dialog" aria-modal="true" aria-label="聊天阅读器">
+        <div class="chat-reader-live-region" role="status" aria-live="polite" x-text="readerShellStatusText"></div>
+        <div class="chat-reader-live-region" role="alert" aria-live="assertive" x-text="readerSaveFeedbackTone === 'error' ? readerShellStatusText : ''"></div>
         <div class="chat-reader-header">
             <div class="chat-reader-header-main">
                 <div class="chat-reader-header-context">
@@ -56,6 +58,28 @@
                     </button>
                 </div>
             </div>
+
+            <div class="chat-reader-shell-status" :class="'is-' + readerSaveFeedbackTone" role="status" aria-live="polite">
+                <div class="chat-reader-state-group" aria-label="阅读器状态概览">
+                    <span class="chat-reader-state-pill chat-reader-state-pill--page">
+                        <span aria-hidden="true">P</span>
+                        <strong x-text="readerPageGroupStatusText"></strong>
+                    </span>
+                    <span class="chat-reader-state-pill chat-reader-state-pill--window">
+                        <span aria-hidden="true">W</span>
+                        <strong x-text="readerViewportStatusText"></strong>
+                    </span>
+                    <span class="chat-reader-state-pill chat-reader-state-pill--batch">
+                        <span aria-hidden="true">B</span>
+                        <strong x-text="readerNavBatchStatusText"></strong>
+                    </span>
+                    <span class="chat-reader-state-pill chat-reader-state-pill--anchor">
+                        <span aria-hidden="true">A</span>
+                        <strong x-text="readerAnchorStatusText"></strong>
+                    </span>
+                </div>
+                <div class="chat-reader-shell-status-text" x-text="readerShellStatusText"></div>
+            </div>
         </div>
 
         <div class="chat-reader-body" :style="readerBodyGridStyle">
@@ -65,7 +89,7 @@
                         <div class="chat-grid-kicker">Tool Rail</div>
                         <div class="chat-reader-rail-title">聊天工具栏</div>
                     </div>
-                    <button type="button" class="chat-reader-icon-button chat-reader-rail-close" @click="readerShowLeftPanel = false; updateReaderLayoutMetrics()" aria-label="收起工具栏" title="收起工具栏">
+                    <button type="button" class="chat-reader-icon-button chat-reader-rail-close" @click="readerShowLeftPanel = false; updateReaderLayoutMetrics()" aria-label="关闭工具栏" title="关闭工具栏">
                         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                             <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
                         </svg>
@@ -112,7 +136,7 @@
                         <div class="chat-inline-actions">
                             <button class="chat-toolbar-btn" @click="reanchorToCurrentFloor()">以当前楼层重锚</button>
                         </div>
-                        <div class="chat-reader-replace-status" x-text="readerAnchorStatusText"></div>
+                        <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="readerAnchorStatusText"></div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-panel--quiet">
@@ -192,15 +216,15 @@
 
                 <div class="chat-reader-panel chat-reader-danger-zone" x-show="activeChat">
                     <div class="chat-reader-panel-title">危险操作</div>
-                    <div class="chat-reader-replace-status">删除会直接移除当前聊天记录，请确认不再需要后再执行。</div>
+                    <div class="chat-reader-replace-status chat-reader-danger-copy" role="note">危险操作 · 删除会直接移除当前聊天记录，请确认不再需要后再执行。</div>
                     <div class="chat-reader-actions">
-                        <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="activeChat && deleteChat(activeChat)" :disabled="!activeChat">删除聊天</button>
+                        <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="activeChat && deleteChat(activeChat)" :disabled="!activeChat">删除聊天（危险）</button>
                     </div>
                 </div>
             </aside>
 
             <main class="chat-reader-center custom-scrollbar" @scroll.passive="handleReaderScroll()">
-                <div x-show="detailLoading" class="chat-reader-loading">正在读取聊天内容...</div>
+                <div x-show="detailLoading" class="chat-reader-loading" role="status" aria-live="polite">正在读取聊天内容...</div>
 
                 <template x-if="readerAppMode && activeAppMessage && !detailLoading">
                     <div class="chat-reader-app-stage">
@@ -210,7 +234,7 @@
                                 <div class="chat-reader-panel-title">整页实例渲染</div>
                             </div>
                             <div class="chat-reader-app-stage-tools">
-                                <div class="chat-reader-replace-status" x-text="'来源楼层 #' + activeAppMessage.floor"></div>
+                                <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="'来源楼层 #' + activeAppMessage.floor"></div>
                                 <div class="chat-inline-actions" x-show="hasAppFloorNavigation">
                                     <button type="button" class="chat-toolbar-btn" @click="stepReaderAppFloor(-1)">上一实例</button>
                                     <button type="button" class="chat-toolbar-btn" @click="stepReaderAppFloor(1)">下一实例</button>
@@ -225,13 +249,13 @@
                     <div class="chat-message-list">
                         <div x-show="isReaderPageMode" class="chat-window-switcher">
                             <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(-1)" :disabled="!hasPreviousReaderPageGroup">上一页</button>
-                            <span x-text="readerPageGroupStatusText"></span>
+                            <span role="status" aria-live="polite" x-text="readerPageGroupStatusText"></span>
                             <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(1)" :disabled="!hasNextReaderPageGroup">下一页</button>
                         </div>
 
                         <div x-show="!isReaderPageMode && hasEarlierReaderWindow" class="chat-window-switcher">
                             <button type="button" class="chat-toolbar-btn" @click="loadPreviousReaderWindow()">加载更早楼层</button>
-                            <span x-text="'当前从 #' + readerWindowStartFloor + ' 开始显示'"></span>
+                            <span role="status" aria-live="polite" x-text="'当前从 #' + readerWindowStartFloor + ' 开始显示'"></span>
                         </div>
 
                         <template x-for="message in visibleDetailMessages" :key="(activeChat?.id || 'chat') + ':' + message.floor">
@@ -289,7 +313,7 @@
 
                         <div x-show="isReaderPageMode" class="chat-window-switcher chat-window-switcher--tail">
                             <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(-1)" :disabled="!hasPreviousReaderPageGroup">上一页</button>
-                            <span x-text="readerPageGroupStatusText"></span>
+                            <span role="status" aria-live="polite" x-text="readerPageGroupStatusText"></span>
                             <button type="button" class="chat-toolbar-btn" @click="stepReaderPageGroup(1)" :disabled="!hasNextReaderPageGroup">下一页</button>
                         </div>
                     </div>
@@ -306,7 +330,7 @@
                             ? (readerMobilePanel === 'tools' ? '工具抽屉' : (readerMobilePanel === 'search' ? '全文搜索' : '楼层导航'))
                             : '检索与目录'"></div>
                     </div>
-                    <button type="button" class="chat-reader-icon-button chat-reader-rail-close" @click="hideReaderPanels()" aria-label="收起检索栏" title="收起检索栏">
+                    <button type="button" class="chat-reader-icon-button chat-reader-rail-close" @click="hideReaderPanels()" aria-label="关闭检索栏" title="关闭检索栏">
                         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                             <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
                         </svg>
@@ -406,7 +430,7 @@
                             </label>
                             <button class="chat-toolbar-btn" @click="replaceAllInChat()">全部替换</button>
                         </div>
-                        <div class="chat-reader-replace-status" x-text="replaceStatus || '会直接写回当前聊天文件。'"></div>
+                        <div class="chat-reader-replace-status" :class="replaceStatus ? 'is-active' : ''" role="status" aria-live="polite" x-text="replaceStatus || '会直接写回当前聊天文件。'"></div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-panel--quiet" x-show="activeChat">
@@ -424,18 +448,18 @@
                             <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
                             <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
                         </div>
-                        <div class="chat-reader-replace-status" x-text="readerVisibleSummary"></div>
-                        <div class="chat-reader-replace-status" x-show="readerAppMode" x-text="activeAppMessage ? ('当前实例楼层 #' + activeAppMessage.floor) : '未检测到实例楼层'"></div>
-                        <div class="chat-reader-replace-status" x-text="readerAppDebug.status"></div>
+                        <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="readerVisibleSummary"></div>
+                        <div class="chat-reader-replace-status" x-show="readerAppMode" role="status" aria-live="polite" x-text="activeAppMessage ? ('当前实例楼层 #' + activeAppMessage.floor) : '未检测到实例楼层'"></div>
+                        <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="readerAppDebug.status"></div>
                         <div class="chat-reader-replace-status" x-show="readerAppDebug.matchedFloors && readerAppDebug.matchedFloors.length > 0"
-                            x-text="'命中楼层: ' + readerAppDebug.matchedFloors.join(', ')"></div>
+                            role="status" aria-live="polite" x-text="'命中楼层: ' + readerAppDebug.matchedFloors.join(', ')"></div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-danger-zone" x-show="activeChat">
                         <div class="chat-reader-panel-title">危险操作</div>
-                        <div class="chat-reader-replace-status">删除会直接移除当前聊天记录，请确认不再需要后再执行。</div>
+                        <div class="chat-reader-replace-status chat-reader-danger-copy" role="note">危险操作 · 删除会直接移除当前聊天记录，请确认不再需要后再执行。</div>
                         <div class="chat-reader-actions">
-                            <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="activeChat && deleteChat(activeChat)" :disabled="!activeChat">删除聊天</button>
+                            <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="activeChat && deleteChat(activeChat)" :disabled="!activeChat">删除聊天（危险）</button>
                         </div>
                     </div>
                 </div>
@@ -451,27 +475,27 @@
                         <button class="chat-toolbar-btn" @click="previousSearchResult()" :disabled="detailSearchResults.length===0">上一个</button>
                         <button class="chat-toolbar-btn" @click="nextSearchResult()" :disabled="detailSearchResults.length===0">下一个</button>
                     </div>
-                    <div class="chat-reader-search-meta" x-text="detailSearchResults.length > 0 ? ('命中 ' + detailSearchResults.length + ' 条') : '暂无命中'"></div>
+                    <div class="chat-reader-search-meta" role="status" aria-live="polite" x-text="detailSearchResults.length > 0 ? ('命中 ' + detailSearchResults.length + ' 条') : '暂无命中'"></div>
                 </div>
 
                 <div class="chat-reader-panel" x-show="(($store.global.deviceType !== 'mobile' && readerRightTab === 'floors') || ($store.global.deviceType === 'mobile' && readerMobilePanel === 'navigator')) && activeChat">
                     <div class="chat-reader-panel-title">楼层导航</div>
-                    <div class="chat-reader-search-meta" x-text="readerNavBatchSummaryText"></div>
-                    <div class="chat-reader-search-meta" x-show="activeChat?.message_index_truncated">Long chat uses batched floor index loading</div>
+                    <div class="chat-reader-search-meta" role="status" aria-live="polite" x-text="readerNavBatchSummaryText"></div>
+                    <div class="chat-reader-search-meta" x-show="activeChat?.message_index_truncated" role="note">Long chat uses batched floor index loading</div>
                     <div class="chat-window-switcher">
                         <button type="button" class="chat-toolbar-btn" @click="stepReaderNavBatch(-1)" :disabled="!hasPreviousReaderNavBatch || readerNavBatchLoading">Prev batch</button>
-                        <span x-text="readerNavBatchStatusText"></span>
+                        <span role="status" aria-live="polite" x-text="readerNavBatchStatusText"></span>
                         <button type="button" class="chat-toolbar-btn" @click="stepReaderNavBatch(1)" :disabled="!hasNextReaderNavBatch || readerNavBatchLoading">Next batch</button>
                     </div>
                     <div class="chat-floor-nav-list">
-                        <div x-show="readerNavBatchLoading" class="chat-reader-search-meta">Loading batch index...</div>
+                        <div x-show="readerNavBatchLoading" class="chat-reader-search-meta" role="status" aria-live="polite">Loading batch index...</div>
                         <template x-for="message in (readerNavBatchItems || [])" :key="'nav-' + message.floor">
                             <button type="button" class="chat-floor-nav-item" @click="scrollToFloor(message.floor, true, 'smooth', 'jump')">
                                 <span class="chat-floor-nav-index" x-text="'#' + message.floor"></span>
                                 <span class="chat-floor-nav-text" x-text="(message.content || message.mes || '').trim().slice(0, 48) || '空内容'"></span>
                             </button>
                         </template>
-                        <div x-show="!readerNavBatchLoading && (!readerNavBatchItems || readerNavBatchItems.length === 0)" class="chat-bookmark-empty">No floors in this batch</div>
+                        <div x-show="!readerNavBatchLoading && (!readerNavBatchItems || readerNavBatchItems.length === 0)" class="chat-bookmark-empty" role="status" aria-live="polite">No floors in this batch</div>
                     </div>
                 </div>
             </aside>
@@ -480,7 +504,7 @@
 </div>
 
 <div x-show="readerViewSettingsOpen" x-cloak class="chat-reader-overlay" style="z-index: calc(var(--z-topmost) - 3);" @click.self="readerViewSettingsOpen = false">
-    <div class="chat-bind-modal chat-reader-nested-modal chat-reader-nested-modal--settings chat-reader-transition-surface">
+    <div class="chat-bind-modal chat-reader-nested-modal chat-reader-nested-modal--settings chat-reader-transition-surface" role="dialog" aria-modal="true" aria-label="楼层显示与渲染策略">
         <div class="chat-bind-header chat-reader-nested-header">
             <div class="chat-reader-nested-heading">
                 <div class="chat-grid-kicker">View Strategy</div>
@@ -534,7 +558,7 @@
 </div>
 
 <div x-show="regexConfigOpen" x-cloak class="chat-reader-overlay" style="z-index: calc(var(--z-topmost) - 2);" @click.self="closeRegexConfig()">
-    <div class="chat-bind-modal chat-reader-editor-modal chat-reader-nested-modal chat-reader-transition-surface">
+    <div class="chat-bind-modal chat-reader-editor-modal chat-reader-nested-modal chat-reader-transition-surface" role="dialog" aria-modal="true" aria-label="聊天解析规则">
         <div class="chat-bind-header chat-reader-regex-header chat-reader-nested-header">
             <div class="chat-reader-nested-heading">
                 <div class="chat-grid-kicker">Regex Config</div>
@@ -902,7 +926,7 @@
 </div>
 
 <div x-show="editingFloor" x-cloak class="chat-reader-overlay" style="z-index: calc(var(--z-topmost) - 1);" @click.self="closeFloorEditor()">
-    <div class="chat-bind-modal chat-reader-editor-modal chat-reader-nested-modal chat-reader-transition-surface chat-reader-editor-modal--floor">
+    <div class="chat-bind-modal chat-reader-editor-modal chat-reader-nested-modal chat-reader-transition-surface chat-reader-editor-modal--floor" role="dialog" aria-modal="true" aria-label="楼层编辑器">
         <div class="chat-bind-header chat-reader-nested-header">
             <div class="chat-reader-nested-heading">
                 <div class="chat-grid-kicker">Floor Editor</div>
@@ -947,7 +971,7 @@
 </div>
 
 <div x-show="bindPickerOpen" x-cloak class="chat-reader-overlay" style="z-index: var(--z-modal-popover);" @click.self="closeBindPicker()">
-    <div class="chat-bind-modal chat-reader-nested-modal chat-reader-transition-surface">
+    <div class="chat-bind-modal chat-reader-nested-modal chat-reader-transition-surface" role="dialog" aria-modal="true" aria-label="角色卡绑定选择器">
         <div class="chat-bind-header chat-reader-nested-header">
             <div class="chat-reader-nested-heading">
                 <div class="chat-grid-kicker">Bind Character</div>
