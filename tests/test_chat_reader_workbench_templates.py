@@ -137,3 +137,18 @@ def test_chat_reader_template_groups_desktop_workbench_controls():
     assert 'chat-reader-panel-group' in reader_template
     assert 'chat-reader-danger-zone' in reader_template
     assert 'chat-reader-icon-button' in reader_template
+
+
+def test_chat_reader_template_includes_mobile_drawer_segments():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'readerMobilePanel' in reader_template
+    assert "readerMobilePanel === 'tools'" in reader_template
+    assert "readerMobilePanel === 'search'" in reader_template
+    assert "readerMobilePanel === 'navigator'" in reader_template
+
+
+def test_chat_grid_tracks_mobile_reader_panel_state():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert 'readerMobilePanel' in chat_grid_source

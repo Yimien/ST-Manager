@@ -2379,6 +2379,13 @@ html.light-mode .chat-toolbar-btn--danger:hover {
 }
 
 @media (max-width: 900px) {
+    .chat-reader-modal,
+    .chat-reader-body,
+    .chat-reader-center {
+        min-width: 0;
+        overflow-x: hidden;
+    }
+
     .chat-grid {
         grid-template-columns: 1fr
     }
@@ -2431,7 +2438,8 @@ html.light-mode .chat-toolbar-btn--danger:hover {
     }
 
     .chat-reader-right {
-        right: 0
+        right: 0;
+        left: 0
     }
 
     .chat-reader-rail-tabs {
@@ -2466,9 +2474,23 @@ html.light-mode .chat-toolbar-btn--danger:hover {
         position: fixed;
         top: var(--chat-reader-header-height);
         bottom: 0;
-        width: min(100vw, 360px);
+        width: 100vw;
+        max-width: 100vw;
         z-index: calc(var(--z-chat-reader) + 1);
         box-shadow: 0 18px 40px rgba(8, 20, 15, 0.28)
+    }
+
+    .chat-reader-right {
+        border-left: none;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--bg-sub), transparent 0%), color-mix(in srgb, var(--chat-reader-surface-raised), var(--bg-sub) 62%));
+    }
+
+    .chat-reader-left {
+        width: 0;
+        max-width: 0;
+        padding: 0;
+        border-right: none;
+        box-shadow: none;
     }
 
     .chat-reader-mini-stat,
@@ -2480,6 +2502,10 @@ html.light-mode .chat-toolbar-btn--danger:hover {
     .chat-reader-center,
     .chat-reader-right {
         grid-column: 1
+    }
+
+    .chat-reader-center {
+        padding: 0.9rem 0.85rem 1.25rem;
     }
 
     .chat-grid-toolbar-actions {

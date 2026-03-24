@@ -2581,6 +2581,7 @@ export default function chatGrid() {
 
         readerShowLeftPanel: true,
         readerShowRightPanel: true,
+        readerMobilePanel: '',
         readerRightTab: 'search',
         readerAppMode: false,
         readerAppFloor: 0,
@@ -4296,19 +4297,10 @@ export default function chatGrid() {
 
         get readerBodyGridStyle() {
             const isMobile = this.$store.global.deviceType === 'mobile';
-            const left = this.readerShowLeftPanel ? (isMobile ? 1 : 320) : 0;
-            const right = this.readerShowRightPanel ? (isMobile ? 1 : 300) : 0;
+            const left = this.readerShowLeftPanel ? (isMobile ? 0 : 320) : 0;
+            const right = this.readerShowRightPanel ? (isMobile ? 0 : 300) : 0;
 
             if (isMobile) {
-                if (!this.readerShowLeftPanel && !this.readerShowRightPanel) {
-                    return 'grid-template-columns: minmax(0, 1fr);';
-                }
-                if (this.readerShowLeftPanel && !this.readerShowRightPanel) {
-                    return 'grid-template-columns: minmax(0, 1fr);';
-                }
-                if (!this.readerShowLeftPanel && this.readerShowRightPanel) {
-                    return 'grid-template-columns: minmax(0, 1fr);';
-                }
                 return 'grid-template-columns: minmax(0, 1fr);';
             }
 
@@ -4357,6 +4349,11 @@ export default function chatGrid() {
 
                 if (deviceType === 'mobile' && this.readerShowLeftPanel && this.readerShowRightPanel) {
                     this.hideReaderPanels();
+                    return;
+                }
+
+                if (deviceType === 'mobile' && this.readerMobilePanel) {
+                    this.syncMobileReaderPanelState(this.readerMobilePanel);
                     return;
                 }
 
@@ -4542,6 +4539,7 @@ export default function chatGrid() {
             this.replaceReplacement = '';
             this.replaceUseRegex = false;
             this.replaceStatus = '';
+            this.readerMobilePanel = '';
             this.readerRightTab = 'search';
             const renderPreferences = loadStoredRenderPreferences();
             this.readerRenderMode = renderPreferences.renderMode;
@@ -4593,6 +4591,7 @@ export default function chatGrid() {
             const isMobile = this.$store.global.deviceType === 'mobile';
             this.readerShowLeftPanel = !isMobile;
             this.readerShowRightPanel = !isMobile;
+            this.readerMobilePanel = '';
 
             try {
                 const res = await getChatDetail(item.id, {
@@ -4703,6 +4702,7 @@ export default function chatGrid() {
             this.replaceReplacement = '';
             this.replaceUseRegex = false;
             this.replaceStatus = '';
+            this.readerMobilePanel = '';
             this.readerRightTab = 'search';
             const renderPreferences = loadStoredRenderPreferences();
             this.readerRenderMode = renderPreferences.renderMode;
@@ -5328,13 +5328,24 @@ export default function chatGrid() {
         },
 
         toggleReaderPanel(side) {
+            const isMobile = this.$store.global.deviceType === 'mobile';
+
+            if (isMobile) {
+                const panel = side === 'left' ? 'tools' : 'search';
+                const isSamePanelOpen = this.readerMobilePanel === panel && this.readerShowRightPanel;
+                if (isSamePanelOpen) {
+                    this.hideReaderPanels();
+                    return;
+                }
+                this.setReaderMobilePanel(panel);
+                return;
+            }
+
             if (this.readerAppMode && side === 'right') {
                 this.readerShowRightPanel = !this.readerShowRightPanel;
                 this.updateReaderLayoutMetrics();
                 return;
             }
-
-            const isMobile = this.$store.global.deviceType === 'mobile';
 
             if (side === 'left') {
                 const next = !this.readerShowLeftPanel;
@@ -5362,7 +5373,42 @@ export default function chatGrid() {
             }
         },
 
+        syncMobileReaderPanelState(panel) {
+            const normalized = String(panel || '').trim();
+            const active = normalized === 'tools' || normalized === 'search' || normalized === 'navigator'
+                ? normalized
+                : '';
+            this.readerMobilePanel = active;
+            this.readerShowLeftPanel = false;
+            this.readerShowRightPanel = Boolean(active);
+            if (active === 'search') {
+                this.readerRightTab = 'search';
+            } else if (active === 'navigator') {
+                this.readerRightTab = 'floors';
+            }
+            if (active === 'navigator' && this.activeChat && (!Array.isArray(this.readerNavBatchItems) || this.readerNavBatchItems.length === 0)) {
+                void this.syncReaderNavBatchForFloor(
+                    this.effectiveReaderAnchorFloor || this.readerViewportFloor || this.activeChat.last_view_floor || 1,
+                    { force: true },
+                );
+            }
+            this.updateReaderLayoutMetrics();
+        },
+
+        setReaderMobilePanel(panel) {
+            if (this.$store.global.deviceType !== 'mobile') return;
+            this.syncMobileReaderPanelState(panel);
+        },
+
         hideReaderPanels() {
+            if (this.$store.global.deviceType === 'mobile') {
+                this.readerMobilePanel = '';
+                this.readerShowLeftPanel = false;
+                this.readerShowRightPanel = false;
+                this.updateReaderLayoutMetrics();
+                return;
+            }
+
             this.readerShowLeftPanel = false;
             this.readerShowRightPanel = false;
             this.updateReaderLayoutMetrics();
@@ -5660,7 +5706,7 @@ export default function chatGrid() {
 
             const isMobile = this.$store.global.deviceType === 'mobile';
             if (isMobile) {
-                this.readerShowLeftPanel = false;
+                this.hideReaderPanels();
             }
 
             this.setReaderAppFloor(this.readerAppFloor);
