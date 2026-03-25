@@ -16,6 +16,17 @@ def extract_css_block(css_source, selector):
     return css_source[block_start + 1:block_end]
 
 
+def extract_exact_css_block(css_source, selector):
+    match = re.search(rf'(^|\n)\s*{re.escape(selector)}\s*\{{', css_source)
+    if not match:
+        raise ValueError(f'Exact selector not found: {selector}')
+
+    selector_start = match.start()
+    block_start = css_source.index('{', selector_start)
+    block_end = css_source.index('}', block_start)
+    return css_source[block_start + 1:block_end]
+
+
 def extract_media_block(css_source, media_query):
     media_start = css_source.index(media_query)
     block_start = css_source.index('{', media_start)
@@ -133,18 +144,19 @@ def test_chat_reader_template_contains_workbench_regions():
     shell_pattern = re.compile(
         r'<div class="chat-reader-header" :class="\'is-\' \+ readerResponsiveMode">.*?'
         r'<div class="chat-reader-body" :style="readerBodyGridStyle">.*?'
-        r'<aside x-show="readerShowLeftPanel" class="chat-reader-left custom-scrollbar">.*?'
-        r'<main class="chat-reader-center custom-scrollbar" @scroll.passive="handleReaderScroll\(\)">.*?'
-        r'<aside x-show="readerShowRightPanel" class="chat-reader-right custom-scrollbar">',
+        r'<aside x-show="readerShowLeftPanel" class="chat-reader-left custom-scrollbar".*?>.*?'
+        r'<main class="chat-reader-center custom-scrollbar" :style="readerCenterPaneStyle" @scroll.passive="handleReaderScroll\(\)">.*?'
+        r'<aside x-show="readerShowRightPanel" class="chat-reader-right custom-scrollbar" :style="readerRightPaneStyle">',
         re.DOTALL,
     )
 
     assert shell_pattern.search(shell)
     assert shell.count('<aside ') == 2
     assert shell.index('class="chat-reader-header"') < shell.index('class="chat-reader-body"')
-    assert '<div class="chat-reader-body" :style="readerBodyGridStyle">\n            <aside x-show="readerShowLeftPanel" class="chat-reader-left custom-scrollbar">' in shell
-    assert '\n            </aside>\n\n            <main class="chat-reader-center custom-scrollbar" @scroll.passive="handleReaderScroll()">' in shell
-    assert '\n            </main>\n\n            <aside x-show="readerShowRightPanel" class="chat-reader-right custom-scrollbar">' in shell
+    assert '<div class="chat-reader-body" :style="readerBodyGridStyle">' in shell
+    assert '<aside x-show="readerShowLeftPanel" class="chat-reader-left custom-scrollbar"' in shell
+    assert '\n            </aside>\n\n            <main class="chat-reader-center custom-scrollbar" :style="readerCenterPaneStyle" @scroll.passive="handleReaderScroll()">' in shell
+    assert '\n            </main>\n\n            <aside x-show="readerShowRightPanel" class="chat-reader-right custom-scrollbar" :style="readerRightPaneStyle">' in shell
 
 
 def test_chat_reader_template_groups_desktop_workbench_controls():
@@ -252,6 +264,38 @@ def test_chat_reader_template_keeps_header_identity_and_action_groups():
     assert 'chat-reader-header-stats' in reader_template
 
 
+def test_chat_reader_css_promotes_shell_status_to_second_header_row():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    header_block = extract_exact_css_block(chat_reader_css, '.chat-reader-header')
+    main_block = extract_exact_css_block(chat_reader_css, '.chat-reader-header-main')
+    actions_block = extract_exact_css_block(chat_reader_css, '.chat-reader-header-actions')
+    shell_status_block = extract_exact_css_block(chat_reader_css, '.chat-reader-shell-status')
+
+    assert 'flex-wrap: wrap' in header_block
+    assert 'align-items: stretch' in header_block
+    assert 'flex: 1 1 34rem' in main_block
+    assert 'min-width: min(100%, 24rem)' in main_block
+    assert 'max-width: 100%' in actions_block
+    assert 'flex: 1 0 100%' in shell_status_block
+    assert 'margin-top: 0' in shell_status_block
+
+
+def test_chat_reader_css_keeps_tablet_actions_in_single_wrapping_row():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    tablet_block = extract_media_block(chat_reader_css, '@media (max-width: 1179px)')
+
+    tablet_actions_block = extract_exact_css_block(tablet_block, '.chat-reader-header-actions')
+    tablet_primary_block = extract_exact_css_block(tablet_block, '.chat-reader-header-primary')
+    tablet_tools_block = extract_exact_css_block(tablet_block, '.chat-reader-header-tools')
+
+    assert 'justify-content: flex-start' in tablet_actions_block
+    assert 'align-items: center' in tablet_actions_block
+    assert 'flex-direction: row' in tablet_primary_block
+    assert 'align-items: center' in tablet_primary_block
+    assert 'justify-content: flex-start' in tablet_tools_block
+
+
 def test_chat_reader_css_rebalances_header_rows_at_narrow_widths():
     chat_reader_css = read_project_file('static/css/modules/view-chats.css')
     tablet_block = extract_media_block(chat_reader_css, '@media (max-width: 1179px)')
@@ -281,14 +325,145 @@ def test_chat_reader_css_rebalances_header_rows_at_narrow_widths():
     assert '        flex-basis: 100%;' in tablet_block
     assert '        margin-top: 0;' in tablet_block
 
-    assert '.chat-reader-header-main,\n    .chat-reader-header-actions,\n    .chat-reader-header-primary,\n    .chat-reader-header-tools,\n    .chat-reader-shell-status {' in mobile_block
+    assert '.chat-reader-header-main,\n    .chat-reader-header-actions,\n    .chat-reader-header-primary {' in mobile_block
     assert '        width: 100%' in mobile_block
-    assert '.chat-reader-header-actions,\n    .chat-reader-header-primary,\n    .chat-reader-header-tools,\n    .chat-reader-shell-status {' in mobile_block
-    assert '        flex-direction: column;' in mobile_block
-    assert '        align-items: stretch' in mobile_block
+    assert '.chat-reader-header-tools {' in mobile_block
+    assert '        flex-direction: row;' in mobile_block
+    assert '        justify-content: flex-start' in mobile_block
+
+
+def test_chat_grid_mobile_reader_panel_state_keeps_one_active_panel():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert "this.readerShowLeftPanel = active === 'tools';" in chat_grid_source
+    assert "this.readerShowRightPanel = active === 'search' || active === 'navigator';" in chat_grid_source
+    assert 'this.readerShowRightPanel = Boolean(active);' not in chat_grid_source
+
+
+def test_chat_grid_reader_responsive_mode_uses_reactive_device_type_instead_of_window_width():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert "const deviceType = this.$store.global.deviceType;" in chat_grid_source
+    assert "if (deviceType === 'mobile')" in chat_grid_source
+    assert "if (deviceType === 'tablet')" in chat_grid_source
+    assert 'window.innerWidth < 900' not in chat_grid_source
+    assert 'window.innerWidth < 1180' not in chat_grid_source
+
+
+def test_chat_grid_reader_body_grid_style_drives_desktop_tablet_and_mobile_layouts_from_panel_state():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert "return 'grid-template-columns: minmax(0, 1fr);';" in chat_grid_source
+    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;" in chat_grid_source
+    assert "return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
+    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
+
+
+def test_chat_reader_template_assigns_dynamic_grid_columns_to_center_and_right_panes():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert ":style=\"readerCenterPaneStyle\"" in reader_template
+    assert ":style=\"readerRightPaneStyle\"" in reader_template
+    assert ":style=\"readerLeftPaneStyle\"" in reader_template
+
+
+def test_chat_reader_css_mobile_drawer_starts_below_header_instead_of_centering_content():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert 'padding: calc(var(--chat-reader-header-height) + 0.55rem) 0.85rem 1rem;' not in mobile_block
+    assert 'top: var(--chat-reader-header-height);' in mobile_block
+    assert 'padding: 0.85rem 0.85rem 1rem;' in mobile_block
+
+
+def test_chat_reader_template_moves_mobile_meta_out_of_the_header_shell():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'x-show="readerResponsiveMode !== \'mobile\' && activeChat"' in reader_template
+    assert 'x-show="readerResponsiveMode !== \'mobile\'"' in reader_template
+    assert 'x-show="readerResponsiveMode === \'mobile\'"' in reader_template
+    assert '聊天概览' in reader_template
+
+
+def test_chat_reader_css_compacts_mobile_header_for_reading_first_layout():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert '.chat-reader-header {' in mobile_block
+    assert 'padding: 0.62rem 0.72rem;' in mobile_block
+    assert '.chat-reader-header-main {' in mobile_block
+    assert 'flex: 1 1 auto;' in mobile_block
+    assert '.chat-reader-header-actions {' in mobile_block
+    assert 'align-items: center;' in mobile_block
+    assert '.chat-reader-header-tools {' in mobile_block
+    assert 'flex-direction: row;' in mobile_block
+    assert 'display: none' in mobile_block
+
+
+def test_chat_reader_css_mobile_toggle_buttons_use_compact_chip_widths():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert '.chat-reader-toggle {' in mobile_block
+    assert 'width: auto;' in mobile_block
+    assert 'min-width: 0;' in mobile_block
+    assert '.chat-toolbar-btn--primary.chat-reader-mobile-save {' in mobile_block
+
+
+def test_chat_reader_template_desktop_header_exposes_independent_tools_search_and_navigator_toggles():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert "@click=\"toggleReaderPanel('left')\">工具</button>" in reader_template
+    assert "@click=\"openReaderDesktopPanel('search')\">搜索</button>" in reader_template
+    assert "@click=\"openReaderDesktopPanel('navigator')\">导航</button>" in reader_template
+    assert "x-show=\"readerResponsiveMode !== 'mobile'\"" in reader_template
+
+
+def test_chat_grid_reader_desktop_panel_controls_close_only_the_target_panel():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert "const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;" in chat_grid_source
+    assert "this.readerShowRightPanel = false;" in chat_grid_source
+    assert "this.readerRightTab = nextTab;" in chat_grid_source
+    assert 'closeReaderRightPanel() {' in chat_grid_source
+    close_right_section = chat_grid_source.split('closeReaderRightPanel() {', 1)[1].split('}', 1)[0]
+    assert 'this.readerShowLeftPanel = false;' not in close_right_section
+
+
+def test_chat_reader_template_right_close_button_uses_desktop_specific_close_logic():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert '@click="closeReaderRightPanel()"' in reader_template
+    assert '@click="hideReaderPanels()"' not in reader_template.split('class="chat-reader-right custom-scrollbar"', 1)[1].split('</aside>', 1)[0]
+
+
+def test_chat_grid_reader_pane_styles_reflow_center_when_left_panel_closes():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert "return 'grid-column: 1;';" in chat_grid_source
+    assert "return 'grid-column: 2;';" in chat_grid_source
+    assert "return 'grid-column: 3;';" in chat_grid_source
+
+
+def test_chat_reader_template_binds_desktop_pane_visibility_to_inline_display_styles():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert ":style=" in reader_template
+    assert ':style="readerLeftPaneStyle"' in reader_template
+    assert ':style="readerRightPaneStyle"' in reader_template
 
 
 def test_chat_grid_reader_mobile_mode_is_not_only_ua_driven():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    layout_source = read_project_file('static/js/components/layout.js')
 
-    assert 'window.innerWidth < 900' in chat_grid_source or 'matchMedia' in chat_grid_source or 'readerResponsiveMode' in chat_grid_source
+    assert 'readerResponsiveMode' in chat_grid_source
+    assert 'window.innerWidth < 900' in layout_source
+    assert 'window.innerWidth < 1180' in layout_source
+
+
+def test_layout_recomputes_global_device_type_on_window_resize():
+    layout_source = read_project_file('static/js/components/layout.js')
+
+    assert "window.addEventListener('resize', () => {" in layout_source
+    assert 'this.reDeviceType();' in layout_source

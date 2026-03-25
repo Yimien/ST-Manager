@@ -51,6 +51,10 @@ export default function layout() {
         init() {
             this.reDeviceType()
 
+            window.addEventListener('resize', () => {
+                this.reDeviceType();
+            });
+
             // 监听全局快捷键或事件
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape' && (this.draggedFolder || this.draggedCards.length > 0)) {
@@ -99,6 +103,19 @@ export default function layout() {
         reDeviceType() {
             const userAgent = navigator.userAgent || navigator.vendor || window.opera;
             let deviceType = 'desktop';
+            const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 0;
+
+            if (viewportWidth > 0) {
+                if (window.innerWidth < 900) {
+                    this.$store.global.deviceType = 'mobile';
+                    return;
+                }
+                if (window.innerWidth < 1180) {
+                    this.$store.global.deviceType = 'tablet';
+                    return;
+                }
+            }
+
             // 平板设备检测（iPad 或 Android 平板）
             if (/iPad|Android/.test(userAgent) && !/Mobile/.test(userAgent)) {
                 deviceType = 'tablet';

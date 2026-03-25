@@ -2837,13 +2837,72 @@ export default function chatGrid() {
         },
 
         get readerResponsiveMode() {
-            if (typeof window !== 'undefined' && window.innerWidth < 900) {
+            const deviceType = this.$store.global.deviceType;
+            if (deviceType === 'mobile') {
                 return 'mobile';
             }
-            if (typeof window !== 'undefined' && window.innerWidth < 1180) {
+            if (deviceType === 'tablet') {
                 return 'tablet';
             }
             return 'desktop';
+        },
+
+        get readerDesktopRightPanelOpen() {
+            return this.readerShowRightPanel && !this.readerAppMode;
+        },
+
+        get readerCenterPaneStyle() {
+            const mode = this.readerResponsiveMode;
+            if (mode === 'mobile') {
+                return 'grid-column: 1;';
+            }
+
+            if (mode === 'tablet') {
+                return this.readerShowLeftPanel ? 'grid-column: 2;' : 'grid-column: 1;';
+            }
+
+            if (this.readerShowLeftPanel && this.readerDesktopRightPanelOpen) {
+                return 'grid-column: 2;';
+            }
+
+            if (this.readerShowLeftPanel) {
+                return 'grid-column: 2;';
+            }
+
+            return 'grid-column: 1;';
+        },
+
+        get readerLeftPaneStyle() {
+            if (!this.readerShowLeftPanel) {
+                return 'display: none;';
+            }
+
+            if (this.readerResponsiveMode === 'desktop' || this.readerResponsiveMode === 'tablet') {
+                return '';
+            }
+
+            return 'grid-column: 1;';
+        },
+
+        get readerRightPaneStyle() {
+            if (!this.readerShowRightPanel) {
+                return `${this.readerResponsiveMode === 'desktop' ? 'grid-column: 2;' : this.readerResponsiveMode === 'tablet' ? 'grid-column: 2;' : 'grid-column: 1;'} display: none;`;
+            }
+
+            const mode = this.readerResponsiveMode;
+            if (mode === 'mobile') {
+                return 'grid-column: 1;';
+            }
+
+            if (mode === 'tablet') {
+                return 'grid-column: 2;';
+            }
+
+            if (this.readerShowLeftPanel && this.readerDesktopRightPanelOpen) {
+                return 'grid-column: 3;';
+            }
+
+            return 'grid-column: 2;';
         },
 
         get readerViewportStatusText() {
@@ -4351,10 +4410,69 @@ export default function chatGrid() {
 
             const leftWidth = mode === 'tablet' ? 264 : 320;
             const rightWidth = mode === 'tablet' ? 280 : 300;
-            const left = this.readerShowLeftPanel ? leftWidth : 0;
-            const right = this.readerShowRightPanel ? rightWidth : 0;
 
-            return `grid-template-columns: ${left}px minmax(0, 1fr) ${right}px;`;
+            if (mode === 'tablet') {
+                if (this.readerShowLeftPanel) {
+                    return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;
+                }
+                if (this.readerShowRightPanel && !this.readerAppMode) {
+                    return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;
+                }
+                return 'grid-template-columns: minmax(0, 1fr);';
+            }
+
+            if (this.readerShowLeftPanel && this.readerDesktopRightPanelOpen) {
+                return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;
+            }
+
+            if (this.readerShowLeftPanel) {
+                return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;
+            }
+
+            if (this.readerDesktopRightPanelOpen) {
+                return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;
+            }
+
+            return 'grid-template-columns: minmax(0, 1fr);';
+        },
+
+        openReaderDesktopPanel(panel) {
+            if (this.readerResponsiveMode === 'mobile') {
+                this.setReaderMobilePanel(panel === 'navigator' ? 'navigator' : 'search');
+                return;
+            }
+
+            const nextTab = panel === 'navigator' ? 'floors' : 'search';
+            const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;
+
+            if (isSamePanelOpen) {
+                this.readerShowRightPanel = false;
+                this.updateReaderLayoutMetrics();
+                return;
+            }
+
+            this.readerRightTab = nextTab;
+            this.readerShowRightPanel = true;
+            if (this.readerResponsiveMode === 'tablet') {
+                this.readerShowLeftPanel = false;
+            }
+
+            if (this.readerRightTab === 'floors' && this.activeChat && (!Array.isArray(this.readerNavBatchItems) || this.readerNavBatchItems.length === 0)) {
+                void this.syncReaderNavBatchForFloor(
+                    this.effectiveReaderAnchorFloor || this.readerViewportFloor || this.activeChat.last_view_floor || 1,
+                    { force: true },
+                );
+            }
+
+            this.updateReaderLayoutMetrics();
+        },
+
+        closeReaderRightPanel() {
+            this.readerShowRightPanel = false;
+            if (this.readerResponsiveMode === 'mobile') {
+                this.readerMobilePanel = '';
+            }
+            this.updateReaderLayoutMetrics();
         },
 
         init() {
@@ -5393,6 +5511,9 @@ export default function chatGrid() {
             if (side === 'left') {
                 const next = !this.readerShowLeftPanel;
                 this.readerShowLeftPanel = next;
+                if (this.readerResponsiveMode === 'tablet' && next) {
+                    this.readerShowRightPanel = false;
+                }
                 if (isMobile && next) {
                     this.readerShowRightPanel = false;
                 }
@@ -5401,6 +5522,10 @@ export default function chatGrid() {
             }
 
             if (side === 'right') {
+                if (this.readerResponsiveMode !== 'mobile') {
+                    this.openReaderDesktopPanel(this.readerRightTab === 'floors' ? 'navigator' : 'search');
+                    return;
+                }
                 const next = !this.readerShowRightPanel;
                 this.readerShowRightPanel = next;
                 if (isMobile && next) {
@@ -5422,8 +5547,8 @@ export default function chatGrid() {
                 ? normalized
                 : '';
             this.readerMobilePanel = active;
-            this.readerShowLeftPanel = false;
-            this.readerShowRightPanel = Boolean(active);
+            this.readerShowLeftPanel = active === 'tools';
+            this.readerShowRightPanel = active === 'search' || active === 'navigator';
             if (active === 'search') {
                 this.readerRightTab = 'search';
             } else if (active === 'navigator') {
@@ -5448,7 +5573,7 @@ export default function chatGrid() {
 
                 if (this.readerMobilePanel) {
                     this.readerShowLeftPanel = this.readerMobilePanel === 'tools';
-                    this.readerShowRightPanel = true;
+                    this.readerShowRightPanel = this.readerMobilePanel === 'search' || this.readerMobilePanel === 'navigator';
                     this.syncMobileReaderPanelState(this.readerMobilePanel);
                     return;
                 }
@@ -5467,7 +5592,7 @@ export default function chatGrid() {
                     this.readerRightTab = this.readerMobilePanel === 'navigator' ? 'floors' : 'search';
                 } else if (!this.readerShowLeftPanel && !this.readerShowRightPanel) {
                     this.readerShowLeftPanel = true;
-                    this.readerShowRightPanel = true;
+                    this.readerShowRightPanel = false;
                 }
 
                 this.readerMobilePanel = '';
@@ -5475,16 +5600,17 @@ export default function chatGrid() {
                 return;
             }
 
-            if (this.readerMobilePanel === 'tools') {
-                this.readerShowLeftPanel = true;
-                this.readerShowRightPanel = false;
-            } else if (this.readerMobilePanel === 'search' || this.readerMobilePanel === 'navigator') {
-                this.readerShowLeftPanel = false;
-                this.readerShowRightPanel = true;
-                this.readerRightTab = this.readerMobilePanel === 'navigator' ? 'floors' : 'search';
+            if (this.readerMobilePanel === 'navigator') {
+                this.readerRightTab = 'floors';
+            } else if (this.readerMobilePanel === 'search') {
+                this.readerRightTab = 'search';
             }
 
             this.readerMobilePanel = '';
+            if (!this.readerShowLeftPanel && !this.readerShowRightPanel) {
+                this.readerShowLeftPanel = true;
+                this.readerShowRightPanel = true;
+            }
             this.updateReaderLayoutMetrics();
         },
 
