@@ -2542,6 +2542,7 @@ export default function chatGrid() {
         readerBrowseMode: DEFAULT_CHAT_READER_RENDER_PREFS.browseMode,
         readerPageGroupIndex: 0,
         regexConfigOpen: false,
+        regexHelpOpen: false,
         regexConfigTab: 'extract',
         selectedActiveRegexRuleIndex: 0,
         selectedDraftRegexRuleIndex: 0,
@@ -2858,7 +2859,7 @@ export default function chatGrid() {
         },
 
         get readerDesktopRightPanelOpen() {
-            return this.readerShowRightPanel && !this.readerAppMode;
+            return this.readerShowRightPanel;
         },
 
         get readerCenterPaneStyle() {
@@ -4425,7 +4426,7 @@ export default function chatGrid() {
                 if (this.readerShowLeftPanel) {
                     return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;
                 }
-                if (this.readerShowRightPanel && !this.readerAppMode) {
+                if (this.readerShowRightPanel) {
                     return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;
                 }
                 return 'grid-template-columns: minmax(0, 1fr);';
@@ -6481,14 +6482,25 @@ export default function chatGrid() {
             this.regexTestInput = '';
             this.selectedActiveRegexRuleIndex = 0;
             this.selectedDraftRegexRuleIndex = 0;
+            this.regexHelpOpen = false;
             this.regexConfigOpen = true;
             this.regexConfigTab = 'extract';
             this.regexConfigSourceLabel = this.describeRegexConfigSource();
-            this.regexConfigStatus = '测试区默认不自动加载内容，按需手动载入当前定位楼层即可。';
+            this.regexConfigStatus = '';
+        },
+
+        openRegexHelp() {
+            if (!this.regexConfigOpen) return;
+            this.regexHelpOpen = true;
+        },
+
+        closeRegexHelp() {
+            this.regexHelpOpen = false;
         },
 
         closeRegexConfig() {
             this.regexConfigOpen = false;
+            this.regexHelpOpen = false;
             this.selectedActiveRegexRuleIndex = 0;
             this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigStatus = '';

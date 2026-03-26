@@ -569,26 +569,20 @@
             </div>
         </div>
 
-        <div class="chat-reader-regex-source-panel chat-reader-nested-section chat-reader-nested-section--summary">
-            <div class="chat-reader-panel-title">当前状态</div>
-            <div class="chat-reader-regex-source-grid">
+        <div class="chat-reader-regex-summary-strip chat-reader-nested-section chat-reader-nested-section--summary">
+            <div class="chat-reader-regex-summary-head">
+                <div class="chat-reader-panel-title">当前状态</div>
+                <button type="button" class="chat-toolbar-btn chat-reader-regex-help-button" @click="openRegexHelp()" aria-label="聊天解析规则帮助" title="聊天解析规则帮助">帮助</button>
+            </div>
+            <div class="chat-reader-regex-summary-grid">
                 <template x-for="source in regexStateCards" :key="source.id">
-                    <div class="chat-reader-regex-source-card" :class="'is-' + source.tone">
-                        <div class="chat-reader-regex-source-head">
-                            <strong x-text="source.title"></strong>
-                            <span x-text="source.state"></span>
-                        </div>
-                        <p x-text="source.detail"></p>
+                    <div class="chat-reader-regex-summary-chip" :class="'is-' + source.tone">
+                        <span class="chat-reader-regex-summary-label" x-text="source.title"></span>
+                        <strong x-text="source.state"></strong>
                     </div>
                 </template>
             </div>
-            <div class="chat-reader-nested-help">
-                <div class="chat-reader-replace-status">
-                    左侧“当前实际生效规则”会实时预览当前草稿合并后的结果；只有保存后才会真正写回聊天文件。
-                </div>
-                <div class="chat-reader-replace-status" x-text="regexDraftOutcomeSummary"></div>
-                <div class="chat-reader-replace-status" x-show="regexConfigStatus" x-text="regexConfigStatus"></div>
-            </div>
+            <div class="chat-reader-regex-summary-feedback" x-show="regexConfigStatus" x-text="regexConfigStatus"></div>
         </div>
 
         <div class="chat-reader-editor-grid chat-reader-editor-grid--balanced custom-scrollbar">
@@ -900,6 +894,47 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div x-show="regexHelpOpen" x-cloak class="chat-reader-overlay" style="z-index: calc(var(--z-topmost) - 1);" @click.self="closeRegexHelp()" @keydown.escape.window.prevent="closeRegexHelp()">
+    <div class="chat-bind-modal chat-reader-nested-modal chat-reader-transition-surface chat-reader-regex-help-modal" role="dialog" aria-modal="true" aria-label="聊天解析规则帮助">
+        <div class="chat-bind-header chat-reader-nested-header">
+            <div class="chat-reader-nested-heading">
+                <div class="chat-grid-kicker">Regex Help</div>
+                <div class="chat-reader-title" style="font-size: 1.05rem;">聊天解析规则帮助</div>
+                <div class="chat-reader-subtitle">解释当前生效、继承、已保存、草稿，以及预览与保存的关系。</div>
+            </div>
+            <div class="chat-bind-actions chat-reader-nested-actions">
+                <button type="button" class="chat-reader-icon-button" @click="closeRegexHelp()" aria-label="关闭解析规则帮助" title="关闭解析规则帮助">
+                    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="chat-reader-regex-help-body custom-scrollbar">
+            <div class="chat-reader-nested-help">
+                <div class="chat-reader-panel-title">状态含义</div>
+                <div class="chat-reader-replace-status">当前生效：合并角色卡继承与当前草稿后，最终会参与聊天显示替换的规则视图。</div>
+                <div class="chat-reader-replace-status">角色卡继承：来自已绑定角色卡的规则，本身不会因为当前聊天里的草稿编辑而直接被改写。</div>
+                <div class="chat-reader-replace-status">聊天已保存：已经写回当前聊天文件的自定义规则与删除覆盖。</div>
+                <div class="chat-reader-replace-status">当前草稿：还停留在当前编辑会话里的聊天级覆盖，只有保存后才会真正落盘。</div>
+            </div>
+
+            <div class="chat-reader-nested-help">
+                <div class="chat-reader-panel-title">预览与保存</div>
+                <div class="chat-reader-replace-status">左侧“当前实际生效规则”会实时预览草稿合并后的结果，方便你先确认显示效果。</div>
+                <div class="chat-reader-replace-status">保存前不会改动聊天文件；点击“保存到当前聊天”后，当前草稿才会写回聊天元数据。</div>
+            </div>
+
+            <div class="chat-reader-nested-help">
+                <div class="chat-reader-panel-title">删除覆盖与禁用</div>
+                <div class="chat-reader-replace-status">删除覆盖用于在当前聊天里屏蔽继承来的某条规则；保存后会覆盖继承结果，但不会删除角色卡原始规则。</div>
+                <div class="chat-reader-replace-status">禁用规则会保留在列表里，但不参与实际替换，适合临时停用而不是彻底删除。</div>
             </div>
         </div>
     </div>

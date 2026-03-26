@@ -512,3 +512,86 @@ def test_layout_recomputes_global_device_type_on_window_resize():
 
     assert "window.addEventListener('resize', () => {" in layout_source
     assert 'this.reDeviceType();' in layout_source
+
+
+def test_chat_grid_keeps_right_panel_layout_during_app_stage():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    desktop_panel_block = chat_grid_source.split('get readerDesktopRightPanelOpen() {', 1)[1].split('}', 1)[0]
+    body_grid_block = chat_grid_source.split('get readerBodyGridStyle() {', 1)[1].split('openReaderDesktopPanel(panel) {', 1)[0]
+
+    assert 'return this.readerShowRightPanel;' in desktop_panel_block
+    assert '!this.readerAppMode' not in desktop_panel_block
+    assert 'if (this.readerShowRightPanel && !this.readerAppMode)' not in body_grid_block
+    assert 'if (this.readerShowRightPanel) {' in body_grid_block
+
+
+def test_chat_reader_template_keeps_app_stage_in_center_pane_with_separate_right_rail():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+    shell = extract_chat_reader_shell(reader_template)
+
+    main_section = shell.split('<main class="chat-reader-center custom-scrollbar" :style="readerCenterPaneStyle" @scroll.passive="handleReaderScroll()">', 1)[1].split('</main>', 1)[0]
+    right_section = shell.split('<aside x-show="readerShowRightPanel" class="chat-reader-right custom-scrollbar" :style="readerRightPaneStyle">', 1)[1].split('</aside>', 1)[0]
+
+    assert 'chat-reader-app-stage' in main_section
+    assert 'chatAppStageHost' in main_section
+    assert 'chat-reader-app-stage' not in right_section
+
+
+def test_chat_reader_template_uses_compact_regex_summary_with_help_entry():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-regex-summary-strip' in reader_template
+    assert 'chat-reader-regex-summary-grid' in reader_template
+    assert '@click="openRegexHelp()"' in reader_template
+    assert 'aria-label="聊天解析规则帮助"' in reader_template
+    assert 'chat-reader-regex-source-grid' not in reader_template
+
+
+def test_chat_grid_tracks_regex_help_modal_state():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    open_help_block = chat_grid_source.split('openRegexHelp() {', 1)[1].split('}', 1)[0]
+    close_help_block = chat_grid_source.split('closeRegexHelp() {', 1)[1].split('}', 1)[0]
+    close_regex_block = chat_grid_source.split('closeRegexConfig() {', 1)[1].split('}', 1)[0]
+
+    assert 'regexHelpOpen: false,' in chat_grid_source
+    assert 'openRegexHelp() {' in chat_grid_source
+    assert 'closeRegexHelp() {' in chat_grid_source
+    assert 'this.regexHelpOpen = true;' in open_help_block
+    assert 'this.regexHelpOpen = false;' in close_help_block
+    assert 'this.regexHelpOpen = false;' in close_regex_block
+
+
+def test_chat_reader_css_adds_regex_summary_and_help_modal_primitives():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    assert '.chat-reader-regex-summary-strip' in chat_reader_css
+    assert '.chat-reader-regex-summary-grid' in chat_reader_css
+    assert '.chat-reader-regex-help-button' in chat_reader_css
+    assert '.chat-reader-regex-help-modal' in chat_reader_css
+
+
+def test_chat_reader_template_keeps_regex_summary_dense_without_instructional_copy():
+    reader_template = read_project_file('templates/modals/detail_chat_reader.html')
+    summary_section = reader_template.split('chat-reader-regex-summary-strip', 1)[1].split('<div class="chat-reader-editor-grid', 1)[0]
+
+    assert '精简显示规则来源与草稿状态，详细解释放到帮助里。' not in summary_section
+    assert '左侧“当前实际生效规则”会实时预览当前草稿合并后的结果；只有保存后才会真正写回聊天文件。' not in summary_section
+    assert 'x-text="regexDraftOutcomeSummary"' not in summary_section
+    assert 'chat-reader-regex-summary-feedback' in summary_section
+
+
+def test_chat_grid_does_not_seed_regex_summary_with_default_instruction_status():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    open_regex_block = chat_grid_source.split('openRegexConfig() {', 1)[1].split('}', 1)[0]
+
+    assert "this.regexConfigStatus = '';" in open_regex_block
+    assert '测试区默认不自动加载内容，按需手动载入当前定位楼层即可。' not in open_regex_block
+
+
+def test_chat_reader_css_replaces_tall_regex_status_stack_with_optional_feedback_row():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    assert '.chat-reader-regex-summary-feedback' in chat_reader_css
+    assert '.chat-reader-regex-summary-status' not in chat_reader_css
