@@ -91,6 +91,9 @@ export default function sidebar() {
         },
 
         init() {
+            this.handleMobileUploadRequest = this.handleMobileUploadRequest.bind(this);
+            window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);
+
             // 监听标签索引展开状态变化，保存到本地存储
             this.$watch('tagsSectionExpanded', (value) => {
                 try {
@@ -140,6 +143,10 @@ export default function sidebar() {
             if (this.$store.global.deviceType === "mobile") {
                 this.$store.global.visibleSidebar = false;
             }
+        },
+
+        destroy() {
+            window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);
         },
 
         // 切换侧边栏可见性
@@ -381,6 +388,14 @@ export default function sidebar() {
                 alert(`整理完成，共移动了 ${res.count} 个文件。`);
                 window.dispatchEvent(new CustomEvent('refresh-wi-list'));
             });
+        },
+
+        handleMobileUploadRequest() {
+            if (this.deviceType !== 'mobile' || !this.$refs.mobileImportInput || this.currentMode === 'chats') {
+                return;
+            }
+
+            this.$refs.mobileImportInput.click();
         },
 
         /**

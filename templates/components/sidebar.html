@@ -1,20 +1,3 @@
-<!-- 移动端：悬浮竖排菜单（导入 + 切换） -->
-<div x-show="$store.global.deviceType === 'mobile' && !$store.global.visibleSidebar" class="sidebar-button-group"
-    x-data="sidebar">
-    <!-- 隐藏的文件选择器：多选，依据当前模式决定导入类型 -->
-    <input type="file" x-ref="mobileImportInput" class="hidden" multiple accept=".json,.png,.jsonl,application/json,image/png"
-        @change="handleMobileImportChange($event)" />
-    <!-- 导入按钮 -->
-    <button x-show="currentMode !== 'chats'" @click="$refs.mobileImportInput.click()" class="sidebar-group-btn sidebar-group-btn-top">
-        <span class="toggle-icon">📥</span>
-    </button>
-    <!-- 打开侧边栏按钮 -->
-    <button @click="$store.global.visibleSidebar = true; document.body.style.overflow = 'hidden';"
-        class="sidebar-group-btn sidebar-group-btn-bottom">
-        <span class="toggle-icon">☰</span>
-    </button>
-</div>
-
 <!-- 移动端：遮罩层 -->
 <div x-show="$store.global.deviceType === 'mobile' && $store.global.visibleSidebar"
     @click="$store.global.visibleSidebar = false; document.body.style.overflow = '';"
@@ -28,6 +11,8 @@
     x-transition:enter="transition ease-out duration-300" x-transition:enter-start="transform -translate-x-full"
     x-transition:enter-end="transform translate-x-0" x-transition:leave="transition ease-in duration-200"
     x-transition:leave-start="transform translate-x-0" x-transition:leave-end="transform -translate-x-full">
+    <input type="file" x-ref="mobileImportInput" class="hidden" multiple accept=".json,.png,.jsonl,application/json,image/png"
+        @change="handleMobileImportChange($event)" />
 
     <!-- 移动端：关闭按钮 -->
     <button x-show="$store.global.deviceType === 'mobile'" @click="toggleSidebarVisible()" class="sidebar-close-btn">

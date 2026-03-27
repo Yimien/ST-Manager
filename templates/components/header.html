@@ -2,27 +2,34 @@
     <!-- 移动端：紧凑单行布局 -->
     <div x-show="deviceType === 'mobile'" class="mobile-header-compact">
         <!-- 左侧：Logo + 标题 -->
-        <div class="mobile-header-left">
+        <button type="button" class="mobile-header-left" @click="openMobileSidebar()"
+            :class="{ 'is-active': $store.global.visibleSidebar }"
+            :aria-pressed="$store.global.visibleSidebar ? 'true' : 'false'">
             <div class="app-icon-mobile">
                 <span>🎴</span>
             </div>
             <div class="mobile-title">STM</div>
-        </div>
+        </button>
         
         <!-- 中间：搜索框 -->
-        <div class="mobile-search-wrapper">
-            <input x-show="currentMode === 'cards'" type="text" x-model.debounce.300ms="searchQuery"
-                placeholder="搜索..." class="mobile-search-input">
-            <input x-show="currentMode === 'worldinfo'" type="text" x-model.debounce.300ms="wiSearchQuery"
-                placeholder="搜索..." class="mobile-search-input">
-            <input x-show="currentMode === 'chats'" type="text" x-model.debounce.300ms="chatSearchQuery"
-                placeholder="搜索聊天..." class="mobile-search-input">
-            <input x-show="currentMode === 'presets'" type="text" x-model.debounce.300ms="presetSearch"
-                placeholder="搜索预设..." class="mobile-search-input">
-            <input x-show="['regex','scripts','quick_replies'].includes(currentMode)" type="text"
-                x-model.debounce.300ms="extensionSearch"
-                :placeholder="currentMode === 'regex' ? '搜索正则...' : (currentMode === 'scripts' ? '搜索 ST 脚本...' : '搜索快速回复...')"
-                class="mobile-search-input">
+        <div class="mobile-search-group" :class="showMobileUploadButton ? '' : 'mobile-search-group--full'">
+            <div class="mobile-search-wrapper">
+                <input x-show="currentMode === 'cards'" type="text" x-model.debounce.300ms="searchQuery"
+                    placeholder="搜索..." class="mobile-search-input">
+                <input x-show="currentMode === 'worldinfo'" type="text" x-model.debounce.300ms="wiSearchQuery"
+                    placeholder="搜索..." class="mobile-search-input">
+                <input x-show="currentMode === 'chats'" type="text" x-model.debounce.300ms="chatSearchQuery"
+                    placeholder="搜索聊天..." class="mobile-search-input">
+                <input x-show="currentMode === 'presets'" type="text" x-model.debounce.300ms="presetSearch"
+                    placeholder="搜索预设..." class="mobile-search-input">
+                <input x-show="['regex','scripts','quick_replies'].includes(currentMode)" type="text"
+                    x-model.debounce.300ms="extensionSearch"
+                    :placeholder="currentMode === 'regex' ? '搜索正则...' : (currentMode === 'scripts' ? '搜索 ST 脚本...' : '搜索快速回复...')"
+                    class="mobile-search-input">
+            </div>
+            <button x-show="showMobileUploadButton" type="button" class="mobile-upload-btn" @click="triggerMobileUpload()">
+                <span>📥</span>
+            </button>
         </div>
         
         <!-- 右侧：菜单按钮 -->

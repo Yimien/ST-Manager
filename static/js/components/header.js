@@ -8,6 +8,8 @@ import { batchUpdateTags } from '../api/system.js';
 import { listRuleSets, executeRules } from '../api/automation.js';
 import { listChats } from '../api/chat.js';
 
+const MOBILE_HEADER_UPLOAD_MODES = ['cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'];
+
 export default function header() {
     return {
         availableRuleSets: [],
@@ -91,6 +93,9 @@ export default function header() {
         },
         get urlImportTitle() {
             return this.canOpenUrlImport ? 'URL 导入角色卡' : 'URL 导入仅支持角色卡模式';
+        },
+        get showMobileUploadButton() {
+            return this.deviceType === 'mobile' && MOBILE_HEADER_UPLOAD_MODES.includes(this.currentMode);
         },
 
         // 移动端菜单状态
@@ -463,6 +468,18 @@ export default function header() {
         // 关闭移动端菜单
         closeMobileMenu() {
             this.showMobileMenu = false;
+        },
+
+        openMobileSidebar() {
+            this.closeMobileMenu();
+            const nextVisible = !this.$store.global.visibleSidebar;
+            this.$store.global.visibleSidebar = nextVisible;
+            document.body.style.overflow = nextVisible ? 'hidden' : '';
+        },
+
+        triggerMobileUpload() {
+            this.closeMobileMenu();
+            window.dispatchEvent(new CustomEvent('request-mobile-upload'));
         },
 
         // 切换筛选标签

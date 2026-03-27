@@ -966,3 +966,93 @@ def test_chat_reader_css_replaces_tall_regex_status_stack_with_optional_feedback
 
     assert '.chat-reader-regex-summary-feedback' in chat_reader_css
     assert '.chat-reader-regex-summary-status' not in chat_reader_css
+
+
+def test_mobile_header_template_uses_title_block_for_sidebar_and_search_upload_cluster():
+    header_template = read_project_file('templates/components/header.html')
+
+    assert '@click="openMobileSidebar()"' in header_template
+    assert 'class="mobile-search-group"' in header_template
+    assert 'x-show="showMobileUploadButton"' in header_template
+    assert '@click="triggerMobileUpload()"' in header_template
+
+
+def test_mobile_sidebar_template_removes_floating_button_group_and_keeps_single_hidden_input():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+
+    assert 'class="sidebar-button-group"' not in sidebar_template
+    assert 'sidebar-group-btn' not in sidebar_template
+    assert sidebar_template.count('x-data="sidebar"') == 1
+    assert sidebar_template.count('x-ref="mobileImportInput"') == 1
+
+
+def test_mobile_header_script_defines_upload_trigger_contract():
+    header_source = read_project_file('static/js/components/header.js')
+    header_template = read_project_file('templates/components/header.html')
+
+    assert "const MOBILE_HEADER_UPLOAD_MODES = ['cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'];" in header_source
+    show_mobile_upload_block = extract_js_function_block(header_source, 'get showMobileUploadButton()')
+    assert "this.deviceType === 'mobile'" in show_mobile_upload_block
+    assert 'MOBILE_HEADER_UPLOAD_MODES.includes(this.currentMode)' in show_mobile_upload_block
+    assert "window.dispatchEvent(new CustomEvent('request-mobile-upload'));" in header_source
+    assert '@click="triggerChatImport(); closeMobileMenu()"' in header_template
+
+
+def test_mobile_header_script_closes_menu_before_sidebar_and_upload_actions():
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert 'openMobileSidebar()' in header_source
+    assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert 'this.$store.global.visibleSidebar = nextVisible;' in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert 'triggerMobileUpload()' in header_source
+    assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'triggerMobileUpload()')
+
+
+def test_mobile_sidebar_script_listens_for_upload_trigger_and_cleans_up():
+    sidebar_source = read_project_file('static/js/components/sidebar.js')
+
+    assert "window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
+    assert "window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
+    handle_upload_block = extract_js_function_block(sidebar_source, 'handleMobileUploadRequest()')
+    assert "this.currentMode === 'chats'" in handle_upload_block
+    assert '!this.$refs.mobileImportInput' in handle_upload_block
+    assert 'this.$refs.mobileImportInput.click();' in handle_upload_block
+
+
+def test_mobile_layout_css_defines_search_upload_group_and_no_legacy_sidebar_button_group_rules():
+    layout_css = read_project_file('static/css/modules/layout.css')
+
+    assert '.mobile-search-group {' in layout_css
+    assert '.mobile-upload-btn {' in layout_css
+    assert '.mobile-header-left {' in layout_css
+    assert '.sidebar-button-group {' not in layout_css
+    assert '.sidebar-group-btn {' not in layout_css
+
+
+def test_mobile_header_template_tracks_sidebar_open_state_for_toggle_feedback():
+    header_template = read_project_file('templates/components/header.html')
+
+    assert ":class=\"{ 'is-active': $store.global.visibleSidebar }\"" in header_template
+    assert ":aria-pressed=\"$store.global.visibleSidebar ? 'true' : 'false'\"" in header_template
+
+
+def test_mobile_header_script_toggles_sidebar_visibility_and_scroll_lock():
+    header_source = read_project_file('static/js/components/header.js')
+    sidebar_toggle_block = extract_js_function_block(header_source, 'openMobileSidebar()')
+
+    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in sidebar_toggle_block
+    assert 'this.$store.global.visibleSidebar = nextVisible;' in sidebar_toggle_block
+    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in sidebar_toggle_block
+
+
+def test_mobile_layout_css_defines_mobile_header_toggle_feedback_states():
+    layout_css = read_project_file('static/css/modules/layout.css')
+    active_block = extract_exact_css_block(layout_css, '.mobile-header-left:active')
+    open_block = extract_exact_css_block(layout_css, '.mobile-header-left.is-active')
+
+    assert 'background-color: var(--bg-hover);' in active_block
+    assert 'transform: scale(0.98);' in active_block
+    assert 'background-color: var(--accent-faint);' in open_block
+    assert 'border-color: var(--accent-light);' in open_block
