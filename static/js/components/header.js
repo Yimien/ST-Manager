@@ -97,6 +97,10 @@ export default function header() {
         showMobileMenu: false,
 
         init() {
+            window.addEventListener('close-header-mobile-menu', () => {
+                this.closeMobileMenu();
+            });
+
             // 监听加载菜单请求
             window.addEventListener('load-rulesets-for-menu', () => {
                 listRuleSets().then(res => {

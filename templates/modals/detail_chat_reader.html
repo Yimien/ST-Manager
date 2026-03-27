@@ -22,7 +22,7 @@
             </div>
 
                 <div class="chat-reader-header-actions">
-                    <div class="chat-reader-header-primary">
+                <div class="chat-reader-header-primary">
                         <div class="chat-reader-header-tools">
                             <button class="chat-reader-toggle" :class="readerResponsiveMode === 'mobile' ? (readerMobilePanel === 'tools' ? 'is-active' : '') : (readerShowLeftPanel ? 'is-active' : '')" @click="toggleReaderPanel('left')">工具</button>
                             <button class="chat-reader-toggle" x-show="readerResponsiveMode !== 'mobile'" :class="readerDesktopRightPanelOpen && readerRightTab === 'search' ? 'is-active' : ''" @click="openReaderDesktopPanel('search')">搜索</button>
@@ -34,9 +34,7 @@
                                 整页实例
                             </button>
                             <button class="chat-reader-toggle" x-show="readerResponsiveMode === 'mobile'" @click="hideReaderPanels()">阅读</button>
-                            <button class="chat-toolbar-btn chat-toolbar-btn--primary chat-reader-mobile-save" x-show="readerResponsiveMode === 'mobile'" @click="saveChatMeta()">保存</button>
                     </div>
-                    <button class="chat-toolbar-btn chat-toolbar-btn--primary" x-show="readerResponsiveMode !== 'mobile'" @click="saveChatMeta()">保存备注</button>
                 </div>
                 <div class="chat-reader-header-secondary">
                     <button type="button" class="chat-reader-icon-button" @click="closeChatDetail()" aria-label="关闭聊天阅读器" title="关闭聊天阅读器">
@@ -103,31 +101,46 @@
                             <span>本地备注</span>
                             <textarea x-model="detailDraftNotes" class="form-textarea" style="min-height: 8rem;"></textarea>
                         </label>
+                        <div class="chat-reader-field-actions">
+                            <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveChatMeta()">保存备注</button>
+                        </div>
                     </div>
                 </div>
 
                 <div class="chat-reader-panel-group" x-show="activeChat">
                     <div class="chat-reader-panel chat-reader-panel--quiet">
                         <div class="chat-reader-panel-title">阅读锚点</div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" :class="readerAnchorMode === 'locked_floor' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('locked_floor')">锁定当前</button>
-                            <button class="chat-toolbar-btn" :class="readerAnchorMode === 'tail_compatible' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('tail_compatible')">末楼兼容</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">锚点模式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="readerAnchorMode === 'locked_floor' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('locked_floor')">锁定当前</button>
+                                <button class="chat-toolbar-btn" :class="readerAnchorMode === 'tail_compatible' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('tail_compatible')">末楼兼容</button>
+                            </div>
                         </div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" @click="reanchorToCurrentFloor()">以当前楼层重锚</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">锚点操作</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="reanchorToCurrentFloor()">以当前楼层重锚</button>
+                            </div>
                         </div>
                         <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="readerAnchorStatusText"></div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-panel--quiet">
                         <div class="chat-reader-panel-title">楼层跳转</div>
-                        <div class="chat-inline-actions">
-                            <input type="text" x-model="jumpFloorInput" class="chat-inline-input chat-inline-input--compact" placeholder="#856" @keydown.enter.prevent="jumpToInputFloor()">
-                            <button class="chat-toolbar-btn" @click="jumpToInputFloor()">跳转</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">快捷跳转</div>
+                            <div class="chat-inline-actions">
+                                <input type="text" x-model="jumpFloorInput" class="chat-inline-input chat-inline-input--compact" placeholder="#856" @keydown.enter.prevent="jumpToInputFloor()">
+                                <button class="chat-toolbar-btn" @click="jumpToInputFloor()">跳转</button>
+                            </div>
                         </div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" @click="jumpToEdge('first')">首层</button>
-                            <button class="chat-toolbar-btn" @click="jumpToEdge('last')">末层</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">边界定位</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="jumpToEdge('first')">首层</button>
+                                <button class="chat-toolbar-btn" @click="jumpToEdge('last')">末层</button>
+                            </div>
                         </div>
                     </div>
 
@@ -173,18 +186,31 @@
 
                     <div class="chat-reader-panel chat-reader-panel--quiet">
                         <div class="chat-reader-panel-title">解析与渲染</div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" :class="readerRenderMode === 'plain' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'plain'">纯文本</button>
-                            <button class="chat-toolbar-btn" :class="readerRenderMode === 'markdown' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'markdown'">渲染</button>
-                            <label class="chat-inline-checkbox">
-                                <input type="checkbox" x-model="readerComponentMode">
-                                <span>后挂载实例</span>
-                            </label>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'scroll' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('scroll')">滚动</button>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_non_user' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_non_user')">单页·非用户</button>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_pair' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_pair')">单页·对话</button>
-                            <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
-                            <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">显示模式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="readerRenderMode === 'plain' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'plain'">纯文本</button>
+                                <button class="chat-toolbar-btn" :class="readerRenderMode === 'markdown' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'markdown'">渲染</button>
+                                <label class="chat-inline-checkbox">
+                                    <input type="checkbox" x-model="readerComponentMode">
+                                    <span>后挂载实例</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">浏览方式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'scroll' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('scroll')">滚动</button>
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_non_user' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_non_user')">单页·非用户</button>
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_pair' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_pair')">单页·对话</button>
+                            </div>
+                        </div>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">规则与策略</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
+                                <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
+                            </div>
                         </div>
                         <div class="chat-reader-replace-status" x-text="readerVisibleSummary"></div>
                         <div class="chat-reader-replace-status" x-show="readerAppMode" x-text="activeAppMessage ? ('当前实例楼层 #' + activeAppMessage.floor) : '未检测到实例楼层'"></div>
@@ -349,29 +375,44 @@
                             <span>本地备注</span>
                             <textarea x-model="detailDraftNotes" class="form-textarea" style="min-height: 8rem;"></textarea>
                         </label>
+                        <div class="chat-reader-field-actions">
+                            <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveChatMeta()">保存备注</button>
+                        </div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-panel--quiet" x-show="activeChat">
                         <div class="chat-reader-panel-title">阅读锚点</div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" :class="readerAnchorMode === 'locked_floor' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('locked_floor')">锁定当前</button>
-                            <button class="chat-toolbar-btn" :class="readerAnchorMode === 'tail_compatible' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('tail_compatible')">末楼兼容</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">锚点模式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="readerAnchorMode === 'locked_floor' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('locked_floor')">锁定当前</button>
+                                <button class="chat-toolbar-btn" :class="readerAnchorMode === 'tail_compatible' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderAnchorMode('tail_compatible')">末楼兼容</button>
+                            </div>
                         </div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" @click="reanchorToCurrentFloor()">以当前楼层重锚</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">锚点操作</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="reanchorToCurrentFloor()">以当前楼层重锚</button>
+                            </div>
                         </div>
                         <div class="chat-reader-replace-status" x-text="readerAnchorStatusText"></div>
                     </div>
 
                     <div class="chat-reader-panel chat-reader-panel--quiet" x-show="activeChat">
                         <div class="chat-reader-panel-title">楼层跳转</div>
-                        <div class="chat-inline-actions">
-                            <input type="text" x-model="jumpFloorInput" class="chat-inline-input chat-inline-input--compact" placeholder="#856" @keydown.enter.prevent="jumpToInputFloor()">
-                            <button class="chat-toolbar-btn" @click="jumpToInputFloor()">跳转</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">快捷跳转</div>
+                            <div class="chat-inline-actions">
+                                <input type="text" x-model="jumpFloorInput" class="chat-inline-input chat-inline-input--compact" placeholder="#856" @keydown.enter.prevent="jumpToInputFloor()">
+                                <button class="chat-toolbar-btn" @click="jumpToInputFloor()">跳转</button>
+                            </div>
                         </div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" @click="jumpToEdge('first')">首层</button>
-                            <button class="chat-toolbar-btn" @click="jumpToEdge('last')">末层</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">边界定位</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="jumpToEdge('first')">首层</button>
+                                <button class="chat-toolbar-btn" @click="jumpToEdge('last')">末层</button>
+                            </div>
                         </div>
                     </div>
 
@@ -415,18 +456,31 @@
 
                     <div class="chat-reader-panel chat-reader-panel--quiet" x-show="activeChat">
                         <div class="chat-reader-panel-title">解析与渲染</div>
-                        <div class="chat-inline-actions">
-                            <button class="chat-toolbar-btn" :class="readerRenderMode === 'plain' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'plain'">纯文本</button>
-                            <button class="chat-toolbar-btn" :class="readerRenderMode === 'markdown' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'markdown'">渲染</button>
-                            <label class="chat-inline-checkbox">
-                                <input type="checkbox" x-model="readerComponentMode">
-                                <span>后挂载实例</span>
-                            </label>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'scroll' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('scroll')">滚动</button>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_non_user' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_non_user')">单页·非用户</button>
-                            <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_pair' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_pair')">单页·对话</button>
-                            <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
-                            <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">显示模式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="readerRenderMode === 'plain' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'plain'">纯文本</button>
+                                <button class="chat-toolbar-btn" :class="readerRenderMode === 'markdown' ? 'chat-toolbar-btn--primary' : ''" @click="readerRenderMode = 'markdown'">渲染</button>
+                                <label class="chat-inline-checkbox">
+                                    <input type="checkbox" x-model="readerComponentMode">
+                                    <span>后挂载实例</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">浏览方式</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'scroll' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('scroll')">滚动</button>
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_non_user' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_non_user')">单页·非用户</button>
+                                <button class="chat-toolbar-btn" :class="effectiveReaderBrowseMode === 'page_pair' ? 'chat-toolbar-btn--primary' : ''" @click="setReaderBrowseMode('page_pair')">单页·对话</button>
+                            </div>
+                        </div>
+                        <div class="chat-reader-option-group">
+                            <div class="chat-reader-option-group-label">规则与策略</div>
+                            <div class="chat-inline-actions">
+                                <button class="chat-toolbar-btn" @click="openRegexConfig()">解析规则</button>
+                                <button class="chat-toolbar-btn" @click="readerViewSettingsOpen = true">显示策略</button>
+                            </div>
                         </div>
                         <div class="chat-reader-replace-status" role="status" aria-live="polite" x-text="readerVisibleSummary"></div>
                         <div class="chat-reader-replace-status" x-show="readerAppMode" role="status" aria-live="polite" x-text="activeAppMessage ? ('当前实例楼层 #' + activeAppMessage.floor) : '未检测到实例楼层'"></div>
@@ -494,6 +548,8 @@
             <div class="chat-bind-actions chat-reader-nested-actions">
                 <button class="chat-toolbar-btn" @click="resetReaderViewSettings()">恢复默认</button>
                 <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveReaderViewSettings()">保存</button>
+            </div>
+            <div class="chat-reader-modal-close-slot">
                 <button type="button" class="chat-reader-icon-button" @click="readerViewSettingsOpen = false" aria-label="关闭显示策略" title="关闭显示策略">
                     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                         <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -502,7 +558,7 @@
             </div>
         </div>
 
-        <div class="chat-reader-editor-section chat-reader-nested-section chat-reader-nested-section--form">
+        <div class="chat-reader-editor-section chat-reader-nested-section chat-reader-nested-section--form custom-scrollbar">
             <label class="chat-reader-field">
                 <span>尾部保活楼层数</span>
                 <input type="number" min="0" max="20" x-model.number="readerViewSettings.fullDisplayCount" class="form-input">
@@ -539,7 +595,7 @@
 
 <div x-show="regexConfigOpen" x-cloak class="chat-reader-overlay" style="z-index: calc(var(--z-topmost) - 2);" @click.self="closeRegexConfig()" @keydown.escape.window.prevent="closeRegexConfig()">
     <div class="chat-bind-modal chat-reader-editor-modal chat-reader-nested-modal chat-reader-transition-surface" role="dialog" aria-modal="true" aria-label="聊天解析规则">
-        <div class="chat-bind-header chat-reader-regex-header chat-reader-nested-header">
+        <div class="chat-bind-header chat-reader-regex-header chat-reader-nested-header" :class="{ 'is-mobile-hidden': readerResponsiveMode === 'mobile' && regexConfigMobileHeaderHidden }">
             <div class="chat-reader-nested-heading">
                 <div class="chat-grid-kicker">Regex Config</div>
                 <div class="chat-reader-title" style="font-size: 1.05rem;">聊天解析规则</div>
@@ -560,16 +616,21 @@
                     <button class="chat-toolbar-btn" @click="exportEffectiveRegexConfig()">导出生效规则</button>
                     <button class="chat-toolbar-btn" @click="exportRegexConfigDraft()">导出草稿</button>
                     <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveRegexConfig()">保存到当前聊天</button>
-                    <button type="button" class="chat-reader-icon-button" @click="closeRegexConfig()" aria-label="关闭解析规则" title="关闭解析规则">
-                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                            <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
-                        </svg>
-                    </button>
+                </div>
+            </div>
+            <div class="chat-reader-modal-close-slot">
+                <div class="chat-reader-regex-header-actions">
+                    <button x-show="readerResponsiveMode === 'mobile'" class="chat-toolbar-btn chat-toolbar-btn--primary chat-reader-regex-save-pill" @click="saveRegexConfig()">保存</button>
+                <button type="button" class="chat-reader-icon-button" @click="closeRegexConfig()" aria-label="关闭解析规则" title="关闭解析规则">
+                    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                    </svg>
+                </button>
                 </div>
             </div>
         </div>
 
-        <div class="chat-reader-regex-summary-strip chat-reader-nested-section chat-reader-nested-section--summary">
+        <div class="chat-reader-regex-summary-strip chat-reader-nested-section chat-reader-nested-section--summary custom-scrollbar" x-show="readerResponsiveMode !== 'mobile'">
             <div class="chat-reader-regex-summary-head">
                 <div class="chat-reader-panel-title">当前状态</div>
                 <button type="button" class="chat-toolbar-btn chat-reader-regex-help-button" @click="openRegexHelp()" aria-label="聊天解析规则帮助" title="聊天解析规则帮助">帮助</button>
@@ -583,6 +644,157 @@
                 </template>
             </div>
             <div class="chat-reader-regex-summary-feedback" x-show="regexConfigStatus" x-text="regexConfigStatus"></div>
+        </div>
+
+        <div class="chat-reader-regex-mobile-layout custom-scrollbar" x-show="readerResponsiveMode === 'mobile'" @scroll.passive="handleRegexConfigScroll($event)">
+            <div class="chat-reader-regex-summary-strip chat-reader-regex-summary-strip--mobile chat-reader-nested-section chat-reader-nested-section--summary">
+                <div class="chat-reader-regex-summary-head">
+                    <div class="chat-reader-panel-title">当前状态</div>
+                    <button type="button" class="chat-toolbar-btn chat-reader-regex-help-button" @click="openRegexHelp()" aria-label="聊天解析规则帮助" title="聊天解析规则帮助">帮助</button>
+                </div>
+                <div class="chat-reader-regex-summary-grid">
+                    <template x-for="source in regexStateCards" :key="'mobile-' + source.id">
+                        <div class="chat-reader-regex-summary-chip" :class="'is-' + source.tone">
+                            <span class="chat-reader-regex-summary-label" x-text="source.title"></span>
+                            <strong x-text="source.state"></strong>
+                        </div>
+                    </template>
+                </div>
+                <div class="chat-reader-regex-summary-feedback" x-show="regexConfigStatus" x-text="regexConfigStatus"></div>
+            </div>
+
+            <div class="chat-reader-regex-mobile-tabs">
+                <button class="chat-reader-toggle" :class="regexConfigMobileTab === 'effective' ? 'is-active' : ''" @click="regexConfigMobileTab = 'effective'">当前生效</button>
+                <button class="chat-reader-toggle" :class="regexConfigMobileTab === 'draft' ? 'is-active' : ''" @click="regexConfigMobileTab = 'draft'">聊天草稿</button>
+            </div>
+
+            <div class="chat-reader-regex-mobile-section chat-reader-regex-mobile-section--effective" x-show="regexConfigMobileTab === 'effective'">
+                <div class="chat-reader-panel-title">当前实际生效规则</div>
+                <div class="chat-reader-replace-status">先在这里确认当前最终生效的规则，再决定是否需要去改聊天草稿。</div>
+                <div class="chat-reader-regex-browser" :class="{ 'is-empty': activeRegexDisplayRules.length === 0 }">
+                    <div class="chat-reader-regex-browser-list custom-scrollbar" x-show="activeRegexDisplayRules.length > 0">
+                        <template x-for="(rule, index) in activeRegexDisplayRules" :key="'mobile-active-inspector-' + index + '-' + (rule.id || rule.scriptName + rule.findRegex)">
+                            <button type="button" class="chat-reader-regex-browser-item" :class="{ 'is-active': selectedActiveRegexRuleIndexSafe === index, 'is-disabled': rule.disabled }" :aria-pressed="selectedActiveRegexRuleIndexSafe === index ? 'true' : 'false'" @click="selectActiveRegexRule(index)">
+                                <div class="chat-reader-regex-browser-head">
+                                    <div class="chat-reader-regex-browser-head-main">
+                                        <div class="chat-reader-rule-title-row">
+                                            <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
+                                            <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
+                                            <span x-show="rule.disabled" class="chat-reader-regex-state-pill is-muted">已禁用</span>
+                                        </div>
+                                        <div class="chat-reader-regex-browser-pattern" x-text="getRegexRuleInspector(rule, index).listPattern || '未填写匹配正则'"></div>
+                                    </div>
+                                    <span class="chat-reader-regex-browser-index" x-text="'#' + (index + 1)"></span>
+                                </div>
+                                <div class="chat-reader-regex-browser-meta">
+                                    <span x-text="getRegexRuleInspector(rule, index).listMeta || ''"></span>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
+
+                    <template x-if="selectedActiveRegexRuleDetail">
+                        <div class="chat-reader-regex-browser-detail custom-scrollbar">
+                            <div class="chat-reader-regex-inspector">
+                                <div class="chat-reader-regex-inspector-header">
+                                    <div class="chat-reader-regex-inspector-heading">
+                                        <div class="chat-reader-rule-title-row">
+                                            <strong x-text="selectedActiveRegexRuleDetail.scriptName"></strong>
+                                            <span class="chat-reader-rule-source-pill" :class="'is-' + selectedActiveRegexRuleDetail.sourceTone" x-text="selectedActiveRegexRuleDetail.sourceLabel"></span>
+                                            <span class="chat-reader-regex-state-pill" :class="'is-' + selectedActiveRegexRuleDetail.stateTone" x-text="selectedActiveRegexRuleDetail.stateLabel"></span>
+                                        </div>
+                                        <div class="chat-reader-replace-status" x-text="selectedActiveRegexRuleDetail.listMeta"></div>
+                                    </div>
+                                    <span class="chat-reader-regex-order-pill" x-text="selectedActiveRegexRuleDetail.orderLabel"></span>
+                                </div>
+                                <div class="chat-reader-regex-inspector-section">
+                                    <div class="chat-reader-regex-inspector-label">标准正则</div>
+                                    <textarea readonly spellcheck="false" class="form-textarea chat-reader-regex-inspector-code chat-reader-regex-inspector-code--pattern custom-scrollbar" :value="selectedActiveRegexRuleDetail.standardPattern"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div x-show="activeRegexDisplayRules.length === 0" class="chat-reader-regex-browser-empty chat-reader-nested-empty">
+                        当前聊天没有实际生效的显示替换规则。
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-reader-regex-mobile-section chat-reader-regex-mobile-section--draft" x-show="regexConfigMobileTab === 'draft'">
+                <div class="chat-reader-panel-title">聊天自定义草稿</div>
+                <div class="chat-reader-replace-status">移动端按“先选规则、再编辑草稿”的顺序操作，减少列表和编辑器同时抢空间。</div>
+                <div class="chat-reader-regex-browser" :class="{ 'is-empty': regexDraftDisplayRules.length === 0 }">
+                    <div class="chat-reader-regex-browser-list custom-scrollbar" x-show="regexDraftDisplayRules.length > 0">
+                        <template x-for="(rule, index) in regexDraftDisplayRules" :key="'mobile-draft-inspector-' + index + '-' + (rule.id || rule.scriptName + rule.findRegex)">
+                            <button type="button" class="chat-reader-regex-browser-item" :class="{ 'is-active': selectedDraftRegexRuleIndexSafe === index, 'is-disabled': rule.disabled }" :aria-pressed="selectedDraftRegexRuleIndexSafe === index ? 'true' : 'false'" @click="selectDraftRegexRule(index)">
+                                <div class="chat-reader-regex-browser-head">
+                                    <div class="chat-reader-regex-browser-head-main">
+                                        <div class="chat-reader-rule-title-row">
+                                            <strong x-text="rule.scriptName || ('规则 ' + (index + 1))"></strong>
+                                            <span class="chat-reader-rule-source-pill" :class="'is-' + rule.sourceTone" x-text="rule.sourceLabel"></span>
+                                            <span x-show="rule.disabled" class="chat-reader-regex-state-pill is-muted">已禁用</span>
+                                        </div>
+                                        <div class="chat-reader-regex-browser-pattern" x-text="getRegexRuleInspector(rule, index).listPattern || '未填写匹配正则'"></div>
+                                    </div>
+                                    <span class="chat-reader-regex-browser-index" x-text="'#' + (index + 1)"></span>
+                                </div>
+                                <div class="chat-reader-regex-browser-meta">
+                                    <span x-text="getRegexRuleInspector(rule, index).listMeta || ''"></span>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
+
+                    <template x-if="selectedDraftRegexRuleDetail">
+                        <div class="chat-reader-regex-browser-detail custom-scrollbar">
+                            <div class="chat-reader-regex-inspector">
+                                <label class="chat-reader-field">
+                                    <span>规则名</span>
+                                    <input type="text" class="form-input" :value="selectedDraftRegexRule.scriptName" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'scriptName', $event.target.value)">
+                                </label>
+                                <label class="chat-reader-field">
+                                    <span>匹配正则</span>
+                                    <textarea class="form-textarea chat-reader-config-textarea chat-reader-config-textarea--pattern" :value="selectedDraftRegexRule.findRegex" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'findRegex', $event.target.value)"></textarea>
+                                </label>
+                                <label class="chat-reader-field">
+                                    <span>替换为</span>
+                                    <textarea class="form-textarea chat-reader-config-textarea" :value="selectedDraftRegexRule.replaceString" @input="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'replaceString', $event.target.value)"></textarea>
+                                </label>
+                                <div class="chat-inline-actions">
+                                    <label class="chat-inline-checkbox">
+                                        <input type="checkbox" :checked="selectedDraftRegexRule.disabled" @change="updateRegexDisplayRule(selectedDraftRegexRuleIndexSafe, 'disabled', $event.target.checked)">
+                                        <span>禁用</span>
+                                    </label>
+                                    <button class="chat-toolbar-btn chat-toolbar-btn--danger" @click="removeRegexDisplayRule(selectedDraftRegexRuleIndexSafe)">删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div x-show="regexDraftRuleCount === 0" class="chat-reader-regex-browser-empty chat-reader-nested-empty" x-text="regexDraftDeletionCount > 0 ? `当前草稿没有可见规则，但包含 ${regexDraftDeletionCount} 个删除覆盖。` : '当前没有聊天自定义规则，保存时会直接继承角色卡规则。'"></div>
+                </div>
+            </div>
+
+            <div class="chat-reader-regex-mobile-section chat-reader-regex-mobile-section--test">
+                <div class="chat-reader-panel-title">显示结果测试</div>
+                <div class="chat-reader-replace-status">先完成规则确认与草稿编辑，再在这里集中查看输入与渲染结果。</div>
+                <div class="chat-inline-actions">
+                    <button class="chat-toolbar-btn" @click="loadRegexTestInputFromCurrentFloor()">加载当前定位楼层</button>
+                    <button class="chat-toolbar-btn" @click="clearRegexTestInput()" :disabled="!regexTestInput">清空测试区</button>
+                </div>
+                <div class="chat-reader-regex-test-grid">
+                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+                        <div class="chat-message-sideblock-title">测试输入</div>
+                        <textarea x-model="regexTestInput" class="form-textarea chat-reader-floor-editor chat-reader-floor-editor--raw chat-reader-regex-test-input" placeholder="手动粘贴原始消息文本，或点击上方按钮载入当前定位楼层"></textarea>
+                    </div>
+                    <div class="chat-reader-sideblock-card chat-reader-sideblock-card--stretch">
+                        <div class="chat-message-sideblock-title">渲染预览</div>
+                        <div class="chat-message-content markdown-body st-reader-floor-0 chat-reader-regex-preview custom-scrollbar" x-html="renderMessageDisplayHtml(regexTestPreview)" x-effect="mountMessageDisplay($el, regexTestPreview)"></div>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <div class="chat-reader-editor-grid chat-reader-editor-grid--balanced custom-scrollbar">
@@ -907,7 +1119,7 @@
                 <div class="chat-reader-title" style="font-size: 1.05rem;">聊天解析规则帮助</div>
                 <div class="chat-reader-subtitle">解释当前生效、继承、已保存、草稿，以及预览与保存的关系。</div>
             </div>
-            <div class="chat-bind-actions chat-reader-nested-actions">
+            <div class="chat-reader-modal-close-slot">
                 <button type="button" class="chat-reader-icon-button" @click="closeRegexHelp()" aria-label="关闭解析规则帮助" title="关闭解析规则帮助">
                     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                         <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -951,6 +1163,8 @@
             <div class="chat-bind-actions chat-reader-nested-actions">
                 <button class="chat-toolbar-btn" @click="applyEditedContentToRaw()">用显示内容覆盖正文</button>
                 <button class="chat-toolbar-btn chat-toolbar-btn--primary" @click="saveFloorEdit()">保存楼层</button>
+            </div>
+            <div class="chat-reader-modal-close-slot">
                 <button type="button" class="chat-reader-icon-button" @click="closeFloorEditor()" aria-label="关闭楼层编辑器" title="关闭楼层编辑器">
                     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                         <path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -961,13 +1175,19 @@
 
         <div class="chat-reader-editor-grid chat-reader-editor-grid--editor custom-scrollbar">
             <div class="chat-reader-editor-section chat-reader-editor-section--narrow chat-reader-nested-section">
-                <div class="chat-reader-panel-title">显示内容</div>
+                <div class="chat-reader-section-head">
+                    <div class="chat-reader-panel-title">显示内容</div>
+                </div>
+
                 <textarea x-model="editingMessageDraft" class="form-textarea chat-reader-floor-editor"></textarea>
-                <div class="chat-reader-replace-status">左侧编辑显示内容，右侧同时查看原始消息与解析后的实时预览；“用显示内容覆盖正文”会尝试写回 `<content>` 区段。</div>
+                <div class="chat-reader-replace-status chat-reader-editor-note">左侧编辑显示内容，右侧同时查看原始消息与解析后的实时预览；“用显示内容覆盖正文”会尝试写回 `<content>` 区段。</div>
             </div>
 
             <div class="chat-reader-editor-section chat-reader-editor-section--wide chat-reader-nested-section">
-                <div class="chat-reader-panel-title">原始消息</div>
+                <div class="chat-reader-section-head">
+                    <div class="chat-reader-panel-title">原始消息</div>
+                    <div class="chat-reader-replace-status chat-reader-editor-note">切换原文渲染与解析预览，检查保存前后的展示差异。</div>
+                </div>
                 <div class="chat-inline-actions">
                     <button class="chat-toolbar-btn" :class="editingMessagePreviewMode === 'source' ? 'chat-toolbar-btn--primary' : ''" @click="editingMessagePreviewMode = 'source'">原文渲染</button>
                     <button class="chat-toolbar-btn" @click="editingMessageDraft = extractDisplayContent(editingMessageRawDraft)">重新解析显示内容</button>
@@ -979,7 +1199,6 @@
                 <div class="chat-reader-floor-diff">
                     <div class="chat-reader-panel-title">改动对比</div>
                     <div class="chat-diff-table" x-html="editingMessageDiffHtml"></div>
-                </div>
             </div>
         </div>
     </div>

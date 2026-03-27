@@ -2543,6 +2543,8 @@ export default function chatGrid() {
         readerPageGroupIndex: 0,
         regexConfigOpen: false,
         regexHelpOpen: false,
+        regexConfigMobileHeaderHidden: false,
+        regexConfigMobileTab: 'effective',
         regexConfigTab: 'extract',
         selectedActiveRegexRuleIndex: 0,
         selectedDraftRegexRuleIndex: 0,
@@ -3652,6 +3654,16 @@ export default function chatGrid() {
             });
         },
 
+        setMobileReaderDocumentScrollState(enabled = false) {
+            if (this.$store.global.deviceType !== 'mobile') {
+                return;
+            }
+
+            document.documentElement.style.overflow = enabled ? 'auto' : '';
+            document.body.style.overflow = enabled ? 'auto' : '';
+            document.body.style.height = enabled ? 'auto' : '';
+        },
+
         applyReaderPagePayload(range) {
             if (!this.activeChat || !range || typeof range !== 'object') {
                 return false;
@@ -4683,6 +4695,13 @@ export default function chatGrid() {
         async openChatDetail(item) {
             if (!item || !item.id) return;
 
+            if (this.$store.global.deviceType === 'mobile') {
+                this.$store.global.visibleSidebar = false;
+                document.body.style.overflow = '';
+                window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));
+                this.setMobileReaderDocumentScrollState(true);
+            }
+
             this.readerPageRequestToken += 1;
             const requestToken = this.readerPageRequestToken;
             this.clearReaderViewportSync();
@@ -4851,6 +4870,7 @@ export default function chatGrid() {
             this.logReaderScrollDebug('close_chat_detail_start', {
                 activeChatId: String(this.activeChat?.id || ''),
             });
+            this.setMobileReaderDocumentScrollState(false);
             this.readerPageRequestToken += 1;
             this.clearReaderViewportSync();
             this.destroyAllReaderPartStages();
@@ -4927,7 +4947,22 @@ export default function chatGrid() {
 
                 const header = root.querySelector('.chat-reader-header');
                 const headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 76;
-                root.style.setProperty('--chat-reader-header-height', `${headerHeight}px`);
+                const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden
+                    ? 0
+                    : headerHeight;
+                root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);
+            });
+        },
+
+        updateRegexConfigLayoutMetrics() {
+            this.$nextTick(() => {
+                const modal = document.querySelector('.chat-reader-editor-modal');
+                if (!modal || !this.regexConfigOpen || this.readerResponsiveMode !== 'mobile') return;
+
+                const header = modal.querySelector('.chat-reader-regex-header');
+                const headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
+                const effectiveHeaderHeight = this.regexConfigMobileHeaderHidden ? 0 : headerHeight;
+                modal.style.setProperty('--chat-reader-regex-header-height', `${effectiveHeaderHeight}px`);
             });
         },
 
@@ -5480,6 +5515,7 @@ export default function chatGrid() {
 
             const center = document.querySelector('.chat-reader-center');
             if (this.readerResponsiveMode === 'mobile' && center && !this.readerMobilePanel) {
+                const previousHidden = this.readerMobileHeaderHidden;
                 const nextTop = Math.max(0, Number(center.scrollTop || 0));
                 const delta = nextTop - Number(this.readerLastScrollTop || 0);
                 if (nextTop <= 24 || delta < -14) {
@@ -5488,9 +5524,40 @@ export default function chatGrid() {
                     this.readerMobileHeaderHidden = true;
                 }
                 this.readerLastScrollTop = nextTop;
+                if (previousHidden !== this.readerMobileHeaderHidden) {
+                    this.updateReaderLayoutMetrics();
+                }
             }
 
             this.scheduleReaderViewportSync();
+        },
+
+        handleRegexConfigScroll(event) {
+            if (!this.regexConfigOpen || this.readerResponsiveMode !== 'mobile') {
+                return;
+            }
+
+            const container = event?.target;
+            if (!(container instanceof Element)) {
+                return;
+            }
+
+            const nextTop = Math.max(0, Number(container.scrollTop || 0));
+            const previousTop = Number(container.dataset.prevScrollTop || 0);
+            const delta = nextTop - previousTop;
+            const previousHidden = this.regexConfigMobileHeaderHidden;
+
+            if (nextTop <= 24 || delta < -12) {
+                this.regexConfigMobileHeaderHidden = false;
+            } else if (delta > 16 && nextTop > 64) {
+                this.regexConfigMobileHeaderHidden = true;
+            }
+
+            container.dataset.prevScrollTop = String(nextTop);
+
+            if (previousHidden !== this.regexConfigMobileHeaderHidden) {
+                this.updateRegexConfigLayoutMetrics();
+            }
         },
 
         saveReaderViewSettings() {
@@ -5517,7 +5584,7 @@ export default function chatGrid() {
 
             if (isMobile) {
                 const panel = side === 'left' ? 'tools' : 'search';
-                const isSamePanelOpen = this.readerMobilePanel === panel && this.readerShowRightPanel;
+                const isSamePanelOpen = this.readerMobilePanel === panel;
                 if (isSamePanelOpen) {
                     this.hideReaderPanels();
                     return;
@@ -5641,8 +5708,13 @@ export default function chatGrid() {
 
         setReaderMobilePanel(panel) {
             if (this.readerResponsiveMode !== 'mobile') return;
+            const normalized = String(panel || '').trim();
+            if (this.readerMobilePanel === normalized) {
+                this.hideReaderPanels();
+                return;
+            }
             this.readerMobileHeaderHidden = false;
-            this.syncMobileReaderPanelState(panel);
+            this.syncMobileReaderPanelState(normalized);
         },
 
         hideReaderPanels() {
@@ -6477,20 +6549,33 @@ export default function chatGrid() {
         },
 
         openRegexConfig() {
+            if (this.$store.global.deviceType === 'mobile') {
+                this.$store.global.visibleSidebar = false;
+                document.body.style.overflow = '';
+                window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));
+            }
             this.readerResolvedRegexConfig = normalizeRegexConfig(this.activeRegexConfig);
             this.regexConfigDraft = this.getChatOwnedRegexConfig(this.activeChat);
             this.regexTestInput = '';
             this.selectedActiveRegexRuleIndex = 0;
             this.selectedDraftRegexRuleIndex = 0;
+            this.regexConfigMobileHeaderHidden = false;
+            this.regexConfigMobileTab = 'effective';
             this.regexHelpOpen = false;
             this.regexConfigOpen = true;
             this.regexConfigTab = 'extract';
             this.regexConfigSourceLabel = this.describeRegexConfigSource();
             this.regexConfigStatus = '';
+            this.updateRegexConfigLayoutMetrics();
         },
 
         openRegexHelp() {
             if (!this.regexConfigOpen) return;
+            if (this.$store.global.deviceType === 'mobile') {
+                this.$store.global.visibleSidebar = false;
+                document.body.style.overflow = '';
+                window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));
+            }
             this.regexHelpOpen = true;
         },
 
@@ -6501,6 +6586,8 @@ export default function chatGrid() {
         closeRegexConfig() {
             this.regexConfigOpen = false;
             this.regexHelpOpen = false;
+            this.regexConfigMobileHeaderHidden = false;
+            this.regexConfigMobileTab = 'effective';
             this.selectedActiveRegexRuleIndex = 0;
             this.selectedDraftRegexRuleIndex = 0;
             this.regexConfigStatus = '';
@@ -6945,6 +7032,12 @@ export default function chatGrid() {
             const floor = Number(message.floor || 0);
             if (!floor) return;
 
+            if (this.$store.global.deviceType === 'mobile') {
+                this.$store.global.visibleSidebar = false;
+                document.body.style.overflow = '';
+                window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));
+            }
+
             this.editingFloor = floor;
             this.editingMessageDraft = String(message.content || message.mes || '');
             this.editingMessageRawDraft = String(message.mes || '');
@@ -7115,7 +7208,9 @@ export default function chatGrid() {
 
             const container = el.closest('.chat-reader-center');
             if (container) {
-                const top = Math.max(0, el.offsetTop - container.offsetTop - 12);
+                const containerRect = container.getBoundingClientRect();
+                const elementRect = el.getBoundingClientRect();
+                const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);
                 container.scrollTo({ top, behavior });
                 return;
             }
@@ -7334,6 +7429,10 @@ export default function chatGrid() {
                 Math.max(1, rawTargetFloor),
                 Math.max(1, this.readerTotalMessages || rawTargetFloor),
             );
+            const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);
+            if (shouldHideMobilePanel) {
+                this.hideReaderPanels();
+            }
             this.logReaderScrollDebug('scroll_to_floor_start', {
                 rawTargetFloor,
                 targetFloor,

@@ -46,6 +46,25 @@ def extract_media_block(css_source, media_query):
     return css_source[block_start + 1:index - 1]
 
 
+def extract_js_function_block(source, signature):
+    function_start = source.index(signature)
+    block_start = source.index('{', function_start)
+    depth = 1
+    index = block_start + 1
+
+    while depth > 0:
+        current_char = source[index]
+
+        if current_char == '{':
+            depth += 1
+        elif current_char == '}':
+            depth -= 1
+
+        index += 1
+
+    return source[block_start + 1:index - 1]
+
+
 def extract_chat_reader_shell(template_source):
     shell_start = template_source.index('<div class="chat-reader-modal chat-reader-modal--fullscreen" role="dialog" aria-modal="true" aria-label="聊天阅读器">')
     settings_overlay_start = template_source.index('<div x-show="readerViewSettingsOpen"')
@@ -316,20 +335,25 @@ def test_chat_reader_css_rebalances_header_rows_at_narrow_widths():
     assert 'word-break: keep-all' in title_block
 
     assert '.chat-reader-header-actions {' in tablet_block
-    assert '        width: 100%;' in tablet_block
-    assert '        flex-wrap: wrap;' in tablet_block
+    tablet_actions_block = extract_css_block(tablet_block, '.chat-reader-header-actions')
+    assert 'width: 100%;' in tablet_actions_block
+    assert 'flex-wrap: wrap;' in tablet_actions_block
 
     assert '.chat-reader-shell-status {' in tablet_block
-    assert '        display: flex;' in tablet_block
-    assert '        width: 100%;' in tablet_block
-    assert '        flex-basis: 100%;' in tablet_block
-    assert '        margin-top: 0;' in tablet_block
+    tablet_status_block = extract_css_block(tablet_block, '.chat-reader-shell-status')
+    assert 'display: flex;' in tablet_status_block
+    assert 'width: 100%;' in tablet_status_block
+    assert 'flex-basis: 100%;' in tablet_status_block
+    assert 'margin-top: 0;' in tablet_status_block
 
-    assert '.chat-reader-header-main,\n    .chat-reader-header-actions,\n    .chat-reader-header-primary {' in mobile_block
-    assert '        width: 100%' in mobile_block
+    assert '.chat-reader-header-main,' in mobile_block
+    assert '.chat-reader-header-actions,' in mobile_block
+    assert '.chat-reader-header-primary {' in mobile_block
+    assert 'width: 100%;' in mobile_block
     assert '.chat-reader-header-tools {' in mobile_block
-    assert '        flex-direction: row;' in mobile_block
-    assert '        justify-content: flex-start' in mobile_block
+    mobile_tools_block = extract_css_block(mobile_block, '.chat-reader-header-tools')
+    assert 'flex-direction: row;' in mobile_tools_block
+    assert 'justify-content: flex-start' in mobile_tools_block
 
 
 def test_chat_grid_mobile_reader_panel_state_keeps_one_active_panel():
@@ -438,6 +462,353 @@ def test_chat_reader_css_positions_mobile_close_button_in_header_corner():
     assert 'position: absolute;' in mobile_block
     assert 'top: 0.62rem;' in mobile_block
     assert 'right: 0.72rem;' in mobile_block
+
+
+def test_chat_grid_mobile_reader_toggles_can_close_same_panel_on_repeat_tap():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    toggle_block = extract_js_function_block(chat_grid_source, 'toggleReaderPanel(side) {')
+    set_mobile_block = extract_js_function_block(chat_grid_source, 'setReaderMobilePanel(panel) {')
+
+    assert "const isSamePanelOpen = this.readerMobilePanel === panel;" in toggle_block
+    assert "&& this.readerShowRightPanel" not in toggle_block
+    assert "if (this.readerMobilePanel === normalized) {" in set_mobile_block
+    assert 'this.hideReaderPanels();' in set_mobile_block
+
+
+def test_chat_grid_scroll_to_floor_closes_mobile_drawers_before_showing_target_floor():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    scroll_block = extract_js_function_block(chat_grid_source, "async scrollToFloor(floor, persist = true, behavior = 'smooth', anchorSource = READER_ANCHOR_SOURCES.JUMP) {")
+
+    assert "const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);" in scroll_block
+    assert 'if (shouldHideMobilePanel) {' in scroll_block
+    assert 'this.hideReaderPanels();' in scroll_block
+
+
+def test_chat_reader_css_enables_touch_scrolling_in_mobile_reading_column():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    assert '.chat-reader-center {' in chat_reader_css
+    assert 'touch-action: pan-y;' in chat_reader_css
+    assert '-webkit-overflow-scrolling: touch;' in chat_reader_css
+    assert 'overscroll-behavior-y: contain;' in chat_reader_css
+
+
+def test_chat_reader_css_uses_theme_surface_backgrounds_for_mobile_drawers():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert 'background: var(--bg-panel);' in mobile_block
+    assert 'border-top: 1px solid var(--border-main);' in mobile_block
+    assert 'backdrop-filter: blur(16px);' not in mobile_block
+    assert '-webkit-backdrop-filter: blur(16px);' not in mobile_block
+
+
+def test_chat_grid_scroll_element_to_top_uses_container_rect_delta_instead_of_offset_top_math():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    scroll_block = extract_js_function_block(chat_grid_source, "scrollElementToTop(el, behavior = 'smooth') {")
+
+    assert 'const containerRect = container.getBoundingClientRect();' in scroll_block
+    assert 'const elementRect = el.getBoundingClientRect();' in scroll_block
+    assert 'const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);' in scroll_block
+    assert 'el.offsetTop - container.offsetTop - 12' not in scroll_block
+
+
+def test_chat_reader_css_mobile_shell_keeps_main_reader_area_as_scroll_container():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert '.chat-reader-modal {' in mobile_block
+    assert 'height: 100dvh;' in mobile_block
+    assert '.chat-reader-body {' in mobile_block
+    assert 'flex: 1 1 auto;' in mobile_block
+    assert 'min-height: 0;' in mobile_block
+    assert '.chat-reader-center {' in mobile_block
+    assert 'overflow-y: auto;' in mobile_block
+    assert '-webkit-overflow-scrolling: touch;' in mobile_block
+
+
+def test_chat_reader_css_mobile_nested_modals_expose_internal_scroll_regions():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-nested-modal,' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert 'flex-direction: column;' in mobile_block
+    assert 'overflow: hidden;' in mobile_block
+    assert '.chat-reader-editor-grid,' in mobile_block
+    assert 'overflow-y: auto;' in mobile_block
+    assert '.chat-reader-regex-help-body,' in mobile_block
+    assert '.chat-reader-floor-preview {' in mobile_block
+
+
+def test_layout_css_adds_light_mode_mobile_header_and_footer_surfaces():
+    layout_css = read_project_file('static/css/modules/layout.css')
+
+    assert 'html.light-mode .header-bar,' in layout_css
+    assert 'html.light-mode .pagination-bar {' in layout_css
+
+
+def test_header_listens_for_global_mobile_menu_close_requests():
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert "window.addEventListener('close-header-mobile-menu'" in header_source
+    assert 'this.closeMobileMenu();' in header_source
+
+
+def test_chat_grid_closes_mobile_navigation_chrome_before_showing_reader():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
+
+    assert "if (this.$store.global.deviceType === 'mobile') {" in open_detail_block
+    assert 'this.$store.global.visibleSidebar = false;' in open_detail_block
+    assert "document.body.style.overflow = '';" in open_detail_block
+    assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in open_detail_block
+
+
+def test_chat_grid_closes_mobile_navigation_chrome_before_opening_reader_nested_modals():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    for signature in ('openRegexConfig() {', 'openRegexHelp() {', 'openFloorEditor(message) {'):
+        block = extract_js_function_block(chat_grid_source, signature)
+        assert "if (this.$store.global.deviceType === 'mobile') {" in block
+        assert 'this.$store.global.visibleSidebar = false;' in block
+        assert "document.body.style.overflow = '';" in block
+        assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in block
+
+
+def test_chat_grid_temporarily_releases_document_scroll_lock_while_reader_is_open():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    helper_block = extract_js_function_block(chat_grid_source, 'setMobileReaderDocumentScrollState(enabled = false) {')
+    open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
+    close_detail_block = extract_js_function_block(chat_grid_source, 'closeChatDetail() {')
+
+    assert "document.documentElement.style.overflow = enabled ? 'auto' : '';" in helper_block
+    assert "document.body.style.overflow = enabled ? 'auto' : '';" in helper_block
+    assert "document.body.style.height = enabled ? 'auto' : '';" in helper_block
+    assert 'this.setMobileReaderDocumentScrollState(true);' in open_detail_block
+    assert 'this.setMobileReaderDocumentScrollState(false);' in close_detail_block
+
+
+def test_chat_reader_css_marks_mobile_scroll_regions_as_touch_pan_targets():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+
+    assert '.chat-reader-modal,' in chat_reader_css
+    assert '.chat-reader-regex-help-body,' in chat_reader_css
+    assert '.chat-reader-editor-grid,' in chat_reader_css
+    assert '.chat-reader-floor-preview,' in chat_reader_css
+    assert '.chat-bind-results {' in chat_reader_css
+    assert 'touch-action: pan-y;' in chat_reader_css
+
+
+def test_chat_grid_collapses_mobile_header_layout_height_when_header_is_hidden():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    metrics_block = extract_js_function_block(chat_grid_source, 'updateReaderLayoutMetrics() {')
+
+    assert "const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden" in metrics_block
+    assert "? 0" in metrics_block
+    assert "root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);" in metrics_block
+
+
+def test_chat_reader_css_mobile_hidden_header_releases_layout_space():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')
+
+    assert '.chat-reader-header.is-mobile-hidden {' in mobile_block
+    assert 'min-height: 0;' in mobile_block
+    assert 'padding-top: 0;' in mobile_block
+    assert 'padding-bottom: 0;' in mobile_block
+    assert 'border-bottom-width: 0;' in mobile_block
+    assert 'margin-bottom: 0;' in mobile_block
+
+
+def test_chat_grid_updates_layout_metrics_when_mobile_header_visibility_flips():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+    scroll_block = extract_js_function_block(chat_grid_source, 'handleReaderScroll() {')
+
+    assert 'const previousHidden = this.readerMobileHeaderHidden;' in scroll_block
+    assert 'if (previousHidden !== this.readerMobileHeaderHidden) {' in scroll_block
+    assert 'this.updateReaderLayoutMetrics();' in scroll_block
+
+
+def test_chat_reader_template_moves_save_button_into_local_notes_panels():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-mobile-save' not in template_source
+    assert 'x-show="readerResponsiveMode !== \'mobile\'" @click="saveChatMeta()">保存备注</button>' not in template_source
+    assert template_source.count('@click="saveChatMeta()"') >= 2
+    assert 'chat-reader-field-actions' in template_source
+
+
+def test_chat_reader_template_keeps_modal_close_actions_separate_from_regex_toolbar_groups():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-modal-close-slot' in template_source
+    assert '<div class="chat-reader-regex-toolbar chat-reader-nested-actions">' in template_source
+    assert '<div class="chat-reader-regex-toolbar-group">' in template_source
+
+
+def test_chat_reader_css_mobile_modal_headers_pin_close_buttons_to_right():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-nested-header,' in mobile_block
+    assert 'display: grid;' in mobile_block
+    assert 'grid-template-columns: minmax(0, 1fr) auto;' in mobile_block
+    assert '.chat-reader-modal-close-slot {' in mobile_block
+    assert 'justify-self: end;' in mobile_block
+    assert 'align-self: start;' in mobile_block
+
+
+def test_chat_reader_css_mobile_keeps_floor_editor_inputs_and_preview_min_height():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-floor-editor {' in mobile_block
+    assert 'min-height: 11rem;' in mobile_block
+    assert '.chat-reader-floor-preview {' in mobile_block
+    assert 'min-height: 11rem;' in mobile_block
+
+
+def test_chat_reader_template_groups_reader_controls_into_clear_sections():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-option-group-label">显示模式<' in template_source
+    assert 'chat-reader-option-group-label">浏览方式<' in template_source
+    assert 'chat-reader-option-group-label">规则与策略<' in template_source
+    assert 'chat-reader-option-group-label">锚点模式<' in template_source
+    assert 'chat-reader-option-group-label">快捷跳转<' in template_source
+    assert 'chat-reader-option-group' in template_source
+
+
+def test_chat_reader_css_mobile_allows_view_strategy_and_regex_summary_to_scroll():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-regex-summary-strip {' in mobile_block
+    assert 'max-height: none;' in mobile_block
+    assert '.chat-reader-nested-section--form {' in mobile_block
+    assert 'overflow-y: auto;' in mobile_block
+
+
+def test_chat_reader_template_floor_editor_uses_section_heads_and_editor_note():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-section-head' in template_source
+    assert 'chat-reader-editor-note' in template_source
+
+
+def test_chat_reader_css_mobile_regex_summary_becomes_inline_and_browser_keeps_space():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-regex-summary-strip--mobile {' in mobile_block
+    assert 'padding-right: 0;' in mobile_block
+    assert '.chat-reader-regex-summary-grid {' in mobile_block
+    assert 'grid-template-columns: repeat(2, minmax(0, 1fr));' in mobile_block
+    assert '.chat-reader-regex-summary-chip {' in mobile_block
+    assert 'padding: 0.55rem 0.65rem;' in mobile_block
+    assert '.chat-reader-regex-browser {' in mobile_block
+    assert 'min-height: 18rem;' in mobile_block
+    assert '.chat-reader-sideblock-card--browser {' in mobile_block
+    assert 'min-height: 14rem;' in mobile_block
+    assert '.chat-reader-sideblock-card--test {' in mobile_block
+    assert 'min-height: 16rem;' in mobile_block
+    assert 'max-height: 20rem;' in mobile_block
+    assert '.chat-reader-regex-workbench {' in mobile_block
+    assert 'gap: 0.8rem;' in mobile_block
+    assert '.chat-reader-regex-browser-detail {' in mobile_block
+    assert 'max-height: 16rem;' in mobile_block
+    assert '.chat-reader-regex-test-input {' in mobile_block
+    assert 'min-height: 8rem;' in mobile_block
+    assert '.chat-reader-regex-preview {' in mobile_block
+    assert 'min-height: 10rem;' in mobile_block
+    assert '.chat-reader-editor-grid--balanced {' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert 'flex-direction: column;' in mobile_block
+    assert '.chat-reader-regex-mobile-layout {' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert 'overflow-y: auto;' in mobile_block
+    assert '.chat-reader-regex-mobile-tabs {' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert 'position: sticky;' in mobile_block
+    assert '.chat-reader-regex-toolbar {' in mobile_block
+    assert 'display: none;' in mobile_block
+    assert '.chat-reader-regex-mobile-section {' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert 'flex-direction: column;' in mobile_block
+    assert '.chat-reader-regex-mobile-layout .chat-reader-regex-browser {' in mobile_block
+    assert 'grid-template-columns: 1fr;' in mobile_block
+    assert '.chat-reader-regex-mobile-layout .chat-reader-regex-browser-list,' in mobile_block
+    assert 'overflow: visible;' in mobile_block
+    assert 'max-height: none;' in mobile_block
+    assert '.chat-reader-regex-header-actions {' in mobile_block
+    assert 'display: flex;' in mobile_block
+    assert '.chat-reader-editor-grid--balanced {' in mobile_block
+    assert 'display: none;' in mobile_block
+    assert '.chat-reader-editor-grid--editor {' in mobile_block
+    assert 'display: flex !important;' in mobile_block
+
+
+def test_chat_reader_template_renders_regex_summary_inside_scrollable_mobile_workspace():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'class="chat-reader-regex-summary-strip chat-reader-nested-section chat-reader-nested-section--summary custom-scrollbar" x-show="readerResponsiveMode !== \'mobile\'"' in template_source
+    assert 'chat-reader-regex-summary-strip--mobile' in template_source
+    assert '<div class="chat-reader-regex-mobile-layout custom-scrollbar" x-show="readerResponsiveMode === \'mobile\'" @scroll.passive="handleRegexConfigScroll($event)">' in template_source
+
+
+def test_chat_reader_template_adds_mobile_only_regex_sections_for_effective_rules_draft_and_test():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+
+    assert 'chat-reader-regex-mobile-layout' in template_source
+    assert 'chat-reader-regex-mobile-tabs' in template_source
+    assert 'chat-reader-regex-mobile-section--effective' in template_source
+    assert 'chat-reader-regex-mobile-section--draft' in template_source
+    assert 'chat-reader-regex-mobile-section--test' in template_source
+    assert "@click=\"regexConfigMobileTab = 'effective'\"" in template_source
+    assert "@click=\"regexConfigMobileTab = 'draft'\"" in template_source
+    assert "x-show=\"regexConfigMobileTab === 'effective'\"" in template_source
+    assert "x-show=\"regexConfigMobileTab === 'draft'\"" in template_source
+    assert 'chat-reader-regex-mobile-savebar' not in template_source
+    assert 'chat-reader-regex-header-actions' in template_source
+    assert "x-show=\"readerResponsiveMode === 'mobile'\" class=\"chat-toolbar-btn chat-toolbar-btn--primary chat-reader-regex-save-pill\" @click=\"saveRegexConfig()\">保存</button>" in template_source
+
+
+def test_chat_grid_tracks_mobile_regex_header_visibility_separately_from_reader_header():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert 'regexConfigMobileHeaderHidden: false,' in chat_grid_source
+    assert "regexConfigMobileTab: 'effective'," in chat_grid_source
+    regex_scroll_block = extract_js_function_block(chat_grid_source, 'handleRegexConfigScroll(event) {')
+    assert 'const previousHidden = this.regexConfigMobileHeaderHidden;' in regex_scroll_block
+    assert 'this.regexConfigMobileHeaderHidden = true;' in regex_scroll_block
+    assert 'this.updateRegexConfigLayoutMetrics();' in regex_scroll_block
+
+
+def test_chat_reader_template_mobile_floor_editor_keeps_right_column_note_inside_section_head():
+    template_source = read_project_file('templates/modals/detail_chat_reader.html')
+    editor_block = template_source.split('<div class="chat-reader-editor-section chat-reader-editor-section--wide chat-reader-nested-section">', 1)[1].split('<textarea x-model="editingMessageRawDraft"', 1)[0]
+
+    assert '<div class="chat-reader-section-head">' in editor_block
+    assert '<div class="chat-reader-panel-title">原始消息</div>' in editor_block
+    assert 'chat-reader-editor-note' in editor_block
+
+
+def test_chat_reader_css_mobile_stacks_floor_editor_sections_and_resets_note_overlap_spacing():
+    chat_reader_css = read_project_file('static/css/modules/view-chats.css')
+    mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 720px)')
+
+    assert '.chat-reader-editor-grid--editor {' in mobile_block
+    assert 'display: flex !important;' in mobile_block
+    assert 'flex-direction: column !important;' in mobile_block
+    assert '.chat-reader-editor-section--narrow,' in mobile_block
+    assert '.chat-reader-editor-section--wide {' in mobile_block
+    assert 'width: 100%;' in mobile_block
+    assert 'flex: 0 0 auto;' in mobile_block
+    assert '.chat-reader-editor-note {' in mobile_block
+    assert 'margin-top: 0;' in mobile_block
 
 
 def test_chat_grid_tracks_mobile_header_visibility_state_for_scroll_hiding():
@@ -551,9 +922,9 @@ def test_chat_reader_template_uses_compact_regex_summary_with_help_entry():
 def test_chat_grid_tracks_regex_help_modal_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    open_help_block = chat_grid_source.split('openRegexHelp() {', 1)[1].split('}', 1)[0]
-    close_help_block = chat_grid_source.split('closeRegexHelp() {', 1)[1].split('}', 1)[0]
-    close_regex_block = chat_grid_source.split('closeRegexConfig() {', 1)[1].split('}', 1)[0]
+    open_help_block = extract_js_function_block(chat_grid_source, 'openRegexHelp() {')
+    close_help_block = extract_js_function_block(chat_grid_source, 'closeRegexHelp() {')
+    close_regex_block = extract_js_function_block(chat_grid_source, 'closeRegexConfig() {')
 
     assert 'regexHelpOpen: false,' in chat_grid_source
     assert 'openRegexHelp() {' in chat_grid_source
@@ -584,7 +955,7 @@ def test_chat_reader_template_keeps_regex_summary_dense_without_instructional_co
 
 def test_chat_grid_does_not_seed_regex_summary_with_default_instruction_status():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
-    open_regex_block = chat_grid_source.split('openRegexConfig() {', 1)[1].split('}', 1)[0]
+    open_regex_block = extract_js_function_block(chat_grid_source, 'openRegexConfig() {')
 
     assert "this.regexConfigStatus = '';" in open_regex_block
     assert '测试区默认不自动加载内容，按需手动载入当前定位楼层即可。' not in open_regex_block

@@ -308,6 +308,13 @@
   flex-shrink: 0;
 }
 
+html.light-mode .header-bar,
+html.light-mode .pagination-bar {
+  background-color: color-mix(in srgb, var(--bg-panel), transparent 4%);
+  border-color: color-mix(in srgb, var(--border-main), #ffffff 10%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
 .drag-over-root {
   background-color: var(--accent-faint) !important;
   border: 2px dashed var(--accent-main) !important;
