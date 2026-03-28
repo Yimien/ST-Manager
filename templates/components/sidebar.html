@@ -61,9 +61,8 @@
         </div>
     </div>
     <!-- === 模式 1: 角色卡侧边栏 (Folder + Tags) === -->
-    <div x-show="currentMode === 'cards' && visibleSidebar" class="flex-1 flex flex-col overflow-hidden">
-        <div
-            style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-bottom: 1px solid var(--border-main);">
+    <div x-show="currentMode === 'cards' && visibleSidebar" class="flex-1 card-sidebar-shell">
+        <div class="card-sidebar-categories">
             <div class="sidebar-section-header">
                 <span class="font-bold text-xs uppercase" style="color: var(--text-dim);">资源文件夹</span>
                 <button @click="$store.global.folderModals.createRoot.visible = true"
@@ -117,9 +116,8 @@
                 </template>
             </div>
         </div>
-        <div style="display: flex; flex-direction: column; overflow: hidden;"
-            :style="tagsSectionExpanded ? 'flex: 1;' : ''">
-            <div class="sidebar-section-header">
+        <div class="card-sidebar-tags" :class="tagsSectionExpanded ? 'is-expanded' : 'is-collapsed'">
+            <div class="sidebar-section-header card-sidebar-tags-header">
                 <div class="flex items-center gap-2" @click="tagsSectionExpanded = !tagsSectionExpanded">
                     <button
                         class="w-5 h-5 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
@@ -128,11 +126,11 @@
                     </button>
                     <span class="font-bold text-xs uppercase" style="color: var(--text-dim);">标签索引</span>
                 </div>
-                <button @click="openTagFilter()" class="text-xs text-accent cursor-pointer hover:underline"
-                    title="查看全部">📚 完整库</button>
+                <button x-show="$store.global.deviceType !== 'mobile' || tagsSectionExpanded" @click="openTagFilter()"
+                    class="text-xs text-accent cursor-pointer hover:underline" title="查看全部">📚 完整库</button>
             </div>
-            <div x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar" x-transition>
-                <div class="sidebar-tag-cloud">
+            <div x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body" x-transition>
+                <div x-show="allTagsPool.length > 0" class="sidebar-tag-cloud">
                     <template x-for="tag in allTagsPool.slice(0, 30)" :key="tag">
                         <button @click="toggleFilterTag(tag, $event)" class="sidebar-tag-chip" :class="{
                                 'active': filterTags.includes(tag),
@@ -148,6 +146,9 @@
                         + <span x-text="allTagsPool.length - 30"></span> 更多...
                     </button>
                 </div>
+            </div>
+            <div x-show="tagsSectionExpanded && allTagsPool.length === 0" class="card-sidebar-empty-state">
+                当前暂无标签索引
             </div>
         </div>
     </div>

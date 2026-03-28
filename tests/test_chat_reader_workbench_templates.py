@@ -1056,3 +1056,148 @@ def test_mobile_layout_css_defines_mobile_header_toggle_feedback_states():
     assert 'transform: scale(0.98);' in active_block
     assert 'background-color: var(--accent-faint);' in open_block
     assert 'border-color: var(--accent-light);' in open_block
+
+
+def test_card_sidebar_template_adds_stable_split_layout_hooks():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+
+    assert 'class="flex-1 card-sidebar-shell"' in sidebar_template
+    assert 'class="card-sidebar-categories"' in sidebar_template
+    assert 'class="card-sidebar-tags"' in sidebar_template
+    assert 'class="sidebar-section-header card-sidebar-tags-header"' in sidebar_template
+    assert 'class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in sidebar_template
+
+
+def test_card_sidebar_template_removes_expansion_only_lower_pane_layout_styles():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+
+    assert ":style=\"tagsSectionExpanded ? 'flex: 1;' : ''\"" not in sidebar_template
+    assert 'style="display: flex; flex-direction: column; overflow: hidden;"' not in sidebar_template
+    assert 'x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in sidebar_template
+
+
+def test_card_sidebar_and_pagination_templates_add_empty_state_and_mobile_wrap_hooks():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+    cards_template = read_project_file('templates/components/grid_cards.html')
+
+    assert 'class="card-sidebar-empty-state"' in sidebar_template
+    assert 'class="card-pagination-summary"' in cards_template
+    assert 'class="card-pagination-controls card-pagination-page-cluster"' in cards_template
+    assert 'class="card-pagination-controls" style="display: flex; align-items: center; gap: 0.5rem;"' not in cards_template
+
+
+def test_card_sidebar_layout_css_defines_persistent_strip_and_scoped_solid_surfaces():
+    layout_css = read_project_file('static/css/modules/layout.css')
+
+    assert '.card-sidebar-shell {' in layout_css
+    assert '.card-sidebar-tags {' in layout_css
+    assert 'height: 3.25rem;' in extract_exact_css_block(layout_css, '.card-sidebar-tags.is-collapsed')
+    expanded_block = extract_exact_css_block(layout_css, '.card-sidebar-tags.is-expanded')
+    assert 'flex: 0 0 clamp(10rem, 34%, 15rem);' in expanded_block
+    assert 'max-height: 45%;' in expanded_block
+    assert '.card-sidebar-shell .sidebar-content {' in layout_css
+    assert '.card-sidebar-shell .sidebar-section-header {' in layout_css
+
+
+def test_card_pagination_css_keeps_mobile_footer_compact_with_safe_area_spacing():
+    cards_css = read_project_file('static/css/modules/view-cards.css')
+    mobile_cards_css = extract_media_block(cards_css, '@media (max-width: 768px)')
+
+    assert '.card-pagination-summary {' in cards_css
+    assert '.card-pagination-page-cluster {' in cards_css
+    assert 'padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));' in cards_css
+    assert '.card-flip-toolbar {' in mobile_cards_css
+    assert 'flex-wrap: nowrap;' in mobile_cards_css
+    assert '.card-pagination-page-cluster {' in mobile_cards_css
+    assert 'min-width: 0;' in cards_css
+
+
+def test_base_css_stabilizes_mobile_text_inflation_and_dynamic_viewport_height():
+    base_css = read_project_file('static/css/modules/base.css')
+    body_block = extract_exact_css_block(base_css, 'body')
+    body_lines = {line.strip() for line in body_block.splitlines() if line.strip()}
+
+    assert 'text-size-adjust: 100%;' in base_css
+    assert '-webkit-text-size-adjust: 100%;' in base_css
+    assert 'min-height: 100vh;' in base_css
+    assert 'min-height: 100dvh;' in base_css
+    assert 'height: 100vh;' in body_lines
+    assert 'height: 100dvh;' in body_lines
+    assert 'height: auto;' not in body_lines
+
+
+def test_mobile_layout_css_keeps_sidebar_shell_scrollable_inside_visual_viewport():
+    layout_css = read_project_file('static/css/modules/layout.css')
+    mobile_layout_css = extract_media_block(layout_css, '@media (max-width: 768px)')
+
+    sidebar_mobile_block = extract_exact_css_block(layout_css, '.sidebar-mobile')
+    assert 'height: 100%;' in sidebar_mobile_block
+    assert 'max-height: 100%;' in sidebar_mobile_block
+    assert '.sidebar-mobile {' in mobile_layout_css
+    assert 'overflow-y: auto;' in mobile_layout_css
+    assert '-webkit-overflow-scrolling: touch;' in mobile_layout_css
+
+
+def test_card_pagination_mobile_css_anchors_bar_with_dynamic_viewport_and_box_sizing():
+    cards_css = read_project_file('static/css/modules/view-cards.css')
+    mobile_cards_css = extract_media_block(cards_css, '@media (max-width: 768px)')
+
+    assert 'box-sizing: border-box;' in extract_exact_css_block(cards_css, '.card-pagination-bar')
+    assert 'max-width: 100%;' in mobile_cards_css
+    assert 'box-sizing: border-box;' in mobile_cards_css
+
+
+def test_card_sidebar_template_hides_complete_library_action_until_mobile_tags_panel_expands():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+
+    assert 'x-show="$store.global.deviceType !== \'mobile\' || tagsSectionExpanded"' in sidebar_template
+
+
+def test_card_sidebar_mobile_css_pins_collapsed_tag_strip_to_sidebar_bottom():
+    layout_css = read_project_file('static/css/modules/layout.css')
+    mobile_layout_css = extract_media_block(layout_css, '@media (max-width: 768px)')
+
+    assert '.sidebar-mobile .card-sidebar-shell {' in mobile_layout_css
+    assert 'overflow: visible;' in mobile_layout_css
+    assert '.sidebar-mobile .card-sidebar-tags {' in mobile_layout_css
+    assert 'position: sticky;' in mobile_layout_css
+    assert 'bottom: 0;' in mobile_layout_css
+    assert '.sidebar-mobile .card-sidebar-tags.is-collapsed {' in mobile_layout_css
+    assert 'z-index: 2;' in mobile_layout_css
+
+
+def test_mobile_sidebar_css_uses_container_height_instead_of_fixed_dynamic_viewport_height():
+    layout_css = read_project_file('static/css/modules/layout.css')
+    sidebar_mobile_block = extract_exact_css_block(layout_css, '.sidebar-mobile')
+
+    assert 'height: 100%;' in sidebar_mobile_block
+    assert 'max-height: 100%;' in sidebar_mobile_block
+    assert 'height: 100dvh;' not in sidebar_mobile_block
+    assert 'max-height: 100dvh;' not in sidebar_mobile_block
+
+
+def test_card_pagination_template_uses_mobile_short_labels_and_hides_flip_count():
+    cards_template = read_project_file('templates/components/grid_cards.html')
+
+    assert 'class="card-pagination-page-indicator"' in cards_template
+    assert 'class="btn-secondary card-page-nav-btn"' in cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && !bulkBackMode\">翻面</span>" in cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && bulkBackMode\">正面</span>" in cards_template
+    assert "x-show=\"$store.global.deviceType !== 'mobile'\" class=\"card-flip-count\"" in cards_template
+
+
+def test_card_pagination_mobile_css_compacts_footer_into_single_row():
+    cards_css = read_project_file('static/css/modules/view-cards.css')
+    mobile_cards_css = extract_media_block(cards_css, '@media (max-width: 768px)')
+
+    assert 'flex-direction: row;' in mobile_cards_css
+    assert 'justify-content: space-between;' in mobile_cards_css
+    assert 'flex-wrap: nowrap;' in mobile_cards_css
+    assert '.card-flip-toolbar {' in mobile_cards_css
+    assert 'width: auto;' in mobile_cards_css
+    assert 'background: transparent;' in mobile_cards_css
+    assert 'border: none;' in mobile_cards_css
+    assert '.card-pagination-page-cluster {' in mobile_cards_css
+    assert 'width: auto;' in mobile_cards_css
+    assert '.card-page-nav-btn {' in mobile_cards_css
+    assert '.card-pagination-page-indicator {' in mobile_cards_css

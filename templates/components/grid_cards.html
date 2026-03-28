@@ -178,25 +178,30 @@
 
     <!-- 底部翻页栏 (Fixed in Cards Mode) -->
     <div class="pagination-bar card-pagination-bar" x-show="filteredCards.length>0" style="flex-shrink: 0;">
-        <span class="card-pagination-total" style="font-size: 0.75rem; color: var(--text-dim);">共 <span x-text="totalItems"></span>
-            张</span>
+        <div class="card-pagination-summary">
+            <span class="card-pagination-total" style="font-size: 0.75rem; color: var(--text-dim);">共 <span x-text="totalItems"></span>
+                张</span>
 
-        <div class="card-flip-toolbar" x-show="paginatedCards.length > 0">
-            <button @click="toggleBulkFlipMode()" class="btn-secondary card-flip-all-btn"
-                :title="bulkBackMode ? '将当前页全部翻回正面（并关闭背面模式）' : '将当前页全部翻到背面（并保持背面模式）'">
-                <span x-show="!bulkBackMode">一键翻到背面</span>
-                <span x-show="bulkBackMode">一键翻回正面</span>
-            </button>
-            <span class="card-flip-count" x-text="`背面 ${visibleFlippedCount}/${paginatedCards.length}`"></span>
+            <div class="card-flip-toolbar" x-show="paginatedCards.length > 0">
+                <button @click="toggleBulkFlipMode()" class="btn-secondary card-flip-all-btn"
+                    :title="bulkBackMode ? '将当前页全部翻回正面（并关闭背面模式）' : '将当前页全部翻到背面（并保持背面模式）'">
+                    <span x-show="$store.global.deviceType !== 'mobile' && !bulkBackMode">一键翻到背面</span>
+                    <span x-show="$store.global.deviceType !== 'mobile' && bulkBackMode">一键翻回正面</span>
+                    <span x-show="$store.global.deviceType === 'mobile' && !bulkBackMode">翻面</span>
+                    <span x-show="$store.global.deviceType === 'mobile' && bulkBackMode">正面</span>
+                </button>
+                <span x-show="$store.global.deviceType !== 'mobile'" class="card-flip-count"
+                    x-text="`背面 ${visibleFlippedCount}/${paginatedCards.length}`"></span>
+            </div>
         </div>
 
-        <div class="card-pagination-controls" style="display: flex; align-items: center; gap: 0.5rem;">
-            <button @click="changePage(currentPage-1)" :disabled="currentPage===1" class="btn-secondary"
+        <div class="card-pagination-controls card-pagination-page-cluster">
+            <button @click="changePage(currentPage-1)" :disabled="currentPage===1" class="btn-secondary card-page-nav-btn"
                 style="padding: 0.25rem 0.5rem;">上一页</button>
-            <span
+            <span class="card-pagination-page-indicator"
                 style="padding: 0.25rem 0.5rem; background: var(--bg-sub); border-radius: 0.25rem; color: var(--text-main); font-size: 0.75rem; height: 100%;"
                 x-text="currentPage + '/' + totalPages"></span>
-            <button @click="changePage(currentPage+1)" :disabled="currentPage===totalPages" class="btn-secondary"
+            <button @click="changePage(currentPage+1)" :disabled="currentPage===totalPages" class="btn-secondary card-page-nav-btn"
                 style="padding: 0.25rem 0.5rem;">下一页</button>
         </div>
     </div>

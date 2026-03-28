@@ -75,6 +75,8 @@
   top: 0;
   left: 0;
   bottom: 0;
+  height: 100%;
+  max-height: 100%;
   width: 280px;
   max-width: 85vw;
   z-index: var(--z-sidebar-mobile);
@@ -159,6 +161,62 @@
   justify-content: space-between;
   align-items: center;
   background-color: var(--bg-sub);
+}
+
+.card-sidebar-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-panel);
+}
+
+.card-sidebar-categories {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-main);
+}
+
+.card-sidebar-tags {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border-main);
+}
+
+.card-sidebar-tags.is-collapsed {
+  height: 3.25rem;
+}
+
+.card-sidebar-tags.is-expanded {
+  flex: 0 0 clamp(10rem, 34%, 15rem);
+  max-height: 45%;
+}
+
+.card-sidebar-shell .sidebar-content {
+  background-color: var(--bg-panel);
+}
+
+.card-sidebar-shell .sidebar-section-header {
+  background-color: var(--bg-sub);
+}
+
+.card-sidebar-tags-header {
+  min-height: 3.25rem;
+}
+
+.card-sidebar-tags-body {
+  min-height: 0;
+}
+
+.card-sidebar-empty-state {
+  padding: 0.875rem 1rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  background-color: var(--bg-panel);
 }
 
 .folder-item {
@@ -1163,6 +1221,25 @@ html.light-mode .header-favorite-btn.is-excluded .header-favorite-icon::after {
   .sidebar-mobile {
     width: 280px;
     max-width: 85vw;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar-mobile .card-sidebar-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .sidebar-mobile .card-sidebar-tags {
+    position: sticky;
+    bottom: 0;
+    background-color: var(--bg-panel);
+    box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.08);
+  }
+  .sidebar-mobile .card-sidebar-tags.is-collapsed {
+    z-index: 2;
+  }
+  .sidebar-mobile .card-sidebar-tags-body {
+    max-height: min(34vh, 16rem);
   }
   .sidebar-close-btn {
     top: 0.5rem;

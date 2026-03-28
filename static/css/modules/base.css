@@ -2,6 +2,11 @@
   display: none !important;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   font-family:
@@ -21,7 +26,10 @@ body {
   background-attachment: fixed;
   color: var(--text-main);
   overflow: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }

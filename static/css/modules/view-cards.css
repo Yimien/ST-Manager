@@ -1128,6 +1128,28 @@ html.light-mode .card-bottom-toolbar {
 .card-pagination-bar {
   gap: 0.85rem;
   flex-wrap: wrap;
+  box-sizing: border-box;
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.card-pagination-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.card-pagination-page-cluster {
+  min-width: 0;
+}
+
+.card-pagination-page-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .card-flip-toolbar {
@@ -1567,23 +1589,62 @@ html.light-mode .btn-note-preview:hover {
     padding: 0.8rem;
   }
   .card-pagination-bar {
-    display: grid;
-    grid-template-columns: 1fr;
-    justify-items: stretch;
-    gap: 0.5rem;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    flex-wrap: nowrap;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   .card-pagination-total {
-    justify-self: center;
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 0.7rem !important;
+  }
+  .card-pagination-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.35rem;
+    flex-wrap: nowrap;
+    align-items: center;
   }
   .card-flip-toolbar {
-    justify-content: space-between;
-    padding: 0.35rem 0.45rem;
+    width: auto;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    padding: 0;
+    background: transparent;
+    border: none;
+    min-width: 0;
   }
   .card-flip-count {
     font-size: 0.68rem;
   }
-  .card-pagination-controls {
-    justify-content: center;
+  .card-flip-all-btn {
+    padding: 0.2rem 0.55rem;
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+  .card-pagination-page-cluster {
+    width: auto;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: 0.25rem;
+    flex-wrap: nowrap;
+  }
+  .card-page-nav-btn {
+    padding: 0.2rem 0.45rem !important;
+    min-width: 3.1rem;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+  .card-pagination-page-indicator {
+    min-width: 2.4rem;
+    text-align: center;
+    font-size: 0.7rem !important;
+    flex-shrink: 0;
   }
   .st-card {
     height: 14.5rem;
