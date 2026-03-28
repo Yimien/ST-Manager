@@ -15,6 +15,7 @@ export default function tagFilterModal() {
         tagSearchQuery: '',
         customOrderEnabled: false,
         _syncClosing: false,
+        mobileActiveTab: 'filter',
 
         // 排序模式（仅全量标签库）
         isSortMode: false,
@@ -179,6 +180,67 @@ export default function tagFilterModal() {
         get filterTags() { return this.$store.global.viewState.filterTags; },
         set filterTags(val) { this.$store.global.viewState.filterTags = val; },
 
+        switchMobileTagTab(tab) {
+            const changed = this.syncMobileTabState(tab);
+            if (changed === false) return;
+            this.mobileActiveTab = tab;
+        },
+
+        syncMobileTabState(tab) {
+            if (!['filter', 'sort', 'delete', 'category'].includes(tab)) {
+                return false;
+            }
+
+            const previousTab = this.mobileActiveTab;
+
+            if (previousTab === 'sort' && tab !== 'sort' && this.isSortMode) {
+                this.cancelSortMode();
+                if (this.isSortMode) return false;
+            }
+
+            if (previousTab === 'delete' && tab !== 'delete') {
+                this.selectedTagsForDeletion = [];
+                this.isDeleteMode = false;
+            }
+
+            if (previousTab === 'category' && tab !== 'category') {
+                this.selectedCategoryTags = [];
+                this.categoryDraftName = '';
+                this.categoryDraftColor = '#64748b';
+                this.categoryDraftOpacity = 16;
+                this.showCategoryManager = false;
+                this.showCategoryMode = false;
+            }
+
+            if (tab === 'sort') {
+                this.tagSearchQuery = '';
+                if (!this.isSortMode) {
+                    this.enterSortMode();
+                }
+                return this.isSortMode;
+            }
+
+            if (tab === 'delete') {
+                if (!this.isDeleteMode) {
+                    this.isDeleteMode = true;
+                }
+                return true;
+            }
+
+            if (tab === 'category') {
+                if (!this.showCategoryMode) {
+                    this.showCategoryMode = true;
+                    this.tagSearchQuery = '';
+                }
+                return true;
+            }
+
+            this.isDeleteMode = false;
+            this.showCategoryMode = false;
+
+            return true;
+        },
+
         init() {
             this.$watch('$store.global.showTagFilterModal', (val) => {
                 if (this._syncClosing) return;
@@ -199,25 +261,7 @@ export default function tagFilterModal() {
                             return;
                         }
                     }
-                    this.isDeleteMode = false;
-                    this.isSortMode = false;
-                    this.selectedTagsForDeletion = [];
-                    this.showCategoryMode = false;
-                    this.selectedCategoryTags = [];
-                    this.categoryDraftName = '';
-                    this.categoryDraftColor = '#64748b';
-                    this.categoryDraftOpacity = 16;
-                    this.showCategoryManager = false;
-                    this.categoryManagerDraftName = '';
-                    this.categoryManagerDraftColor = '#64748b';
-                    this.categoryManagerDraftOpacity = 16;
-                    this.categoryFilterInclude = [];
-                    this.categoryFilterExclude = [];
-                    this.mixedCategoryView = true;
-                    this.sortWorkingTags = [];
-                    this.sortOriginalTags = [];
-                    this.dragTag = null;
-                    this.dragOverTag = null;
+                    this.resetModalStateAfterClose();
                 }
             });
             
@@ -237,6 +281,29 @@ export default function tagFilterModal() {
             });
         },
 
+        resetModalStateAfterClose() {
+            this.isDeleteMode = false;
+            this.isSortMode = false;
+            this.selectedTagsForDeletion = [];
+            this.showCategoryMode = false;
+            this.selectedCategoryTags = [];
+            this.categoryDraftName = '';
+            this.categoryDraftColor = '#64748b';
+            this.categoryDraftOpacity = 16;
+            this.showCategoryManager = false;
+            this.categoryManagerDraftName = '';
+            this.categoryManagerDraftColor = '#64748b';
+            this.categoryManagerDraftOpacity = 16;
+            this.categoryFilterInclude = [];
+            this.categoryFilterExclude = [];
+            this.mixedCategoryView = true;
+            this.sortWorkingTags = [];
+            this.sortOriginalTags = [];
+            this.dragTag = null;
+            this.dragOverTag = null;
+            this.mobileActiveTab = 'filter';
+        },
+
         loadTagOrderMeta() {
             getTagOrder()
                 .then((res) => {
@@ -253,6 +320,7 @@ export default function tagFilterModal() {
             }
 
             this._syncClosing = true;
+            this.resetModalStateAfterClose();
             this.showTagFilterModal = false;
             this.$store.global.showTagFilterModal = false;
             this._syncClosing = false;
@@ -565,6 +633,21 @@ export default function tagFilterModal() {
             this.tagSearchQuery = '';
         },
 
+        enterSortMode() {
+            if (this.isDeleteMode) {
+                alert('删除模式下无法排序，请先退出删除模式');
+                return false;
+            }
+
+            this.isSortMode = true;
+            this.tagSearchQuery = '';
+            this.sortWorkingTags = [...(this.globalTagsPool || [])];
+            this.sortOriginalTags = [...this.sortWorkingTags];
+            this.dragTag = null;
+            this.dragOverTag = null;
+            return true;
+        },
+
         toggleTagSelectionForCategory(tag) {
             const index = this.selectedCategoryTags.indexOf(tag);
             if (index > -1) {
@@ -638,12 +721,7 @@ export default function tagFilterModal() {
                 return;
             }
 
-            this.isSortMode = true;
-            this.tagSearchQuery = '';
-            this.sortWorkingTags = [...(this.globalTagsPool || [])];
-            this.sortOriginalTags = [...this.sortWorkingTags];
-            this.dragTag = null;
-            this.dragOverTag = null;
+            this.enterSortMode();
         },
 
         cancelSortMode() {
@@ -658,11 +736,33 @@ export default function tagFilterModal() {
             this.dragOverTag = null;
         },
 
-        onSortDragStart(e, tag) {
+        moveSortTag(tag, delta) {
+            const tags = [...(this.sortWorkingTags || [])];
+            if (!this.isSortMode || !tag || !Number.isFinite(delta)) return false;
+
+            const currentIndex = tags.indexOf(tag);
+            const targetIndex = currentIndex + delta;
+            if (currentIndex === -1 || targetIndex < 0 || targetIndex >= tags.length) return false;
+
+            tags.splice(currentIndex, 1);
+            tags.splice(targetIndex, 0, tag);
+            this.sortWorkingTags = tags;
+            return true;
+        },
+
+        moveSortTagUp(tag) {
+            return this.moveSortTag(tag, -1);
+        },
+
+        moveSortTagDown(tag) {
+            return this.moveSortTag(tag, 1);
+        },
+
+        onSortDragStart(event, tag) {
             if (!this.isSortMode) return;
             this.dragTag = tag;
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', tag);
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', tag);
         },
 
         onSortDragOver(e, tag) {
