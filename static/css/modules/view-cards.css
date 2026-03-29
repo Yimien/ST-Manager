@@ -1142,9 +1142,6 @@ html.light-mode .card-bottom-toolbar {
 
 .card-pagination-page-cluster {
   min-width: 0;
-}
-
-.card-pagination-page-cluster {
   display: flex;
   align-items: center;
   justify-content: center;
