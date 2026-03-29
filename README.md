@@ -35,15 +35,15 @@
 </td>
 <td width="50%">
 
-<!-- 截图占位：角色卡网格 -->
-<img src="docs/screenshots/feature-cards.png" alt="角色卡管理" width="100%">
+<!-- 角色卡网格 -->
+<img src="docs/screenshots/feature-cards.png" alt="角色卡网格" width="100%">
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-<!-- 截图占位：聊天阅读器 -->
+<!-- 聊天阅读器 -->
 <img src="docs/screenshots/feature-chats.png" alt="聊天记录管理" width="100%">
 
 </td>
@@ -71,7 +71,7 @@
 </td>
 <td width="50%">
 
-<!-- 截图占位：世界书 -->
+<!-- 世界书 -->
 <img src="docs/screenshots/feature-wi.png" alt="世界书管理" width="100%">
 
 </td>
@@ -79,7 +79,7 @@
 <tr>
 <td width="50%">
 
-<!-- 截图占位：预设 -->
+<!-- 预设 -->
 <img src="docs/screenshots/feature-presets.png" alt="预设管理" width="100%">
 
 </td>
@@ -107,7 +107,7 @@
 </td>
 <td width="50%">
 
-<!-- 截图占位：自动化 -->
+<!-- 自动化 -->
 <img src="docs/screenshots/feature-automation.png" alt="自动化规则引擎" width="100%">
 
 </td>
@@ -115,7 +115,7 @@
 <tr>
 <td width="50%">
 
-<!-- 截图占位：脚本管理 -->
+<!-- 脚本管理 -->
 <img src="docs/screenshots/feature-scripts.png" alt="脚本管理" width="100%">
 
 </td>
@@ -177,11 +177,10 @@ docker-compose up -d
 
 ## 📸 界面展示
 
-> 以下截图均为占位，实际图片请补充到 `docs/screenshots/` 目录。
-
 <!-- 截图展示区 -->
+
 <p align="center">
-  <img src="docs/screenshots/gallery-cards-grid.png" alt="角色卡网格" width="420">&nbsp;
+  <img src="docs/screenshots/gallery-cards-detail.png" alt="角色卡详情页" width="420">&nbsp;
   <img src="docs/screenshots/gallery-chat-reader.png" alt="聊天阅读器" width="420">
 </p>
 <p align="center">
@@ -192,6 +191,7 @@ docker-compose up -d
   <img src="docs/screenshots/gallery-automation.png" alt="自动化规则" width="420">&nbsp;
   <img src="docs/screenshots/gallery-settings.png" alt="设置界面" width="420">
 </p>
+
 
 ### 📱 移动端适配
 
