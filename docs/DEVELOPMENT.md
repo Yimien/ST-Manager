@@ -59,6 +59,29 @@ python app.py --debug
 FLASK_DEBUG=1 python app.py
 ```
 
+### 启动引导流程
+
+当前启动流程如下：
+
+1. `app.py` 先解析命令行参数（`--debug`、`--host`、`--port`）。
+2. 启动时检查根目录 `config.json` 是否存在；缺失时自动生成默认配置。
+3. 读取 `config.json`，按“命令行参数 > 配置文件 > 内置默认值”解析启动期 `host` / `port`；`debug` 则由 `--debug` 或 `FLASK_DEBUG=1` 决定。
+4. 主进程先做端口可用性检查。
+5. 根据最终的 `debug` 状态决定是否启动后台初始化线程与 Flask reloader。
+
+补充说明：`--host` 和 `--port` 只影响当前进程，不会写回配置文件。
+
+### Docker Compose 首次启动
+
+`docker-compose.yaml` 包含一个预初始化步骤：
+
+1. `init-config` 先检查宿主机根目录的 `./config.json`。
+2. 如果文件不存在，则生成一个默认配置文件。
+3. 生成时默认把 `host` 写为 `0.0.0.0`，以便容器对外监听。
+4. 主应用服务仅在该预初始化步骤成功后才启动。
+
+如果宿主机上已存在 `config.json`，无论内容是否有效，预初始化步骤都不会覆盖它。
+
 ## 代码风格
 
 ### Python

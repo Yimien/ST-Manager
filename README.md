@@ -164,7 +164,17 @@ pip install -r requirements.txt
 python app.py
 ```
 
-程序启动后自动打开浏览器访问 `http://127.0.0.1:5000`。
+首次本地运行时，如果仓库根目录下不存在 `config.json`，程序会自动创建一个默认配置文件。
+
+程序启动后会按当前实际监听地址自动打开浏览器；如果服务监听的是 `0.0.0.0`，则浏览器会自动访问对应端口的 `127.0.0.1`。
+
+如需仅对当前这次启动临时覆盖监听地址或端口，可使用：
+
+```bash
+python app.py --host 127.0.0.1 --port 5000
+```
+
+`--host` 和 `--port` 只影响当前进程，不会写回 `config.json`。
 
 ### Docker 部署
 
@@ -172,6 +182,10 @@ python app.py
 docker-compose up -d
 # 访问 http://localhost:5000
 ```
+
+首次使用 Docker Compose 启动时，如果宿主机项目根目录下不存在 `./config.json`，会先自动生成该文件，再启动主服务。
+
+Docker 首次自动生成的配置默认会把 `host` 写为 `0.0.0.0`，便于容器对外监听。
 
 ---
 
@@ -212,7 +226,7 @@ docker-compose up -d
 
 ## ⚙️ 配置速览
 
-程序首次运行自动生成 `config.json`。常用配置项：
+程序首次运行自动生成 `config.json`。本地直接运行时会在项目根目录生成该文件；Docker Compose 首次启动时会先在宿主机项目根目录生成 `./config.json`。本地默认监听 `127.0.0.1:5000`；Docker 首次自动生成时默认监听 `0.0.0.0:5000`。常用配置项：
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
@@ -222,6 +236,8 @@ docker-compose up -d
 | `st_data_dir` | SillyTavern 数据目录（留空自动探测） | `""` |
 | `auth_username` | 公网访问用户名（需与密码同时设置） | `""` |
 
+临时启动覆盖示例：`python app.py --host 0.0.0.0 --port 6000`。这类命令行参数只影响当前进程，不会写回 `config.json`。
+
 完整配置说明请参阅 → [docs/CONFIG.md](docs/CONFIG.md)
 
 ---
@@ -230,7 +246,7 @@ docker-compose up -d
 
 | 文档 | 内容 |
 |------|------|
-| [配置说明](docs/CONFIG.md) | 完整配置项、Discord 认证、身份验证、环境变量 |
+| [配置说明](docs/CONFIG.md) | 完整配置项、自动生成规则、Discord 认证、身份验证 |
 | [API 文档](docs/API.md) | REST API 接口说明（角色卡、聊天、世界书、预设等） |
 | [开发指南](docs/DEVELOPMENT.md) | 项目结构、代码风格、数据库结构、测试 |
 

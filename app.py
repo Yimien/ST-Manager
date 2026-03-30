@@ -1,3 +1,4 @@
+import argparse
 import sys
 import os
 
@@ -28,14 +29,65 @@ if getattr(sys, 'frozen', False):
 # create_app: 创建 Flask 应用实例
 # init_services: 初始化数据库、缓存和后台扫描线程
 from core import create_app, init_services
-from core.config import load_config
+from core.config import ensure_config_file, load_config
 from core.utils.net import is_port_available
 
+
+def is_running_in_docker():
+    if os.path.exists('/.dockerenv'):
+        return True
+
+    cgroup_path = '/proc/1/cgroup'
+    if not os.path.exists(cgroup_path):
+        return False
+
+    try:
+        with open(cgroup_path, 'r', encoding='utf-8') as f:
+            cgroup_content = f.read()
+            return 'docker' in cgroup_content or 'containerd' in cgroup_content
+    except OSError:
+        return False
+
+
+def parse_cli_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Start ST-Manager. Command-line host/port overrides affect only the current run.'
+    )
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode and auto reload for the current run')
+    parser.add_argument('--host', help='Override the server host for the current run only')
+    parser.add_argument('--port', type=int, help='Override the server port for the current run only')
+    return parser.parse_args(argv)
+
+
+def get_default_config_overrides(in_docker):
+    return {'host': '0.0.0.0'} if in_docker else None
+
+
+def ensure_startup_config(in_docker):
+    ensure_config_file(default_overrides=get_default_config_overrides(in_docker))
+
+
+def resolve_server_settings(cfg, cli_args):
+    host = cli_args.host if cli_args.host is not None else cfg.get('host', '127.0.0.1')
+    port = cli_args.port if cli_args.port is not None else cfg.get('port', 5000)
+    debug = cli_args.debug or os.environ.get('FLASK_DEBUG') == '1'
+    return host, port, debug
+
 if __name__ == '__main__':
+    cli_args = parse_cli_args()
+    in_docker = is_running_in_docker()
+
+    try:
+        ensure_startup_config(in_docker)
+    except Exception as exc:
+        print(f'❌ 配置文件生成失败: {exc}')
+        if platform.system() == 'Windows':
+            os.system('pause')
+        sys.exit(1)
+
     # 1. 加载配置
     cfg = load_config()
-    server_port = cfg.get('port', 5000)
-    server_host = cfg.get('host', '127.0.0.1')
+    server_host, server_port, debug_mode = resolve_server_settings(cfg, cli_args)
 
     # 2. 端口占用检测
     # 如果端口被占用，给出友好提示并暂停（防止窗口闪退）
@@ -60,9 +112,6 @@ if __name__ == '__main__':
     # 3. 启动后台服务 
     # (数据库初始化 -> 加载缓存 -> 启动扫描器)
     # daemon=True 保证主程序退出时线程自动结束，防止僵尸进程
-    
-    # 检测 Debug 模式: 环境变量 FLASK_DEBUG=1 或 命令行参数 --debug
-    debug_mode = os.environ.get('FLASK_DEBUG') == '1' or '--debug' in sys.argv
     
     # 在 Debug 模式下，仅在 Reload 子进程 (WERKZEUG_RUN_MAIN="true") 中启动后台服务
     # 避免在 Watcher 进程中重复启动

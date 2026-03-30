@@ -25,8 +25,6 @@ EXPOSE 5000
 
 # 设置环境变量，确保 Python 输出直接到终端
 ENV PYTHONUNBUFFERED=1
-ENV HOST=0.0.0.0
-ENV PORT=5000
 
 # 运行应用
 CMD ["python", "app.py"]

@@ -1,6 +1,10 @@
 import sys
 import os
 import json
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 # --- 智能判断根目录 (兼容 PyInstaller) ---
 if getattr(sys, 'frozen', False):
@@ -188,12 +192,32 @@ def normalize_config(cfg=None):
     return _normalize_st_credentials({**DEFAULT_CONFIG, **(cfg or {})})
 
 
+def build_default_config(default_overrides=None):
+    return normalize_config({**DEFAULT_CONFIG, **(default_overrides or {})})
+
+
+def write_config_file(path, cfg):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(normalize_config(cfg), f, ensure_ascii=False, indent=2)
+
+
+def ensure_config_file(default_overrides=None, target_path=None):
+    path = target_path or CONFIG_FILE
+    if os.path.exists(path):
+        return False
+    write_config_file(path, build_default_config(default_overrides))
+    return True
+
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return normalize_config(json.load(f))
-        except:
+        except Exception:
+            logger.warning(
+                'config.json could not be parsed; falling back to defaults for the current process.'
+            )
             return normalize_config()
     return normalize_config()
 
@@ -224,11 +248,9 @@ class ConfigProxy:
 
 def save_config(cfg):
     try:
-        normalized_cfg = normalize_config(cfg)
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(normalized_cfg, f, ensure_ascii=False, indent=2)
+        write_config_file(CONFIG_FILE, cfg)
         return True
-    except:
+    except Exception:
         return False
 
 def _ensure_dir(path: str) -> str:

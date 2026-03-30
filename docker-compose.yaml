@@ -1,12 +1,29 @@
 services:
+  init-config:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/workspace
+    command:
+      - python
+      - -c
+      - |
+        import sys
+        sys.path.insert(0, '/app')
+        from core.config import ensure_config_file
+        ensure_config_file(
+            default_overrides={'host': '0.0.0.0'},
+            target_path='/workspace/config.json',
+        )
+
   st-manager:
     build: .
     container_name: st-manager
+    depends_on:
+      init-config:
+        condition: service_completed_successfully
     ports:
       - "5000:5000"
-    environment:
-      - HOST=0.0.0.0
-      - PORT=5000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

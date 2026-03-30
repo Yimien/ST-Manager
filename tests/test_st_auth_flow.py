@@ -1,8 +1,14 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from flask import Flask
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from core import config as config_module
 from core.api.v1 import system as system_api
