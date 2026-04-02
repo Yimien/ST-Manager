@@ -64,6 +64,8 @@ export default function header() {
 
         get selectedIds() { return this.$store.global.viewState.selectedIds; },
         set selectedIds(val) { this.$store.global.viewState.selectedIds = val; },
+        get wiList() { return this.$store.global.wiList || []; },
+        get presetList() { return this.$store.global.presetList || []; },
 
         // 当前页是否全选（用于显示逻辑）
         isCurrentPageAllSelected: false,
@@ -147,6 +149,36 @@ export default function header() {
 
         // 更新当前页全选状态
         updateCurrentPageAllSelectedStatus() {
+            if (this.currentMode === 'worldinfo') {
+                const currentPageWorldInfoIds = this.wiList
+                    .filter(item => this.canSelectWorldInfoItem(item))
+                    .map(item => item.id);
+
+                if (currentPageWorldInfoIds.length === 0) {
+                    this.isCurrentPageAllSelected = false;
+                    return;
+                }
+
+                const currentSelected = new Set(this.selectedIds);
+                this.isCurrentPageAllSelected = currentPageWorldInfoIds.every(id => currentSelected.has(id));
+                return;
+            }
+
+            if (this.currentMode === 'presets') {
+                const currentPagePresetIds = this.presetList
+                    .filter(item => this.canSelectPresetItem(item))
+                    .map(item => item.id);
+
+                if (currentPagePresetIds.length === 0) {
+                    this.isCurrentPageAllSelected = false;
+                    return;
+                }
+
+                const currentSelected = new Set(this.selectedIds);
+                this.isCurrentPageAllSelected = currentPagePresetIds.every(id => currentSelected.has(id));
+                return;
+            }
+
             if (this.currentMode !== 'cards') {
                 this.isCurrentPageAllSelected = false;
                 return;
@@ -267,6 +299,70 @@ export default function header() {
             // 派发事件，将 Store 中的 selectedIds 传给 Modal
             window.dispatchEvent(new CustomEvent('open-batch-tag-modal', {
                 detail: { ids: [...this.selectedIds] }
+            }));
+        },
+
+        selectedWorldInfoItems() {
+            return this.selectedIds
+                .map(id => this.wiList.find(item => item.id === id))
+                .filter(Boolean);
+        },
+
+        canSelectWorldInfoItem(item) {
+            return !!item && (item.source_type || item.type) !== 'embedded';
+        },
+
+        canDeleteWorldInfoSelection() {
+            const items = this.selectedWorldInfoItems();
+            return items.length > 0 && items.every(item => (item.source_type || item.type) !== 'embedded');
+        },
+
+        canMoveWorldInfoSelection() {
+            const items = this.selectedWorldInfoItems();
+            return items.length > 0 && items.every(item => (item.source_type || item.type) === 'global');
+        },
+
+        selectedPresetItems() {
+            return this.selectedIds
+                .map(id => this.presetList.find(item => item.id === id))
+                .filter(Boolean);
+        },
+
+        canSelectPresetItem(item) {
+            return !!item;
+        },
+
+        canDeletePresetSelection() {
+            const items = this.selectedPresetItems();
+            return items.length > 0 && items.every(item => this.canSelectPresetItem(item));
+        },
+
+        canMovePresetSelection() {
+            const items = this.selectedPresetItems();
+            return items.length > 0 && items.every(item => (item.source_type || item.type) === 'global');
+        },
+
+        deleteSelectedWorldInfo() {
+            if (!this.canDeleteWorldInfoSelection()) return;
+            window.dispatchEvent(new CustomEvent('delete-selected-worldinfo'));
+        },
+
+        moveSelectedWorldInfo() {
+            if (!this.canMoveWorldInfoSelection()) return;
+            window.dispatchEvent(new CustomEvent('move-selected-worldinfo', {
+                detail: { target_category: this.$store.global.wiFilterCategory || '' }
+            }));
+        },
+
+        deleteSelectedPresets() {
+            if (!this.canDeletePresetSelection()) return;
+            window.dispatchEvent(new CustomEvent('delete-selected-presets'));
+        },
+
+        moveSelectedPresets() {
+            if (!this.canMovePresetSelection()) return;
+            window.dispatchEvent(new CustomEvent('move-selected-presets', {
+                detail: { target_category: this.$store.global.presetFilterCategory || '' }
             }));
         },
 
@@ -506,8 +602,43 @@ export default function header() {
 
         // 全选/取消全选（仅针对当前页）
         toggleSelectAll() {
+            if (this.currentMode === 'worldinfo') {
+                const currentPageWorldInfoIds = this.wiList
+                    .filter(item => this.canSelectWorldInfoItem(item))
+                    .map(item => item.id);
+
+                if (currentPageWorldInfoIds.length === 0) {
+                    return;
+                }
+
+                const currentSelected = new Set(this.selectedIds);
+                const allSelected = currentPageWorldInfoIds.every(id => currentSelected.has(id));
+                this.selectedIds = allSelected
+                    ? this.selectedIds.filter(id => !currentPageWorldInfoIds.includes(id))
+                    : Array.from(new Set([...this.selectedIds, ...currentPageWorldInfoIds]));
+                this.isCurrentPageAllSelected = !allSelected;
+                return;
+            }
+
+            if (this.currentMode === 'presets') {
+                const currentPagePresetIds = this.presetList
+                    .filter(item => this.canSelectPresetItem(item))
+                    .map(item => item.id);
+
+                if (currentPagePresetIds.length === 0) {
+                    return;
+                }
+
+                const currentSelected = new Set(this.selectedIds);
+                const allSelected = currentPagePresetIds.every(id => currentSelected.has(id));
+                this.selectedIds = allSelected
+                    ? this.selectedIds.filter(id => !currentPagePresetIds.includes(id))
+                    : Array.from(new Set([...this.selectedIds, ...currentPagePresetIds]));
+                this.isCurrentPageAllSelected = !allSelected;
+                return;
+            }
+
             if (this.currentMode !== 'cards') {
-                // 世界书模式暂不支持全选
                 return;
             }
 

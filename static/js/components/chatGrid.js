@@ -95,6 +95,7 @@ const CHAT_READER_VARIABLE_RECENT_CACHE_SIZE = 24;
 const CHAT_READER_WINDOW_STEP = Math.max(1, CHAT_READER_WINDOW_SIZE - CHAT_READER_WINDOW_OVERLAP);
 const READER_VIEWPORT_SYNC_IDLE_MS = 120;
 const READER_VIEWPORT_TOP_PROBE_OFFSET = 72;
+const READER_PAGE_MODE_IMMEDIATE_RUNTIME_RADIUS = 1;
 
 const READER_ANCHOR_MODES = {
     LOCKED_FLOOR: 'locked_floor',
@@ -2164,6 +2165,39 @@ function resolveReaderFloorVariables(rawMessages, floor, activeChat, activeCardD
 }
 
 
+export function buildReaderRenderCacheKey({
+    chatId = '',
+    floor = 0,
+    variant = 'full',
+    renderMode = 'markdown',
+    componentMode = false,
+    html = '',
+} = {}) {
+    return JSON.stringify({
+        chatId: String(chatId || ''),
+        floor: Number(floor || 0),
+        variant: String(variant || 'full'),
+        renderMode: String(renderMode || 'markdown'),
+        componentMode: Boolean(componentMode),
+        html: String(html || ''),
+    });
+}
+
+
+export function shouldDeferReaderRuntimeMount({
+    isReaderPageMode = false,
+    floor = 0,
+    anchorFloor = 0,
+    immediateRadius = READER_PAGE_MODE_IMMEDIATE_RUNTIME_RADIUS,
+} = {}) {
+    if (!isReaderPageMode) return false;
+    const resolvedFloor = Number(floor || 0);
+    const resolvedAnchorFloor = Number(anchorFloor || 0);
+    if (!resolvedFloor || !resolvedAnchorFloor) return false;
+    return Math.abs(resolvedFloor - resolvedAnchorFloor) > Math.max(0, Number(immediateRadius || 0));
+}
+
+
 function normalizeReaderMessageSource(message) {
     const source = message && typeof message === 'object' ? message : {};
     const extra = source.extra && typeof source.extra === 'object' ? source.extra : {};
@@ -3435,8 +3469,16 @@ export default function chatGrid() {
         get renderedFloorHtmlCache() {
             if (!this._renderedFloorHtmlCache) {
                 this._renderedFloorHtmlCache = new Map();
+                this._readerRenderedDisplayCache = new Map();
             }
             return this._renderedFloorHtmlCache;
+        },
+
+        get readerRenderedDisplayCache() {
+            if (!this._readerRenderedDisplayCache) {
+                this._readerRenderedDisplayCache = new Map();
+            }
+            return this._readerRenderedDisplayCache;
         },
 
         get runtimeCandidateCache() {
@@ -3486,6 +3528,8 @@ export default function chatGrid() {
             this.readerWindowStartFloor = total > 0 ? 1 : 0;
             this.readerWindowEndFloor = 0;
             this._renderedFloorHtmlCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
             this._readerDepthLookupCache = null;
 
             if (this.activeChat) {
@@ -4116,6 +4160,7 @@ export default function chatGrid() {
             const total = this.readerTotalMessages;
             if (!total) {
                 this._renderedFloorHtmlCache = new Map();
+                this._readerRenderedDisplayCache = new Map();
                 this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
                 resetReaderVisibleMessagesCache(this);
                 return;
@@ -4170,6 +4215,7 @@ export default function chatGrid() {
             }
 
             this._renderedFloorHtmlCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
             this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
             const clearStartFloor = Math.max(1, Number(this.readerWindowStartFloor || 1));
             const clearEndFloor = Math.min(
@@ -4881,6 +4927,7 @@ export default function chatGrid() {
             this.readerWindowStartFloor = 1;
             this.readerWindowEndFloor = 0;
             this._renderedFloorHtmlCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
             this._readerDepthLookupCache = null;
             if (this.activeChat) {
                 this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
@@ -5046,6 +5093,7 @@ export default function chatGrid() {
             this.readerWindowStartFloor = 1;
             this.readerWindowEndFloor = 0;
             this._renderedFloorHtmlCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
             if (this.activeChat) {
                 this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
             }
@@ -6393,6 +6441,7 @@ export default function chatGrid() {
                 lookup: depthLookup,
             };
             this._renderedFloorHtmlCache = new Map();
+            this._readerRenderedDisplayCache = new Map();
             this.activeChat.runtime_candidate_cache = createRuntimeCandidateCache();
             this.readerAnchorFloor = anchorFloor;
             const renderBands = resolveReaderRenderBandRanges(this.readerViewSettings, total, anchorFloor);
@@ -6867,6 +6916,20 @@ export default function chatGrid() {
             if (message && typeof message === 'object' && !message.__readerRegexConfig) {
                 message.__readerRegexConfig = normalizeRegexConfig(this.readerResolvedRegexConfig || this.activeRegexConfig);
             }
+            const floor = Number(message?.floor || 0);
+            const chatId = resolveReaderMessageChatId(message, this.activeChat);
+            const cacheKey = buildReaderRenderCacheKey({
+                chatId,
+                floor,
+                variant: 'full',
+                renderMode: this.readerRenderMode,
+                componentMode: this.readerComponentMode,
+                html: String(message?.rendered_display_html || ''),
+            });
+            const cachedHtml = this.readerRenderedDisplayCache.get(cacheKey);
+            if (cachedHtml) {
+                return cachedHtml;
+            }
             const source = String(this.ensureMessageDisplaySource(message) || message?.content || '');
             const scopeClass = `st-reader-floor-${Number(message?.floor || 0) || 0}`;
             const flags = resolveReaderFormatFlags(message);
@@ -6896,8 +6959,6 @@ export default function chatGrid() {
                     viewportWidth: window.innerWidth,
                     reasoningStartExpanded: this.readerViewSettings?.reasoningDefaultCollapsed === false,
                 });
-            const floor = Number(message?.floor || 0);
-
             if (floor > 0) {
                 const previousHtml = String(this.renderedFloorHtmlCache.get(floor) || message?.rendered_display_html || '');
                 if (previousHtml !== decoratedHtml) {
@@ -6916,6 +6977,14 @@ export default function chatGrid() {
                     this.runtimeCandidateCache.executableFloorsKey = '';
                 }
             }
+            this.readerRenderedDisplayCache.set(buildReaderRenderCacheKey({
+                chatId,
+                floor,
+                variant: 'full',
+                renderMode: this.readerRenderMode,
+                componentMode: this.readerComponentMode,
+                html: decoratedHtml,
+            }), decoratedHtml);
             return decoratedHtml;
         },
 
@@ -7147,6 +7216,25 @@ export default function chatGrid() {
             });
         },
 
+        scheduleDeferredReaderRuntimeMount(el, message) {
+            if (!(el instanceof Element) || !message) return;
+            const signature = String(el.__stmReaderDisplaySignature || '');
+            if (!signature) return;
+
+            const existingTimer = Number(el.__stmDeferredRuntimeTimer || 0);
+            if (existingTimer) {
+                window.clearTimeout(existingTimer);
+            }
+
+            el.__stmDeferredRuntimeTimer = window.setTimeout(() => {
+                el.__stmDeferredRuntimeTimer = 0;
+                if (!el.isConnected) return;
+                if (String(el.__stmReaderDisplaySignature || '') !== signature) return;
+                el.__stmForceImmediateRuntimeMount = true;
+                this.mountMessageDisplayNow(el, message);
+            }, 0);
+        },
+
         mountMessageDisplayNow(el, message) {
             if (!el || !message) return;
             if (!this.detailOpen || !this.activeChat) return;
@@ -7159,6 +7247,14 @@ export default function chatGrid() {
             const candidates = extractRuntimeCandidatesFromContainer(el);
             this.updateReaderRuntimeDebug(message, el, candidates, wrappedHosts);
             const candidateSignature = buildRuntimeCandidateSignature(candidates);
+            const forceImmediateRuntimeMount = el.__stmForceImmediateRuntimeMount === true;
+            el.__stmForceImmediateRuntimeMount = false;
+            const deferRuntimeMount = shouldDeferReaderRuntimeMount({
+                isReaderPageMode: this.isReaderPageMode && !forceImmediateRuntimeMount,
+                floor,
+                anchorFloor: Number(this.currentReaderPageGroup?.anchorFloor || this.effectiveReaderAnchorFloor || 0),
+                immediateRadius: READER_PAGE_MODE_IMMEDIATE_RUNTIME_RADIUS,
+            });
 
             const current = this.readerSegmentRegistry.get(el);
             const needsRuntimeAttach = allowExecutableHtml && wrappedHosts.some((host) => !(host instanceof Element) || !host.querySelector('iframe'));
@@ -7197,6 +7293,24 @@ export default function chatGrid() {
                 });
                 this.readerSegmentRegistry.set(el, { signature, children: [el] });
                 this.scheduleReaderFloorLayoutDebug(message, el, 'mount_runtime_placeholder', {
+                    allowExecutableHtml,
+                    candidateCount: candidates.length,
+                    wrappedHostCount: wrappedHosts.length,
+                });
+                return;
+            }
+
+            if (deferRuntimeMount) {
+                wrappedHosts.forEach((host) => {
+                    if (host instanceof Element) {
+                        setRuntimeWrapperActive(host, false);
+                        clearDeferredRuntimePlaceholder(host);
+                        setDeferredRuntimePlaceholder(host, message, this.readerViewSettings);
+                    }
+                });
+                this.readerSegmentRegistry.set(el, { signature, children: [el] });
+                this.scheduleDeferredReaderRuntimeMount(el, message);
+                this.scheduleReaderFloorLayoutDebug(message, el, 'mount_runtime_deferred', {
                     allowExecutableHtml,
                     candidateCount: candidates.length,
                     wrappedHostCount: wrappedHosts.length,
@@ -7259,6 +7373,12 @@ export default function chatGrid() {
 
         destroyMessageRenderPart(el) {
             if (!el) return;
+
+            const deferredTimer = Number(el.__stmDeferredRuntimeTimer || 0);
+            if (deferredTimer) {
+                window.clearTimeout(deferredTimer);
+                el.__stmDeferredRuntimeTimer = 0;
+            }
 
             const hosts = [el, ...Array.from(el.querySelectorAll('.chat-inline-runtime-host'))];
             hosts.forEach((host) => {

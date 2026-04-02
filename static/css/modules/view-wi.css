@@ -1205,6 +1205,16 @@ html.light-mode .wi-help-modal-content {
   position: relative;
 }
 
+.wi-grid-card.selected {
+  border-color: color-mix(in srgb, var(--accent-light), #ffffff 12%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-main), transparent 18%),
+    0 16px 30px rgba(0, 0, 0, 0.18);
+}
+
+.wi-grid-card.is-selection-disabled {
+  cursor: default;
+}
+
 .wi-grid-card:hover {
   transform: translateY(-3px);
   border-color: var(--accent-light);
@@ -1308,6 +1318,13 @@ html.light-mode .wi-book-icon {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+}
+
+.wi-book-meta .card-select-indicator {
+  position: absolute;
+  top: 44px;
+  left: 10px;
+  z-index: 20;
 }
 
 .wi-li-preview {

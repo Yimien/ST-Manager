@@ -4,7 +4,6 @@
  */
 export default function presetGrid() {
     return {
-        activeCategoryItemId: null,
         items: [],
         isLoading: false,
         dragOver: false,
@@ -18,6 +17,12 @@ export default function presetGrid() {
         activePresetItemType: null,
         uiPresetFilter: null,
         showMobileSidebar: false,
+        get selectedIds() { return this.$store.global.viewState.selectedIds; },
+        set selectedIds(val) { this.$store.global.viewState.selectedIds = val; return true; },
+        get lastSelectedId() { return this.$store.global.viewState.lastSelectedId; },
+        set lastSelectedId(val) { this.$store.global.viewState.lastSelectedId = val; return true; },
+        get draggedCards() { return this.$store.global.viewState.draggedCards; },
+        set draggedCards(val) { this.$store.global.viewState.draggedCards = val; return true; },
 
         get filterType() { return this.$store.global.presetFilterType || 'all'; },
         get filterCategory() { return this.$store.global.presetFilterCategory || ''; },
@@ -59,69 +64,95 @@ export default function presetGrid() {
             return item?.owner_card_id || '';
         },
 
+        getPresetItemById(id) {
+            return (this.items || []).find(item => item.id === id) || null;
+        },
+
+        selectedPresetItems() {
+            return this.selectedIds
+                .map(id => this.getPresetItemById(id))
+                .filter(Boolean);
+        },
+
+        canSelectPresetItem(item) {
+            return !!item;
+        },
+
+        isPresetMovable(item) {
+            return !!item && (item.source_type || item.type) === 'global';
+        },
+
+        canDeletePresetSelection() {
+            const items = this.selectedPresetItems();
+            return items.length > 0 && items.every(item => this.canSelectPresetItem(item));
+        },
+
+        canMovePresetSelection() {
+            const items = this.selectedPresetItems();
+            return items.length > 0 && items.every(item => this.isPresetMovable(item));
+        },
+
+        toggleSelection(item) {
+            if (!this.canSelectPresetItem(item)) return;
+
+            let ids = [...this.selectedIds];
+            if (ids.includes(item.id)) {
+                ids = ids.filter(id => id !== item.id);
+            } else {
+                ids.push(item.id);
+                this.lastSelectedId = item.id;
+            }
+            this.selectedIds = ids;
+        },
+
+        dragStart(e, item) {
+            if (!this.canSelectPresetItem(item)) {
+                e.preventDefault();
+                return;
+            }
+
+            const ids = this.selectedIds.includes(item.id)
+                ? [...this.selectedIds]
+                : Array.of(item.id, ...this.selectedIds);
+
+            const selectedItems = ids
+                .map(id => this.getPresetItemById(id))
+                .filter(Boolean);
+
+            if (selectedItems.length === 0 || !selectedItems.every(currentItem => this.isPresetMovable(currentItem))) {
+                e.preventDefault();
+                alert('当前选中的预设包含资源绑定项，不能移动分类');
+                return;
+            }
+
+            if (!this.selectedIds.includes(item.id)) {
+                this.selectedIds = ids;
+            }
+
+            this.draggedCards = ids;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('application/x-st-preset', JSON.stringify(ids));
+            e.dataTransfer.setData('text/plain', item.id);
+
+            const cardElement = e.target.closest('[data-preset-id]');
+            if (cardElement) {
+                requestAnimationFrame(() => {
+                    cardElement.classList.add('drag-source');
+                });
+
+                const cleanup = () => {
+                    cardElement.classList.remove('drag-source');
+                    window.dispatchEvent(new CustomEvent('global-drag-end'));
+                };
+
+                e.target.addEventListener('dragend', cleanup, { once: true });
+            }
+        },
+
         locatePresetOwnerCard(item) {
             const owner_card_id = this.getPresetOwnerId(item);
             if (!owner_card_id) return;
             window.dispatchEvent(new CustomEvent('jump-to-card-wi', { detail: owner_card_id }));
-            this.hidePresetCategoryActions();
-        },
-
-        showPresetCategoryActions(item, event) {
-            event.stopPropagation();
-            this.activeCategoryItemId = this.activeCategoryItemId === item.id ? null : item.id;
-        },
-
-        hidePresetCategoryActions() {
-            this.activeCategoryItemId = null;
-        },
-
-        async movePresetToCategory(item) {
-            const source_type = item?.source_type || item?.type;
-            const choices = ['根目录'].concat(this.getMovablePresetCategories());
-            const current = item?.display_category || '根目录';
-            const actionLabel = source_type === 'resource' ? '设置管理器分类' : '移动到分类';
-            const selected = prompt(`${actionLabel}（可选：${choices.join(', ')}）`, current);
-            if (selected === null) return;
-
-            const target_category = String(selected).trim() === '根目录' ? '' : String(selected).trim();
-            const resp = await fetch('/api/presets/category/move', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: item.id,
-                    source_type,
-                    file_path: item.path,
-                    target_category,
-                })
-            });
-            const res = await resp.json();
-            if (res?.success) {
-                this.$store.global.showToast(res.msg);
-                this.fetchItems();
-                this.hidePresetCategoryActions();
-                return;
-            }
-            alert(res?.msg || '移动失败');
-        },
-
-        async resetPresetCategory(item) {
-            const source_type = item?.source_type || item?.type;
-            const resp = await fetch('/api/presets/category/reset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    source_type,
-                    file_path: item.path,
-                })
-            });
-            const res = await resp.json();
-            if (res?.success) {
-                this.$store.global.showToast(res.msg);
-                this.fetchItems();
-                this.hidePresetCategoryActions();
-                return;
-            }
-            alert(res?.msg || '恢复失败');
         },
 
         init() {
@@ -156,6 +187,14 @@ export default function presetGrid() {
                 if (this.$store.global.currentMode === 'presets') {
                     this.fetchItems();
                 }
+            });
+
+            window.addEventListener('delete-selected-presets', () => {
+                this.deleteSelectedPresets();
+            });
+
+            window.addEventListener('move-selected-presets', (e) => {
+                this.moveSelectedPresets(e.detail?.target_category || '');
             });
 
             // 初始加载
@@ -238,6 +277,7 @@ export default function presetGrid() {
                 .then(res => res.json())
                 .then(res => {
                     this.items = res.items || [];
+                    this.$store.global.presetList = this.items;
                     this.$store.global.presetAllFolders = res.all_folders || [];
                     this.$store.global.presetCategoryCounts = res.category_counts || {};
                     this.$store.global.presetFolderCapabilities = res.folder_capabilities || {};
@@ -489,6 +529,65 @@ export default function presetGrid() {
             } catch (e) {
                 this.$store.global.showToast('删除失败', 'error');
             }
+        },
+
+        async deleteSelectedPresets() {
+            if (!this.canDeletePresetSelection()) return;
+
+            const items = this.selectedPresetItems();
+            const count = items.length;
+            if (!confirm(`确定要删除选中的 ${count} 个预设吗？`)) return;
+
+            for (const item of items) {
+                const resp = await fetch('/api/presets/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: item.id })
+                });
+                const res = await resp.json();
+                if (!res?.success) {
+                    this.$store.global.showToast(res?.msg || '删除失败', 'error');
+                    return;
+                }
+            }
+
+            this.$store.global.showToast(`🗑️ 已删除 ${count} 个预设`);
+            this.selectedIds = [];
+            this.fetchItems();
+        },
+
+        async moveSelectedPresets(targetCategory = this.filterCategory || '') {
+            if (!this.canMovePresetSelection()) {
+                alert('当前选中的预设包含资源绑定项，不能移动分类');
+                return;
+            }
+
+            const items = this.selectedPresetItems();
+            const count = items.length;
+            const label = targetCategory || '根目录';
+            if (!confirm(`移动 ${count} 个预设到 "${label}"?`)) return;
+
+            for (const item of items) {
+                const resp = await fetch('/api/presets/category/move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: item.id,
+                        source_type: item.source_type || item.type,
+                        file_path: item.path,
+                        target_category: targetCategory,
+                    })
+                });
+                const res = await resp.json();
+                if (!res?.success) {
+                    alert(res?.msg || '移动失败');
+                    return;
+                }
+            }
+
+            this.$store.global.showToast(`✅ 已移动 ${count} 个预设`);
+            this.selectedIds = [];
+            this.fetchItems();
         },
 
         editPresetRaw() {

@@ -7,6 +7,43 @@ import { createFolder, moveFolder } from '../api/system.js';
 import { moveCard } from '../api/card.js';
 import { migrateLorebooks } from '../api/wi.js';
 
+async function moveWorldInfoItems(items, targetCategory) {
+    for (const item of items) {
+        const resp = await fetch('/api/world_info/category/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_type: item.source_type || item.type,
+                file_path: item.path,
+                target_category: targetCategory,
+            })
+        });
+        const res = await resp.json();
+        if (!res?.success) {
+            throw new Error(res?.msg || '移动失败');
+        }
+    }
+}
+
+async function movePresetItems(items, targetCategory) {
+    for (const item of items) {
+        const resp = await fetch('/api/presets/category/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: item.id,
+                source_type: item.source_type || item.type,
+                file_path: item.path,
+                target_category: targetCategory,
+            })
+        });
+        const res = await resp.json();
+        if (!res?.success) {
+            throw new Error(res?.msg || '移动失败');
+        }
+    }
+}
+
 function buildFolderTree(list, expandedFolders, extra = {}) {
     return (list || []).map(folder => {
         let isVisible = true;
@@ -87,11 +124,13 @@ export default function sidebar() {
         get wiFilterCategory() { return this.$store.global.wiFilterCategory || ''; },
         get wiAllFolders() { return this.$store.global.wiAllFolders || []; },
         get wiCategoryCounts() { return this.$store.global.wiCategoryCounts || {}; },
+        get wiList() { return this.$store.global.wiList || []; },
         get presetFilterCategory() { return this.$store.global.presetFilterCategory || ''; },
         get presetAllFolders() { return this.$store.global.presetAllFolders || []; },
         get presetCategoryCounts() { return this.$store.global.presetCategoryCounts || {}; },
 
         // 选中状态 (用于清空)
+        get selectedIds() { return this.$store.global.viewState.selectedIds; },
         set selectedIds(val) { this.$store.global.viewState.selectedIds = val; return true; },
 
         // 计算属性：构建文件夹树 (依赖全局 Store 数据)
@@ -373,6 +412,18 @@ export default function sidebar() {
             e.preventDefault();
             e.stopPropagation();
 
+            if (folder?.mode === 'worldinfo') {
+                if (!this.canMoveWorldInfoSelection()) return;
+                this.dragOverFolder = folder.path;
+                return;
+            }
+
+            if (folder?.mode === 'presets') {
+                if (!this.canMovePresetSelection()) return;
+                this.dragOverFolder = folder.path;
+                return;
+            }
+
             // 如果正在拖拽卡片，则高亮当前文件夹 (除非是当前所在目录)
             if (this.draggedCards.length > 0) {
                 if (folder.path !== this.filterCategory) {
@@ -399,6 +450,21 @@ export default function sidebar() {
             }
         },
 
+        presetRootDragOver(e) {
+            this.folderDragOver(e, { path: '', name: '根目录', mode: 'presets' });
+            if (this.draggedCards.length > 0) {
+                this.dragOverFolder = '根目录';
+            }
+        },
+
+        presetRootDragLeave(e) {
+            this.folderDragLeave(e, { path: '', name: '根目录', mode: 'presets' });
+        },
+
+        presetRootDrop(e) {
+            this.folderDrop(e, { path: '', name: '根目录', mode: 'presets' });
+        },
+
         folderDrop(e, targetFolder) {
             e.preventDefault();
             e.stopPropagation();
@@ -409,7 +475,49 @@ export default function sidebar() {
             this.dragOverMain = false;
             this.dragOverFolder = null;
 
-            // 1. 文件夹 -> 文件夹
+            // 1. 世界书 -> 分类
+            if (targetFolder?.mode === 'worldinfo' && this.draggedCards.length > 0) {
+                if (!this.canMoveWorldInfoSelection()) {
+                    window.dispatchEvent(new CustomEvent('global-drag-end'));
+                    return;
+                }
+
+                const items = this.selectedWorldInfoItems();
+                const count = items.length;
+                moveWorldInfoItems(items, targetFolder.path)
+                    .then(() => {
+                        this.$store.global.viewState.selectedIds = [];
+                        window.dispatchEvent(new CustomEvent('refresh-wi-list', { detail: { resetPage: false } }));
+                        this.$store.global.showToast(`✅ 已移动 ${count} 本世界书`);
+                    })
+                    .catch(err => alert(err.message || err));
+
+                window.dispatchEvent(new CustomEvent('global-drag-end'));
+                return;
+            }
+
+            if (targetFolder?.mode === 'presets' && this.draggedCards.length > 0) {
+                if (!this.canMovePresetSelection()) {
+                    alert('当前选中的预设包含资源绑定项，不能移动分类');
+                    window.dispatchEvent(new CustomEvent('global-drag-end'));
+                    return;
+                }
+
+                const items = this.selectedPresetItems();
+                const count = items.length;
+                movePresetItems(items, targetFolder.path)
+                    .then(() => {
+                        this.$store.global.viewState.selectedIds = [];
+                        window.dispatchEvent(new CustomEvent('refresh-preset-list', { detail: { resetPage: false } }));
+                        this.$store.global.showToast(`✅ 已移动 ${count} 个预设`);
+                    })
+                    .catch(err => alert(err.message || err));
+
+                window.dispatchEvent(new CustomEvent('global-drag-end'));
+                return;
+            }
+
+            // 2. 文件夹 -> 文件夹
             if (this.draggedFolder && targetFolder) {
                 if (this.draggedFolder === targetFolder.path) return;
                 const sourceName = this.draggedFolder.split('/').pop();
@@ -424,7 +532,7 @@ export default function sidebar() {
                     });
                 }
             }
-            // 2. 卡片 -> 文件夹
+            // 3. 卡片 -> 文件夹
             else if (this.draggedCards.length > 0 && targetFolder) {
                 const targetName = targetFolder.name;
                 const count = this.draggedCards.length;
@@ -447,7 +555,7 @@ export default function sidebar() {
                     });
                 }
             }
-            // 3. 外部文件 -> 文件夹
+            // 4. 外部文件 -> 文件夹
             else if (e.dataTransfer.files.length > 0 && targetFolder) {
                 window.dispatchEvent(new CustomEvent('handle-files-drop', {
                     detail: { event: e, category: targetFolder.path }
@@ -475,6 +583,28 @@ export default function sidebar() {
         setWiCategory(category) {
             this.$store.global.wiFilterCategory = category;
             window.dispatchEvent(new CustomEvent('refresh-wi-list', { detail: { resetPage: true } }));
+        },
+
+        selectedWorldInfoItems() {
+            return this.selectedIds
+                .map(id => this.wiList.find(item => item.id === id))
+                .filter(Boolean);
+        },
+
+        canMoveWorldInfoSelection() {
+            const items = this.selectedWorldInfoItems();
+            return items.length > 0 && items.every(item => (item.source_type || item.type) === 'global');
+        },
+
+        selectedPresetItems() {
+            return this.selectedIds
+                .map(id => (this.$store.global.presetList || []).find(item => item.id === id))
+                .filter(Boolean);
+        },
+
+        canMovePresetSelection() {
+            const items = this.selectedPresetItems();
+            return items.length > 0 && items.every(item => (item.source_type || item.type) === 'global');
         },
 
         setPresetCategory(category) {

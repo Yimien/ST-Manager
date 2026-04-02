@@ -1753,6 +1753,56 @@ def test_automation_help_modal_js_and_css_define_tab_state_and_mobile_layout():
     assert 'width: 100%' in mobile_tab_block or 'flex: 1 1' in mobile_tab_block
 
 
+def test_automation_modal_template_exposes_sort_controls_for_groups_conditions_and_actions():
+    automation_template = read_project_file('templates/modals/automation.html')
+
+    assert '@click="moveGroup(rIdx, gIdx, -1)"' in automation_template
+    assert '@click="moveGroup(rIdx, gIdx, 1)"' in automation_template
+    assert '@click="moveConditionInGroup(rIdx, gIdx, cIdx, -1)"' in automation_template
+    assert '@click="moveConditionInGroup(rIdx, gIdx, cIdx, 1)"' in automation_template
+    assert '@click="moveAction(rIdx, aIdx, -1)"' in automation_template
+    assert '@click="moveAction(rIdx, aIdx, 1)"' in automation_template
+    assert 'title="上移条件组"' in automation_template
+    assert 'title="下移条件组"' in automation_template
+    assert 'title="上移条件"' in automation_template
+    assert 'title="下移条件"' in automation_template
+    assert 'title="上移动作"' in automation_template
+    assert 'title="下移动作"' in automation_template
+    assert 'automation-inline-actions' in automation_template
+
+
+def test_automation_modal_js_exposes_reusable_move_helpers_for_nested_rule_items():
+    automation_js = read_project_file('static/js/components/automationModal.js')
+    move_rule_block = extract_js_function_block(automation_js, 'moveRule(index, dir) {')
+    move_group_block = extract_js_function_block(automation_js, 'moveGroup(ruleIdx, groupIdx, dir) {')
+    move_condition_block = extract_js_function_block(automation_js, 'moveConditionInGroup(ruleIdx, groupIdx, condIdx, dir) {')
+    move_action_block = extract_js_function_block(automation_js, 'moveAction(ruleIdx, actIdx, dir) {')
+
+    assert 'moveArrayItem(items, index, dir) {' in automation_js
+    assert 'moveRule(index, dir) {' in automation_js
+    assert 'moveGroup(ruleIdx, groupIdx, dir) {' in automation_js
+    assert 'moveConditionInGroup(ruleIdx, groupIdx, condIdx, dir) {' in automation_js
+    assert 'moveAction(ruleIdx, actIdx, dir) {' in automation_js
+    assert 'this.moveArrayItem(this.editingRules, index, dir)' in move_rule_block
+    assert 'this.moveArrayItem(groups, groupIdx, dir)' in move_group_block
+    assert 'this.moveArrayItem(conditions, condIdx, dir)' in move_condition_block
+    assert 'this.moveArrayItem(actions, actIdx, dir)' in move_action_block
+
+
+def test_automation_modal_css_keeps_inline_sort_actions_compact_and_wrapping():
+    automation_css = read_project_file('static/css/modules/modal-automation.css')
+    mobile_block = extract_media_block(automation_css, '@media (max-width: 768px)')
+    inline_actions_block = extract_exact_css_block(automation_css, '.automation-inline-actions')
+    mobile_inline_actions_block = extract_exact_css_block(mobile_block, '.automation-inline-actions')
+
+    assert 'display: flex;' in inline_actions_block
+    assert 'align-items: center;' in inline_actions_block
+    assert 'gap:' in inline_actions_block
+    assert 'flex-wrap: wrap;' in inline_actions_block
+    assert 'justify-content: flex-end;' in inline_actions_block
+    assert 'width: 100%;' in mobile_inline_actions_block or 'justify-content: flex-start;' in mobile_inline_actions_block
+
+
 def test_detail_modal_template_marks_multicard_mobile_tabs_for_stacked_layout():
     detail_template = read_project_file('templates/modals/detail_card.html')
 
@@ -1920,37 +1970,41 @@ def test_preset_sidebar_template_includes_category_tree_section():
 def test_worldinfo_grid_template_exposes_category_metadata_and_mode_hints():
     wi_grid_template = read_project_file('templates/components/grid_wi.html')
 
-    assert 'display_category' in wi_grid_template
-    assert 'category_mode' in wi_grid_template
-    assert 'showWorldInfoCategoryActions(item, $event)' in wi_grid_template
-    assert '移动到分类' in wi_grid_template
-    assert '设置管理器分类' in wi_grid_template
-    assert '恢复跟随角色卡' in wi_grid_template
-    assert '(item.source_type || item.type) !== \'embedded\'' in wi_grid_template
+    assert 'display_category' not in wi_grid_template
+    assert 'category_mode' not in wi_grid_template
+    assert 'showWorldInfoCategoryActions(item, $event)' not in wi_grid_template
+    assert '移动到分类' not in wi_grid_template
+    assert '设置管理器分类' not in wi_grid_template
+    assert '恢复跟随角色卡' not in wi_grid_template
+    assert '(item.source_type || item.type) === \'embedded\'' not in wi_grid_template
+    assert 'selectedIds.includes(item.id)' in wi_grid_template
+    assert 'toggleSelection(item)' in wi_grid_template
+    assert 'draggable="true"' in wi_grid_template
     assert 'jumpToCardFromWi(getWorldInfoOwnerId(item))' in wi_grid_template
-    assert '如需调整分类，请移动所属角色卡' in wi_grid_template
-    assert '分类：' in wi_grid_template
-    assert '跟随角色卡' in wi_grid_template
-    assert '已覆盖管理器分类' in wi_grid_template
-    assert '内嵌世界书跟随角色卡分类' in wi_grid_template
+    assert '如需调整分类，请移动所属角色卡' not in wi_grid_template
+    assert '分类：' not in wi_grid_template
+    assert '跟随角色卡' not in wi_grid_template
+    assert '已覆盖管理器分类' not in wi_grid_template
+    assert '内嵌世界书跟随角色卡分类' not in wi_grid_template
+    assert 'isEmbeddedWorldInfo(item)' not in wi_grid_template
     assert 'locateWorldInfoOwnerCard(item)' not in wi_grid_template
-    assert 'wi-book-classification' in wi_grid_template
+    assert 'wi-book-classification' not in wi_grid_template
 
 
 def test_preset_grid_template_exposes_category_metadata_and_mode_hints():
     preset_grid_template = read_project_file('templates/components/grid_presets.html')
 
-    assert 'display_category' in preset_grid_template
-    assert 'category_mode' in preset_grid_template
-    assert 'showPresetCategoryActions(item, $event)' in preset_grid_template
-    assert '移动到分类' in preset_grid_template
-    assert '设置管理器分类' in preset_grid_template
-    assert '恢复跟随角色卡' in preset_grid_template
-    assert '分类：' in preset_grid_template
-    assert '跟随角色卡' in preset_grid_template
-    assert '已覆盖管理器分类' in preset_grid_template
-    assert 'GLOBAL / 物理分类' in preset_grid_template or 'RESOURCE / 跟随角色卡' in preset_grid_template
-    assert '定位所属角色卡' in preset_grid_template
+    assert 'display_category' not in preset_grid_template
+    assert 'category_mode' not in preset_grid_template
+    assert 'showPresetCategoryActions(item, $event)' not in preset_grid_template
+    assert '移动到分类' not in preset_grid_template
+    assert '设置管理器分类' not in preset_grid_template
+    assert '恢复跟随角色卡' not in preset_grid_template
+    assert '分类：' not in preset_grid_template
+    assert 'class="text-[10px] text-[var(--text-dim)] space-y-1 mb-3"' not in preset_grid_template
+    assert 'selectedIds.includes(item.id)' in preset_grid_template
+    assert 'toggleSelection(item)' in preset_grid_template
+    assert 'draggable="true"' in preset_grid_template
 
 
 def test_state_js_tracks_mode_specific_category_state_for_worldinfo_and_presets():
@@ -1989,18 +2043,20 @@ def test_worldinfo_grid_js_uses_category_metadata_and_explicit_upload_fallback_c
     assert 'target_category' in wi_grid_source
     assert 'requires_global_fallback_confirmation' in wi_grid_source
     assert 'allow_global_fallback' in wi_grid_source
-    assert '已更新管理器分类，未移动实际文件' in wi_grid_source
-    assert '请移动所属角色卡来调整内嵌世界书分类' in wi_grid_source
-    assert 'showWorldInfoCategoryActions(item, event)' in wi_grid_source
-    assert 'moveWorldInfoToCategory(item)' in wi_grid_source
-    assert 'resetWorldInfoCategory(item)' in wi_grid_source
-    assert 'locateWorldInfoOwnerCard(item)' in wi_grid_source
-    assert '设置管理器分类' in wi_grid_source
-    assert 'if (source_type === \'embedded\')' in wi_grid_source
+    assert 'toggleSelection(item)' in wi_grid_source
+    assert 'dragStart(e, item)' in wi_grid_source
+    assert 'canSelectWorldInfoItem(item)' in wi_grid_source
+    assert 'canDeleteWorldInfoSelection()' in wi_grid_source
+    assert 'canMoveWorldInfoSelection()' in wi_grid_source
+    assert 'deleteSelectedWorldInfo()' in wi_grid_source
+    assert 'if (!this.canSelectWorldInfoItem(item)) return;' in wi_grid_source
     assert "this.wiFilterType === 'global' || this.wiFilterType === 'all'" in wi_grid_source
     assert 'owner_card_id' in wi_grid_source
     assert 'owner_card_name' in wi_grid_source
     assert 'source_type' in wi_grid_source
+    assert 'movableItems.length !== selectedItems.length' not in wi_grid_source
+    assert 'ids = [item.id]' not in wi_grid_source
+    assert 'if (!this.canMoveWorldInfoSelection()) {' in wi_grid_source
 
 
 def test_preset_grid_js_uses_category_metadata_and_explicit_upload_fallback_contract():
@@ -2013,16 +2069,91 @@ def test_preset_grid_js_uses_category_metadata_and_explicit_upload_fallback_cont
     assert 'target_category' in preset_grid_source
     assert 'requires_global_fallback_confirmation' in preset_grid_source
     assert 'allow_global_fallback' in preset_grid_source
-    assert '已更新管理器分类，未移动实际文件' in preset_grid_source
-    assert 'showPresetCategoryActions(item, event)' in preset_grid_source
-    assert 'movePresetToCategory(item)' in preset_grid_source
-    assert 'resetPresetCategory(item)' in preset_grid_source
-    assert 'locatePresetOwnerCard(item)' in preset_grid_source
-    assert '设置管理器分类' in preset_grid_source
+    assert 'toggleSelection(item)' in preset_grid_source
+    assert 'dragStart(e, item)' in preset_grid_source
+    assert 'canSelectPresetItem(item)' in preset_grid_source
+    assert 'canDeletePresetSelection()' in preset_grid_source
+    assert 'canMovePresetSelection()' in preset_grid_source
+    assert 'deleteSelectedPresets()' in preset_grid_source
+    assert 'moveSelectedPresets(targetCategory = this.filterCategory || \'\')' in preset_grid_source
+    assert 'selectedPresetItems()' in preset_grid_source
+    assert 'isPresetMovable(item)' in preset_grid_source
+    assert 'selectedItems.length === 0 || !selectedItems.every(currentItem => this.isPresetMovable(currentItem))' in preset_grid_source
+    assert '当前选中的预设包含资源绑定项，不能移动分类' in preset_grid_source
+    assert 'ids = Array.of(item.id);' not in preset_grid_source
+    drag_start_block = extract_js_function_block(preset_grid_source, 'dragStart(e, item)')
+    assert drag_start_block.index('selectedItems.length === 0 || !selectedItems.every(currentItem => this.isPresetMovable(currentItem))') < drag_start_block.index('this.selectedIds = ids;')
     assert "this.filterType === 'global' || this.filterType === 'all'" in preset_grid_source
     assert 'owner_card_id' in preset_grid_source
     assert 'owner_card_name' in preset_grid_source
     assert 'source_type' in preset_grid_source
+    assert 'showPresetCategoryActions' not in preset_grid_source
+    assert 'movePresetToCategory(item)' not in preset_grid_source
+    assert 'resetPresetCategory(item)' not in preset_grid_source
+
+
+def test_preset_grid_template_uses_selection_without_card_level_category_actions():
+    preset_template = read_project_file('templates/components/grid_presets.html')
+
+    assert 'toggleSelection(item, $event)' in preset_template
+    assert 'dragStart($event, item)' in preset_template
+    assert 'draggable="true"' in preset_template
+    assert 'data-preset-id' in preset_template
+    assert 'showPresetCategoryActions' not in preset_template
+    assert '移动到分类' not in preset_template
+    assert '跟随角色卡' not in preset_template
+    assert '已覆盖管理器分类' not in preset_template
+    assert '<span>分类：</span>' not in preset_template
+    assert 'locatePresetOwnerCard(item)' in preset_template
+    assert 'class="text-[10px] text-[var(--text-dim)] space-y-1 mb-3"' not in preset_template
+
+
+def test_sidebar_template_uses_scrollable_worldinfo_and_preset_category_sections():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+    sidebar_source = read_project_file('static/js/components/sidebar.js')
+
+    assert 'worldinfo-sidebar-tree' in sidebar_template
+    assert 'preset-sidebar-tree' in sidebar_template
+    assert '@dragover.prevent="handleDragOverRoot($event)"' in sidebar_template
+    assert '@drop.prevent="handleDropOnRoot($event)"' in sidebar_template
+    assert '@dragover.prevent="presetRootDragOver($event)"' in sidebar_template
+    assert '@drop.prevent="presetRootDrop($event)"' in sidebar_template
+    assert "folderDragOver($event, { ...folder, mode: 'presets' })" in sidebar_template
+    assert "folderDrop($event, { ...folder, mode: 'presets' })" in sidebar_template
+    assert 'canMovePresetSelection()' in sidebar_source
+    assert 'presetRootDrop(e)' in sidebar_source
+    assert 'presetRootDragOver(e)' in sidebar_source
+
+
+def test_header_selection_bar_switches_to_worldinfo_specific_actions():
+    header_template = read_project_file('templates/components/header.html')
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert "currentMode === 'worldinfo'" in header_template
+    assert 'deleteSelectedWorldInfo()' in header_template
+    assert 'moveSelectedWorldInfo()' in header_template
+    assert 'canMoveWorldInfoSelection()' in header_template
+    assert 'openBatchTagModal()' in header_template
+    assert 'executeRuleSet(rs.id)' in header_template
+    assert 'deleteSelectedWorldInfo()' in header_source
+    assert 'canDeleteWorldInfoSelection()' in header_source
+    assert 'canMoveWorldInfoSelection()' in header_source
+    assert 'selectedWorldInfoItems()' in header_source
+
+
+def test_header_selection_bar_switches_to_preset_specific_actions():
+    header_template = read_project_file('templates/components/header.html')
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert "currentMode === 'presets'" in header_template
+    assert 'deleteSelectedPresets()' in header_template
+    assert 'moveSelectedPresets()' in header_template
+    assert 'canMovePresetSelection()' in header_template
+    assert "x-show=\"selectedIds.length > 0 && currentMode === 'cards'\"" in header_template
+    assert 'deleteSelectedPresets()' in header_source
+    assert 'canDeletePresetSelection()' in header_source
+    assert 'canMovePresetSelection()' in header_source
+    assert 'selectedPresetItems()' in header_source
 
 
 def test_worldinfo_preset_context_menu_delete_copy_is_not_card_specific():

@@ -805,6 +805,52 @@ def test_worldinfo_list_includes_empty_physical_folders_in_metadata(monkeypatch,
     assert payload['folder_capabilities']['科幻/空目录']['can_delete_physical_folder'] is True
 
 
+def test_worldinfo_list_keeps_global_folder_tree_when_category_filter_is_active(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    _write_json(lorebooks_dir / '科幻' / 'dragon.json', {'name': 'Dragon Lore', 'entries': {}})
+    (lorebooks_dir / '奇幻' / '空目录').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'get_db', lambda: _FakeConn())
+    world_info_api.ctx.wi_list_cache.clear()
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/world_info/list?type=global&category=%E7%A7%91%E5%B9%BB')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert [item['name'] for item in payload['items']] == ['Dragon Lore']
+    assert '科幻' in payload['all_folders']
+    assert '奇幻' in payload['all_folders']
+    assert '奇幻/空目录' in payload['all_folders']
+
+
+def test_worldinfo_root_folder_capabilities_allow_create_subcategory(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    lorebooks_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'get_db', lambda: _FakeConn())
+    world_info_api.ctx.wi_list_cache.clear()
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/world_info/list?type=global')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    root_caps = payload['folder_capabilities'].get('', {})
+    assert root_caps.get('has_physical_folder') is True
+    assert root_caps.get('can_create_child_folder') is True
+
+
 def test_worldinfo_resource_override_rejects_non_resource_path_even_with_resource_source_type(monkeypatch, tmp_path):
     lorebooks_dir = tmp_path / 'lorebooks'
     resources_dir = tmp_path / 'resources'

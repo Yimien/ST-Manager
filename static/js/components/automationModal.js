@@ -410,17 +410,27 @@ export default function automationModal() {
         deleteRule(index) {
             if(confirm("删除此规则？")) {
                 this.editingRules.splice(index, 1);
+                this.editingRules = [...this.editingRules];
             }
         },
 
-        moveRule(index, dir) {
+        moveArrayItem(items, index, dir) {
+            if (!Array.isArray(items)) return false;
+
             const newIndex = index + dir;
-            if (newIndex < 0 || newIndex >= this.editingRules.length) return;
-            const temp = this.editingRules[index];
-            this.editingRules[index] = this.editingRules[newIndex];
-            this.editingRules[newIndex] = temp;
-            // 强制刷新 Alpine 数组
-            this.editingRules = [...this.editingRules]; 
+            if (index < 0 || index >= items.length || newIndex < 0 || newIndex >= items.length) {
+                return false;
+            }
+
+            const temp = items[index];
+            items[index] = items[newIndex];
+            items[newIndex] = temp;
+            return true;
+        },
+
+        moveRule(index, dir) {
+            if (!this.moveArrayItem(this.editingRules, index, dir)) return;
+            this.editingRules = [...this.editingRules];
         },
 
         // Group Operations
@@ -430,11 +440,19 @@ export default function automationModal() {
                 logic: "AND",
                 conditions: []
             });
+            this.editingRules = [...this.editingRules];
+        },
+
+        moveGroup(ruleIdx, groupIdx, dir) {
+            const groups = this.editingRules[ruleIdx]?.groups;
+            if (!this.moveArrayItem(groups, groupIdx, dir)) return;
+            this.editingRules = [...this.editingRules];
         },
 
         removeGroup(ruleIdx, groupIdx) {
             if(confirm("删除此条件组？")) {
                 this.editingRules[ruleIdx].groups.splice(groupIdx, 1);
+                this.editingRules = [...this.editingRules];
             }
         },
 
@@ -446,10 +464,18 @@ export default function automationModal() {
                 value: "",
                 case_sensitive: false
             });
+            this.editingRules = [...this.editingRules];
+        },
+
+        moveConditionInGroup(ruleIdx, groupIdx, condIdx, dir) {
+            const conditions = this.editingRules[ruleIdx]?.groups[groupIdx]?.conditions;
+            if (!this.moveArrayItem(conditions, condIdx, dir)) return;
+            this.editingRules = [...this.editingRules];
         },
 
         removeConditionFromGroup(ruleIdx, groupIdx, condIdx) {
             this.editingRules[ruleIdx].groups[groupIdx].conditions.splice(condIdx, 1);
+            this.editingRules = [...this.editingRules];
         },
 
         // Action Operations (Keep flat)
@@ -459,9 +485,18 @@ export default function automationModal() {
                 value: ""
             };
             this.editingRules[ruleIdx].actions.push(newAction);
+            this.editingRules = [...this.editingRules];
         },
+
+        moveAction(ruleIdx, actIdx, dir) {
+            const actions = this.editingRules[ruleIdx]?.actions;
+            if (!this.moveArrayItem(actions, actIdx, dir)) return;
+            this.editingRules = [...this.editingRules];
+        },
+
         removeAction(ruleIdx, actIdx) {
             this.editingRules[ruleIdx].actions.splice(actIdx, 1);
+            this.editingRules = [...this.editingRules];
         },
 
         // Initialize action config (for fetch_forum_tags)

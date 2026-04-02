@@ -3,12 +3,10 @@
  * 世界书网格组件
  */
 
-import { listWorldInfo, uploadWorldInfo, createWorldInfo } from '../api/wi.js';
+import { listWorldInfo, uploadWorldInfo, createWorldInfo, deleteWorldInfo } from '../api/wi.js';
 
 export default function wiGrid() {
     return {
-        activeCategoryItemId: null,
-
         // === Store 代理 ===
         get wiList() { return this.$store.global.wiList; },
         set wiList(val) { this.$store.global.wiList = val; },
@@ -23,6 +21,12 @@ export default function wiGrid() {
         get wiFilterType() { return this.$store.global.wiFilterType; },
         set wiFilterType(val) { this.$store.global.wiFilterType = val; },
         get wiFilterCategory() { return this.$store.global.wiFilterCategory || ''; },
+        get selectedIds() { return this.$store.global.viewState.selectedIds; },
+        set selectedIds(val) { this.$store.global.viewState.selectedIds = val; return true; },
+        get lastSelectedId() { return this.$store.global.viewState.lastSelectedId; },
+        set lastSelectedId(val) { this.$store.global.viewState.lastSelectedId = val; return true; },
+        get draggedCards() { return this.$store.global.viewState.draggedCards; },
+        set draggedCards(val) { this.$store.global.viewState.draggedCards = val; return true; },
 
         get wiUploadHintText() {
             if (this.isGlobalCategoryContext()) {
@@ -69,17 +73,6 @@ export default function wiGrid() {
             return formData;
         },
 
-        getCategoryModeHint(item) {
-            if ((item?.source_type || item?.type) === 'embedded') return '内嵌世界书跟随角色卡分类';
-            if (item?.category_mode === 'override') return '已更新管理器分类，未移动实际文件';
-            if (item?.category_mode === 'inherited') return '跟随角色卡';
-            return '';
-        },
-
-        getEmbeddedMoveRejectedMessage() {
-            return '请移动所属角色卡来调整内嵌世界书分类';
-        },
-
         getWorldInfoSourceBadge(item) {
             const source_type = item?.source_type || item?.type;
             if (source_type === 'global') return 'GLOBAL';
@@ -95,79 +88,137 @@ export default function wiGrid() {
             return item?.owner_card_id || item?.card_id || '';
         },
 
-        locateWorldInfoOwnerCard(item) {
-            const owner_card_id = this.getWorldInfoOwnerId(item);
-            if (!owner_card_id) return;
-            this.jumpToCardFromWi(owner_card_id);
-            this.hideWorldInfoCategoryActions();
+        getWorldInfoItemById(id) {
+            return (this.wiList || []).find(item => item.id === id) || null;
         },
 
-        getMovableWorldInfoCategories() {
-            const capabilities = this.$store.global.wiFolderCapabilities || {};
-            return (this.$store.global.wiAllFolders || []).filter(path => capabilities[path]?.has_physical_folder);
+        selectedWorldInfoItems() {
+            return this.selectedIds
+                .map(id => this.getWorldInfoItemById(id))
+                .filter(Boolean);
         },
 
-        showWorldInfoCategoryActions(item, event) {
-            event.stopPropagation();
-            this.activeCategoryItemId = this.activeCategoryItemId === item.id ? null : item.id;
+        canSelectWorldInfoItem(item) {
+            return (item?.source_type || item?.type) !== 'embedded';
         },
 
-        hideWorldInfoCategoryActions() {
-            this.activeCategoryItemId = null;
+        canDeleteWorldInfoItem(item) {
+            return !!item && this.canSelectWorldInfoItem(item);
         },
 
-        async moveWorldInfoToCategory(item) {
-            const source_type = item?.source_type || item?.type;
-            if (source_type === 'embedded') {
-                alert(this.getEmbeddedMoveRejectedMessage());
-                this.hideWorldInfoCategoryActions();
+        canMoveWorldInfoItem(item) {
+            return !!item && (item.source_type || item.type) === 'global';
+        },
+
+        canDeleteWorldInfoSelection() {
+            const items = this.selectedWorldInfoItems();
+            return items.length > 0 && items.every(item => this.canDeleteWorldInfoItem(item));
+        },
+
+        canMoveWorldInfoSelection() {
+            const items = this.selectedWorldInfoItems();
+            return items.length > 0 && items.every(item => this.canMoveWorldInfoItem(item));
+        },
+
+        toggleSelection(item) {
+            if (!this.canSelectWorldInfoItem(item)) return;
+
+            let ids = [...this.selectedIds];
+            if (ids.includes(item.id)) {
+                ids = ids.filter(id => id !== item.id);
+            } else {
+                ids.push(item.id);
+                this.lastSelectedId = item.id;
+            }
+            this.selectedIds = ids;
+        },
+
+        dragStart(e, item) {
+            if (!this.canSelectWorldInfoItem(item)) {
+                e.preventDefault();
                 return;
             }
 
-            const choices = ['根目录'].concat(this.getMovableWorldInfoCategories());
-            const current = item?.display_category || '根目录';
-            const actionLabel = source_type === 'resource' ? '设置管理器分类' : '移动到分类';
-            const selected = prompt(`${actionLabel}（可选：${choices.join(', ')}）`, current);
-            if (selected === null) return;
+            let ids = [...this.selectedIds];
+            if (!ids.includes(item.id)) {
+                ids = Array.of(item.id);
+                this.selectedIds = ids;
+            }
 
-            const target_category = String(selected).trim() === '根目录' ? '' : String(selected).trim();
-            const resp = await fetch('/api/world_info/category/move', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    source_type,
-                    file_path: item.path,
-                    target_category,
-                })
-            });
-            const res = await resp.json();
-            if (res?.success) {
-                this.$store.global.showToast(res.msg);
-                this.fetchWorldInfoList();
-                this.hideWorldInfoCategoryActions();
+            const selectedItems = ids.map(id => this.getWorldInfoItemById(id)).filter(Boolean);
+            if (!this.canMoveWorldInfoSelection()) {
+                e.preventDefault();
                 return;
             }
-            alert(res?.msg || '移动失败');
+
+            this.draggedCards = ids;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('application/x-st-worldinfo', JSON.stringify(ids));
+            e.dataTransfer.setData('text/plain', item.id);
+
+            const cardElement = e.target.closest('.wi-grid-card');
+            if (cardElement) {
+                requestAnimationFrame(() => {
+                    cardElement.classList.add('drag-source');
+                });
+
+                const cleanup = () => {
+                    cardElement.classList.remove('drag-source');
+                    window.dispatchEvent(new CustomEvent('global-drag-end'));
+                };
+
+                e.target.addEventListener('dragend', cleanup, { once: true });
+            }
         },
 
-        async resetWorldInfoCategory(item) {
-            const source_type = item?.source_type || item?.type;
-            const resp = await fetch('/api/world_info/category/reset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    source_type,
-                    file_path: item.path,
-                })
-            });
-            const res = await resp.json();
-            if (res?.success) {
-                this.$store.global.showToast(res.msg);
-                this.fetchWorldInfoList();
-                this.hideWorldInfoCategoryActions();
-                return;
+        async moveSelectedWorldInfo(target_category = '') {
+            if (!this.canMoveWorldInfoSelection()) return;
+
+            const items = this.selectedWorldInfoItems();
+            const count = items.length;
+            const label = target_category || '根目录';
+            if (!confirm(`移动 ${count} 本世界书到 "${label}"?`)) return;
+
+            for (const item of items) {
+                const resp = await fetch('/api/world_info/category/move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source_type: item.source_type || item.type,
+                        file_path: item.path,
+                        target_category,
+                    })
+                });
+                const res = await resp.json();
+                if (!res?.success) {
+                    alert(res?.msg || '移动失败');
+                    return;
+                }
             }
-            alert(res?.msg || '恢复失败');
+
+            this.$store.global.showToast(`✅ 已移动 ${count} 本世界书`);
+            this.selectedIds = [];
+            this.fetchWorldInfoList();
+        },
+
+        async deleteSelectedWorldInfo() {
+            if (!this.canDeleteWorldInfoSelection()) return;
+
+            const items = this.selectedWorldInfoItems();
+            const count = items.length;
+            if (!confirm(`确定将选中的 ${count} 本世界书移至回收站吗？`)) return;
+
+            for (const item of items) {
+                const res = await deleteWorldInfo(item.path);
+                if (!res?.success) {
+                    alert(`删除失败: ${res?.msg || '未知错误'}`);
+                    return;
+                }
+            }
+
+            this.$store.global.showToast(`🗑️ 已删除 ${count} 本世界书`);
+            this.selectedIds = [];
+            this.fetchWorldInfoList();
         },
 
         init() {
@@ -209,6 +260,14 @@ export default function wiGrid() {
             // 新建世界书（由 Header / Sidebar 触发）
             window.addEventListener('create-worldinfo', () => {
                 this.createNewWorldInfo();
+            });
+
+            window.addEventListener('delete-selected-worldinfo', () => {
+                this.deleteSelectedWorldInfo();
+            });
+
+            window.addEventListener('move-selected-worldinfo', (e) => {
+                this.moveSelectedWorldInfo(e.detail?.target_category || '');
             });
         },
 

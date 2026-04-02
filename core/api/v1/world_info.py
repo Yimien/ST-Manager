@@ -259,6 +259,10 @@ def _add_physical_folder_nodes(folder_meta: dict, base_dir: str):
             }
         return folder_capabilities[path]
 
+    root_caps = _ensure_capability('')
+    root_caps['has_physical_folder'] = True
+    root_caps['can_create_child_folder'] = True
+
     for root, dirs, files in os.walk(base_dir):
         rel_root = os.path.relpath(root, base_dir).replace('\\', '/')
         current_category = '' if rel_root == '.' else _normalize_category_path(rel_root)

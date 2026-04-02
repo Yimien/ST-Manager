@@ -1,4 +1,5 @@
 import sys
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,8 @@ from flask import Flask
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+automation_manager = importlib.import_module('core.automation.manager')
 
 from core.api.v1 import automation as automation_api
 from core.automation.engine import AutomationEngine
@@ -31,6 +34,7 @@ from core.automation.normalizer import (
     normalize_actions_for_context,
 )
 from core.services import automation_service
+from core.automation.manager import RuleManager
 
 
 def _make_automation_app():
@@ -1756,3 +1760,58 @@ def test_sync_card_names_internal_accepts_structured_template_rename_config(monk
     assert details['new_filename'] == 'Hero Card - 2024-01-02.json'
     assert source_path.exists() is False
     assert (card_dir / 'Hero Card - 2024-01-02.json').exists() is True
+
+
+def test_rule_manager_save_ruleset_preserves_group_condition_and_action_order(monkeypatch, tmp_path):
+    rules_dir = tmp_path / 'automation'
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(automation_manager, 'RULES_DIR', str(rules_dir))
+
+    manager = RuleManager()
+    saved_id = manager.save_ruleset(
+        None,
+        {
+            'meta': {'name': 'Ordered Rules'},
+            'rules': [
+                {
+                    'name': 'ordered',
+                    'enabled': True,
+                    'logic': 'OR',
+                    'groups': [
+                        {
+                            'id': 'group-b',
+                            'logic': 'AND',
+                            'conditions': [
+                                {'field': 'filename', 'operator': 'contains', 'value': 'B'},
+                                {'field': 'filename', 'operator': 'contains', 'value': 'A'},
+                            ],
+                        },
+                        {
+                            'id': 'group-a',
+                            'logic': 'OR',
+                            'conditions': [
+                                {'field': 'tags', 'operator': 'contains', 'value': 'tag-2'},
+                                {'field': 'tags', 'operator': 'contains', 'value': 'tag-1'},
+                            ],
+                        },
+                    ],
+                    'actions': [
+                        {'type': 'remove_tag', 'value': 'late'},
+                        {'type': 'add_tag', 'value': 'early'},
+                        {'type': 'move_folder', 'value': 'Sorted/Folder'},
+                    ],
+                }
+            ],
+        },
+    )
+
+    saved = manager.get_ruleset(saved_id)
+    groups = saved['rules'][0]['groups']
+    actions = saved['rules'][0]['actions']
+
+    assert [group['id'] for group in groups] == ['group-b', 'group-a']
+    assert [cond['value'] for cond in groups[0]['conditions']] == ['B', 'A']
+    assert [cond['value'] for cond in groups[1]['conditions']] == ['tag-2', 'tag-1']
+    assert [action['type'] for action in actions] == ['remove_tag', 'add_tag', 'move_folder']
+    assert [action['value'] for action in actions] == ['late', 'early', 'Sorted/Folder']

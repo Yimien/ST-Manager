@@ -130,6 +130,15 @@
   border: 1px solid var(--border-light);
 }
 
+.automation-inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  min-width: fit-content;
+}
+
 .drag-handle {
   cursor: grab;
   color: var(--text-dim);
@@ -377,6 +386,10 @@
     align-items: stretch;
     gap: 0.5rem;
     padding: 0.5rem;
+  }
+  .automation-inline-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
   .btn-icon-sm {
     width: 32px;

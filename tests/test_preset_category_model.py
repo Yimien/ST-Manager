@@ -26,6 +26,11 @@ def _write_json(path: Path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
+class _FakeCache:
+    def __init__(self, cards):
+        self.cards = list(cards)
+
+
 def _make_card(card_id, category, *, char_name='Lucy'):
     return {
         'id': card_id,
@@ -635,6 +640,24 @@ def test_list_presets_includes_empty_physical_folders_in_metadata(monkeypatch, t
     assert '写作/空目录' in payload['all_folders']
     assert payload['folder_capabilities']['写作']['has_physical_folder'] is True
     assert payload['folder_capabilities']['写作/空目录']['can_delete_physical_folder'] is True
+
+
+def test_preset_root_folder_capabilities_allow_create_subcategory(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    presets_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(presets_api, 'load_config', lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')})
+    monkeypatch.setattr(presets_api.ctx, 'cache', _FakeCache([]))
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/list?filter_type=global')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    root_caps = payload['folder_capabilities'].get('', {})
+    assert root_caps.get('has_physical_folder') is True
+    assert root_caps.get('can_create_child_folder') is True
 
 
 def test_preset_resource_override_rejects_non_resource_path_even_with_resource_source_type(monkeypatch, tmp_path):

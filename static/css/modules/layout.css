@@ -460,6 +460,13 @@ html.light-mode .pagination-bar {
   animation: slideIn 0.3s ease-out;
 }
 
+.worldinfo-sidebar-tree,
+.preset-sidebar-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .tool-buttons button {
   transition: all 0.2s ease;
 }
