@@ -557,6 +557,7 @@ def _apply_world_info_preview(data, cfg: dict, preview_limit=None, force_full: b
 from core.utils.image import extract_card_info # 用于 export logic
 
 logger = logging.getLogger(__name__)
+WI_LIST_CACHE_VERSION = 2
 
 bp = Blueprint('wi', __name__)
 
@@ -600,13 +601,13 @@ def api_list_world_infos():
             card_category_sig = _build_card_category_sig(getattr(ctx.cache, 'cards', []))
 
         if wi_type == 'global':
-            sig = ('global', global_dir_sig, db_sig, cards_dir_sig, card_category_sig)
+            sig = ('global', WI_LIST_CACHE_VERSION, global_dir_sig, db_sig, cards_dir_sig, card_category_sig)
         elif wi_type == 'resource':
-            sig = ('resource', resource_dir_sig, ui_data_sig, card_category_sig)
+            sig = ('resource', WI_LIST_CACHE_VERSION, resource_dir_sig, ui_data_sig, card_category_sig)
         elif wi_type == 'embedded':
-            sig = ('embedded', db_sig, cards_dir_sig, card_category_sig)
+            sig = ('embedded', WI_LIST_CACHE_VERSION, db_sig, cards_dir_sig, card_category_sig)
         else:  # all
-            sig = ('all', global_dir_sig, resource_dir_sig, ui_data_sig, db_sig, cards_dir_sig, card_category_sig)
+            sig = ('all', WI_LIST_CACHE_VERSION, global_dir_sig, resource_dir_sig, ui_data_sig, db_sig, cards_dir_sig, card_category_sig)
 
         with ctx.wi_list_cache_lock:
             cached = ctx.wi_list_cache.get(cache_key)
@@ -632,9 +633,6 @@ def api_list_world_infos():
         items = []
         embedded_name_set = set()
         embedded_sig_set = set()
-        card_map = {}
-        if getattr(ctx.cache, 'initialized', False):
-            card_map = {str(card.get('id') or ''): card for card in ctx.cache.cards}
 
         # 预先读取内嵌世界书名称与内容签名，用于全局列表去重
         if wi_type in ['all', 'global']:
@@ -728,6 +726,8 @@ def api_list_world_infos():
                             resource_lore_dirs.add(lore_dir)
                 except Exception:
                     pass
+
+        card_map = {str(card.get('id') or ''): card for card in getattr(ctx.cache, 'cards', []) or []}
 
         # 1. 全局目录 (Global)
         if wi_type in ['all', 'global']:
@@ -882,6 +882,8 @@ def api_list_world_infos():
                     "owner_card_category": owner_category,
                 })
 
+        source_items = list(items)
+
         # 过滤与排序
         if category:
             items = [i for i in items if _is_in_category_subtree(i.get('display_category', ''), category)]
@@ -890,7 +892,7 @@ def api_list_world_infos():
             items = [i for i in items if search in i['name'].lower() or (i.get('card_name') and search in i['card_name'].lower())]
             
         items.sort(key=lambda x: x.get('mtime', 0), reverse=True)
-        folder_meta = _add_physical_folder_nodes(_build_folder_metadata(items), current_wi_folder)
+        folder_meta = _add_physical_folder_nodes(_build_folder_metadata(source_items), current_wi_folder)
 
         # ===== [CACHE WRITE] 只在未命中缓存时写入 =====
         if cached_items is None:

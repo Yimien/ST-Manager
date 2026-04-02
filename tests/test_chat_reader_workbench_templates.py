@@ -2136,6 +2136,12 @@ def test_sidebar_template_uses_scrollable_worldinfo_and_preset_category_sections
     assert 'presetRootDragOver(e)' in sidebar_source
 
 
+def test_worldinfo_css_exposes_hover_visible_selection_overlay():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+
+    assert '.wi-grid-card:hover .card-select-overlay' in wi_css
+
+
 def test_header_selection_bar_switches_to_worldinfo_specific_actions():
     header_template = read_project_file('templates/components/header.html')
     header_source = read_project_file('static/js/components/header.js')

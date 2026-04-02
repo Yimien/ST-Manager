@@ -1221,6 +1221,13 @@ html.light-mode .wi-help-modal-content {
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.14);
 }
 
+.wi-grid-card:hover .card-select-overlay,
+.wi-grid-card .card-select-overlay.is-selected,
+.wi-grid-card .card-select-overlay.is-mobile {
+  opacity: 1;
+  transform: scale(1);
+}
+
 html.light-mode .wi-grid-card:hover {
   box-shadow: 0 16px 24px rgba(0, 0, 0, 0.1);
 }

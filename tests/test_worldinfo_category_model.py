@@ -35,6 +35,17 @@ class _FakeCache:
         raise AssertionError('reload_from_db should not be called in worldinfo category tests')
 
 
+class _LazyFakeCache(_FakeCache):
+    def __init__(self, cards):
+        super().__init__([])
+        self._seed_cards = list(cards)
+        self.initialized = False
+
+    def reload_from_db(self):
+        self.cards = list(self._seed_cards)
+        self.initialized = True
+
+
 def _write_json(path: Path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -99,6 +110,36 @@ def test_worldinfo_list_returns_display_category_for_global_resource_and_embedde
     assert items['embedded']['display_category'] == '科幻'
     assert items['embedded']['category_mode'] == 'inherited'
     assert payload['folder_capabilities']['科幻']['has_physical_folder'] is True
+
+
+def test_worldinfo_list_uses_owner_category_even_when_cache_lazy_loads(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    ui_path = tmp_path / 'ui_data.json'
+    _write_json(resources_dir / 'lucy' / 'lorebooks' / 'companion.json', {'name': 'Companion Lore', 'entries': {}})
+    ui_path.write_text(json.dumps({'cards/lucy.png': {'resource_folder': 'lucy'}}, ensure_ascii=False), encoding='utf-8')
+
+    cards = [_make_card('cards/lucy.png', '科幻', has_character_book=True)]
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _LazyFakeCache(cards))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(
+        world_info_api,
+        'extract_card_info',
+        lambda _path: {'data': {'character_book': {'name': 'Embedded Book', 'entries': {'0': {'content': 'hello'}}}}},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/world_info/list?type=all')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    items = {item['type']: item for item in payload['items']}
+    assert items['resource']['display_category'] == '科幻'
+    assert items['embedded']['display_category'] == '科幻'
 
 
 class _FakeCursor:
@@ -810,16 +851,20 @@ def test_worldinfo_list_keeps_global_folder_tree_when_category_filter_is_active(
     resources_dir = tmp_path / 'resources'
     _write_json(lorebooks_dir / '科幻' / 'dragon.json', {'name': 'Dragon Lore', 'entries': {}})
     (lorebooks_dir / '奇幻' / '空目录').mkdir(parents=True, exist_ok=True)
+    _write_json(resources_dir / 'lucy' / 'lorebooks' / 'companion.json', {'name': 'Companion Lore', 'entries': {}})
+    ui_path = tmp_path / 'ui_data.json'
+    ui_path.write_text(json.dumps({'cards/lucy.png': {'resource_folder': 'lucy'}}, ensure_ascii=False), encoding='utf-8')
 
-    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([_make_card('cards/lucy.png', '日常')]))
     monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
     monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
     monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
     monkeypatch.setattr(world_info_api, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
     world_info_api.ctx.wi_list_cache.clear()
 
     client = _make_test_app().test_client()
-    res = client.get('/api/world_info/list?type=global&category=%E7%A7%91%E5%B9%BB')
+    res = client.get('/api/world_info/list?type=all&category=%E7%A7%91%E5%B9%BB')
 
     assert res.status_code == 200
     payload = res.get_json()
@@ -827,6 +872,7 @@ def test_worldinfo_list_keeps_global_folder_tree_when_category_filter_is_active(
     assert '科幻' in payload['all_folders']
     assert '奇幻' in payload['all_folders']
     assert '奇幻/空目录' in payload['all_folders']
+    assert '日常' in payload['all_folders']
     assert payload['folder_capabilities']['奇幻']['has_physical_folder'] is True
 
 
