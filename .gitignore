@@ -5,7 +5,18 @@ __pycache__/
 .db
 .git/
 .vscode/
+# 忽略 data 下所有直接子项
 data/*
+# 但保留 assets 目录（否则 Git 不会进入）
+!data/assets/
+# 忽略 assets 下的所有内容
+data/assets/*
+# 但保留 backgrounds 目录
+!data/assets/backgrounds/
+# 忽略 backgrounds 下的所有内容
+data/assets/backgrounds/*
+# 只保留目标文件
+!data/assets/backgrounds/default_background.jpeg
 config.json
 venv/
 env/
