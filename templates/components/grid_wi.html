@@ -57,12 +57,13 @@
                             </div>
 
                             <div class="wi-card-primary">
-                                <div x-show="$store.global.deviceType !== 'mobile'" class="wi-card-bookmark">📖</div>
-
-                                <div class="wi-card-title-wrap">
-                                    <h3 class="wi-card-title"
-                                        :class="item.name_source === 'filename' ? 'wi-title-fallback' : ''"
-                                        x-text="item.name"></h3>
+                                <div class="wi-card-title-row">
+                                    <div class="wi-card-bookmark" aria-hidden="true">📖</div>
+                                    <div class="wi-card-title-wrap">
+                                        <h3 class="wi-card-title"
+                                            :class="item.name_source === 'filename' ? 'wi-title-fallback' : ''"
+                                            x-text="item.name"></h3>
+                                    </div>
                                 </div>
 
                                 <div class="wi-card-owner-row">

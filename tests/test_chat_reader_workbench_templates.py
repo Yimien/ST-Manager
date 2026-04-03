@@ -2015,6 +2015,42 @@ def test_worldinfo_grid_template_uses_info_card_front_layout():
     assert '标签待接入' in wi_grid_template or 'getWorldInfoTagPlaceholder(item)' in wi_grid_template
 
 
+def test_worldinfo_grid_template_preserves_visual_icon_anchor():
+    wi_grid_template = read_project_file('templates/components/grid_wi.html')
+
+    assert 'wi-card-title-row' in wi_grid_template
+    assert 'wi-card-bookmark' in wi_grid_template
+
+
+def test_worldinfo_css_preserves_front_visual_treatment():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+
+    assert '.wi-card-title-row' in wi_css
+    assert '.wi-card-bookmark' in wi_css
+    assert '.wi-card-front::before' in wi_css or '.wi-card-front::after' in wi_css
+
+
+def test_worldinfo_css_separates_badge_tag_and_note_state_visual_weight():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+
+    assert '.wi-card-tag-placeholder::before' in wi_css
+    assert '.wi-card-note-state.no-note' in wi_css
+    assert '.wi-card-note-state.has-note' in wi_css
+
+
+def test_worldinfo_mobile_back_note_is_constrained_within_card_bounds():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+
+    assert '@media (max-width: 768px)' in wi_css
+    assert '.wi-card-back-note-wrap' in wi_css
+    assert '.wi-back-note' in wi_css
+    mobile_block = wi_css.split('@media (max-width: 768px) {', 1)[1]
+    back_note_mobile_block = mobile_block.split('.wi-back-note {', 1)[1].split('}', 1)[0]
+    assert '.wi-card-back {' in wi_css
+    assert 'overflow: hidden;' in wi_css
+    assert 'min-height: 0;' in back_note_mobile_block
+
+
 def test_worldinfo_grid_template_uses_back_note_reading_layout():
     wi_grid_template = read_project_file('templates/components/grid_wi.html')
 
