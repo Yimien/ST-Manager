@@ -21,6 +21,10 @@ export default function tagFilterModal() {
         customOrderEnabled: false,
         _syncClosing: false,
         mobileActiveTab: 'filter',
+        desktopWorkspaceMode: 'filter',
+        isDesktopWorkspaceFullscreen: false,
+        isWorkspaceHelpOpen: false,
+        isGovernanceDrawerOpen: false,
         rememberLastTagView: false,
         lockTagLibrary: false,
         tagBlacklistInput: '',
@@ -48,6 +52,20 @@ export default function tagFilterModal() {
         categoryFilterInclude: [],
         categoryFilterExclude: [],
         mixedCategoryView: true,
+        workspaceHelpSections: [
+            { id: 'overview', label: '总览' },
+            { id: 'search-view', label: '搜索与视图' },
+            { id: 'separator-rules', label: '分隔符规则' },
+            { id: 'filter-mode', label: '筛选模式' },
+            { id: 'batch-category-mode', label: '批量分类' },
+            { id: 'sort-mode', label: '排序模式' },
+            { id: 'delete-mode', label: '删除模式' },
+            { id: 'category-manager-mode', label: '分类管理' },
+            { id: 'governance', label: '治理设置' },
+            { id: 'workflow', label: '推荐工作流' },
+            { id: 'faq', label: '常见问题' },
+        ],
+        activeWorkspaceHelpSection: 'overview',
 
         get sidebarTagsPool() {
             return this.$store.global.sidebarTagsPool || [];
@@ -114,7 +132,7 @@ export default function tagFilterModal() {
         },
 
         get filterCategoryNames() {
-            return (this.baseTagGroups || []).map(group => group.category);
+            return this.availableCategoryNames;
         },
 
         get availableCategoryNames() {
@@ -205,6 +223,143 @@ export default function tagFilterModal() {
             this.mobileActiveTab = tab;
         },
 
+        setDesktopWorkspaceMode(mode) {
+            const changed = this.syncDesktopWorkspaceMode(mode);
+            if (changed === false) return false;
+            this.desktopWorkspaceMode = mode;
+            return true;
+        },
+
+        syncDesktopWorkspaceMode(mode) {
+            if (!['filter', 'batch-category', 'sort', 'delete', 'category-manager'].includes(mode)) {
+                return false;
+            }
+
+            this.closeWorkspaceHelp();
+            this.closeGovernanceDrawer();
+
+            const previousMode = this.desktopWorkspaceMode;
+            const previousWasCategoryWorkspace = ['batch-category', 'category-manager'].includes(previousMode);
+            const nextIsCategoryWorkspace = ['batch-category', 'category-manager'].includes(mode);
+
+            if (previousMode === 'sort' && mode !== 'sort' && this.isSortMode) {
+                this.cancelSortMode();
+                if (this.isSortMode) return false;
+            }
+
+            if (previousMode === 'delete' && mode !== 'delete') {
+                this.selectedTagsForDeletion = [];
+                this.isDeleteMode = false;
+            }
+
+            if (previousWasCategoryWorkspace && !nextIsCategoryWorkspace) {
+                this.selectedCategoryTags = [];
+                this.categoryDraftName = '';
+                this.categoryDraftColor = '#64748b';
+                this.categoryDraftOpacity = 16;
+                this.showCategoryManager = false;
+                this.showCategoryMode = false;
+            }
+
+            if (mode === 'sort') {
+                this.tagSearchQuery = '';
+                if (!this.isSortMode) {
+                    this.enterSortMode();
+                }
+                return this.isSortMode;
+            }
+
+            if (mode === 'delete') {
+                this.showCategoryMode = false;
+                this.showCategoryManager = false;
+                this.isDeleteMode = true;
+                return true;
+            }
+
+            if (mode === 'batch-category') {
+                this.isDeleteMode = false;
+                this.showCategoryManager = false;
+                this.showCategoryMode = true;
+                this.tagSearchQuery = '';
+                return true;
+            }
+
+            if (mode === 'category-manager') {
+                this.isDeleteMode = false;
+                this.showCategoryMode = false;
+                this.showCategoryManager = true;
+                this.tagSearchQuery = '';
+                return true;
+            }
+
+            this.isDeleteMode = false;
+            this.showCategoryMode = false;
+            this.showCategoryManager = false;
+
+            return true;
+        },
+
+        toggleDesktopWorkspaceFullscreen() {
+            const shell = this.$root?.querySelector('.tag-filter-desktop-shell');
+            const doc = document;
+            const activeFullscreenElement = doc.fullscreenElement || doc.webkitFullscreenElement || null;
+
+            if (activeFullscreenElement) {
+                const exitFullscreen = doc.exitFullscreen || doc.webkitExitFullscreen;
+                if (typeof exitFullscreen === 'function') {
+                    Promise.resolve(exitFullscreen.call(doc)).catch(() => {}).finally(() => {
+                        this.isDesktopWorkspaceFullscreen = false;
+                    });
+                    return;
+                }
+            }
+
+            const requestFullscreen = shell && (shell.requestFullscreen || shell.webkitRequestFullscreen);
+            if (typeof requestFullscreen === 'function') {
+                Promise.resolve(requestFullscreen.call(shell)).catch(() => {
+                    this.isDesktopWorkspaceFullscreen = !this.isDesktopWorkspaceFullscreen;
+                }).then(() => {
+                    this.isDesktopWorkspaceFullscreen = true;
+                });
+                return;
+            }
+
+            this.isDesktopWorkspaceFullscreen = !this.isDesktopWorkspaceFullscreen;
+        },
+
+        toggleGovernanceDrawer() {
+            this.isGovernanceDrawerOpen = !this.isGovernanceDrawerOpen;
+        },
+
+        closeGovernanceDrawer() {
+            this.isGovernanceDrawerOpen = false;
+        },
+
+        toggleWorkspaceHelp() {
+            if (!this.isWorkspaceHelpOpen) {
+                this.closeGovernanceDrawer();
+                this.activeWorkspaceHelpSection = 'overview';
+            }
+            this.isWorkspaceHelpOpen = !this.isWorkspaceHelpOpen;
+        },
+
+        closeWorkspaceHelp() {
+            this.isWorkspaceHelpOpen = false;
+        },
+
+        jumpToWorkspaceHelpSection(sectionId) {
+            const nextId = String(sectionId || '').trim();
+            if (!nextId) return;
+
+            this.activeWorkspaceHelpSection = nextId;
+            queueMicrotask(() => {
+                const target = this.$root?.querySelector(`[data-workspace-help-section="${nextId}"]`);
+                if (target && typeof target.scrollIntoView === 'function') {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        },
+
         syncMobileTabState(tab) {
             if (!['filter', 'sort', 'delete', 'category'].includes(tab)) {
                 return false;
@@ -264,6 +419,13 @@ export default function tagFilterModal() {
             this.loadDesktopWorkbenchPrefs();
             this.loadTagManagementPrefs();
 
+            this._handleDesktopFullscreenChange = () => {
+                const activeFullscreenElement = document.fullscreenElement || document.webkitFullscreenElement || null;
+                this.isDesktopWorkspaceFullscreen = !!activeFullscreenElement;
+            };
+            document.addEventListener('fullscreenchange', this._handleDesktopFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', this._handleDesktopFullscreenChange);
+
             this.$watch('$store.global.showTagFilterModal', (val) => {
                 if (this._syncClosing) return;
 
@@ -307,9 +469,6 @@ export default function tagFilterModal() {
                 this.sanitizeSelectedCategorySortState();
             });
 
-            this.$watch('$store.global.tagViewPrefs.mixedCategoryView', (val) => {
-                this.mixedCategoryView = val !== false;
-            });
         },
 
         resetModalStateAfterClose() {
@@ -334,6 +493,10 @@ export default function tagFilterModal() {
             this.dragTag = null;
             this.dragOverTag = null;
             this.mobileActiveTab = 'filter';
+            this.desktopWorkspaceMode = 'filter';
+            this.isDesktopWorkspaceFullscreen = false;
+            this.closeWorkspaceHelp();
+            this.closeGovernanceDrawer();
         },
 
         loadDesktopWorkbenchPrefs() {
@@ -356,10 +519,6 @@ export default function tagFilterModal() {
         },
 
         saveDesktopWorkbenchPrefs() {
-            if (!this.rememberLastTagView) {
-                this.mixedCategoryView = true;
-            }
-
             this.$store.global.saveTagViewPrefs({
                 rememberLastTagView: this.rememberLastTagView,
                 mixedCategoryView: this.mixedCategoryView,
@@ -773,26 +932,7 @@ export default function tagFilterModal() {
         },
 
         toggleCategoryMode() {
-            if (this.isSortMode) {
-                alert('排序模式下无法编辑分类，请先退出排序模式');
-                return;
-            }
-
-            if (this.isDeleteMode) {
-                alert('删除模式下无法编辑分类，请先退出删除模式');
-                return;
-            }
-
-            this.showCategoryMode = !this.showCategoryMode;
-            if (!this.showCategoryMode) {
-                this.selectedCategoryTags = [];
-                this.categoryDraftName = '';
-                this.categoryDraftColor = '#64748b';
-                this.categoryDraftOpacity = 16;
-                return;
-            }
-
-            this.tagSearchQuery = '';
+            this.setDesktopWorkspaceMode(this.desktopWorkspaceMode === 'batch-category' ? 'filter' : 'batch-category');
         },
 
         enterSortMode() {
@@ -873,17 +1013,7 @@ export default function tagFilterModal() {
         },
 
         toggleSortMode() {
-            if (this.isDeleteMode) {
-                alert('删除模式下无法排序，请先退出删除模式');
-                return;
-            }
-
-            if (this.isSortMode) {
-                this.cancelSortMode();
-                return;
-            }
-
-            this.enterSortMode();
+            this.setDesktopWorkspaceMode(this.desktopWorkspaceMode === 'sort' ? 'filter' : 'sort');
         },
 
         cancelSortMode() {
@@ -1018,20 +1148,7 @@ export default function tagFilterModal() {
         // === 删除模式逻辑 ===
 
         toggleDeleteMode() {
-            if (this.isSortMode) {
-                alert('排序模式下无法删除，请先取消排序');
-                return;
-            }
-
-            if (this.showCategoryMode) {
-                alert('分类编辑模式下无法删除，请先退出分类编辑');
-                return;
-            }
-
-            this.isDeleteMode = !this.isDeleteMode;
-            if (!this.isDeleteMode) {
-                this.selectedTagsForDeletion = []; // 退出时清空
-            }
+            this.setDesktopWorkspaceMode(this.desktopWorkspaceMode === 'delete' ? 'filter' : 'delete');
         },
 
         toggleTagSelectionForDeletion(tag) {

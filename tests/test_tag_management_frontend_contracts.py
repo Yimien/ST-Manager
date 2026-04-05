@@ -124,6 +124,103 @@ def test_tag_filter_modal_governance_blacklist_uses_shared_splitter_with_optiona
     assert 'splitTagTokens(this.tagBlacklistInput, { slashIsSeparator })' in save_section
 
 
+def test_governance_drawer_js_defines_desktop_state_and_toggle_hooks():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+
+    assert 'isGovernanceDrawerOpen: false' in source
+    assert 'toggleGovernanceDrawer() {' in source
+    assert 'closeGovernanceDrawer() {' in source
+    assert 'this.isGovernanceDrawerOpen = !this.isGovernanceDrawerOpen;' in source
+    assert 'this.isGovernanceDrawerOpen = false;' in source
+
+
+def test_governance_drawer_js_closes_when_desktop_mode_changes_or_modal_resets():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    sync_section = extract_js_function_block(source, 'syncDesktopWorkspaceMode(mode) {')
+    reset_section = extract_js_function_block(source, 'resetModalStateAfterClose() {')
+
+    assert 'this.closeGovernanceDrawer();' in sync_section
+    assert 'this.closeGovernanceDrawer();' in reset_section
+
+
+def test_workspace_help_js_defines_toggle_and_reset_hooks():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    sync_section = extract_js_function_block(source, 'syncDesktopWorkspaceMode(mode) {')
+    reset_section = extract_js_function_block(source, 'resetModalStateAfterClose() {')
+
+    assert 'isWorkspaceHelpOpen: false' in source
+    assert 'toggleWorkspaceHelp() {' in source
+    assert 'closeWorkspaceHelp() {' in source
+    assert 'this.isWorkspaceHelpOpen = !this.isWorkspaceHelpOpen;' in source
+    assert 'this.closeWorkspaceHelp();' in sync_section
+    assert 'this.closeWorkspaceHelp();' in reset_section
+
+
+def test_workspace_help_js_defines_directory_sections_and_jump_helper():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    jump_section = extract_js_function_block(source, 'jumpToWorkspaceHelpSection(sectionId) {')
+
+    assert 'workspaceHelpSections: [' in source
+    assert "activeWorkspaceHelpSection: 'overview'" in source
+    assert "{ id: 'separator-rules', label: '分隔符规则' }" in source
+    assert 'jumpToWorkspaceHelpSection(sectionId) {' in source
+    assert 'this.activeWorkspaceHelpSection = nextId;' in jump_section
+    assert 'data-workspace-help-section' in jump_section
+    assert 'scrollIntoView' in jump_section
+
+
+def test_explicit_mode_state_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+
+    assert "desktopWorkspaceMode: 'filter'" in source
+    assert 'setDesktopWorkspaceMode(mode) {' in source
+    assert 'syncDesktopWorkspaceMode(mode) {' in source
+    assert "['filter', 'batch-category', 'sort', 'delete', 'category-manager'].includes(mode)" in source
+    assert 'const changed = this.syncDesktopWorkspaceMode(mode);' in source
+    assert 'if (changed === false) return false;' in source
+    assert 'this.desktopWorkspaceMode = mode;' in source
+    assert 'return true;' in source
+    assert "this.desktopWorkspaceMode = 'filter';" in source
+
+
+def test_desktop_workspace_separates_batch_category_and_category_manager_modes_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+
+    assert "if (mode === 'batch-category') {" in source
+    assert "if (mode === 'category-manager') {" in source
+    assert "this.showCategoryMode = true;" in source
+    assert "this.showCategoryManager = true;" in source
+    assert "this.showCategoryMode = false;" in source
+    assert "this.showCategoryManager = false;" in source
+
+
+def test_tag_filter_modal_desktop_workspace_fullscreen_toggle_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+
+    assert 'isDesktopWorkspaceFullscreen: false' in source
+    assert 'toggleDesktopWorkspaceFullscreen() {' in source
+    assert 'requestFullscreen' in source
+    assert 'exitFullscreen' in source
+    assert "document.addEventListener('fullscreenchange', this._handleDesktopFullscreenChange);" in source
+    assert "this.isDesktopWorkspaceFullscreen = false;" in source
+
+
+def test_tag_filter_modal_grouped_view_toggle_no_longer_resets_during_pref_save_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    save_section = extract_js_function_block(source, 'saveDesktopWorkbenchPrefs() {')
+
+    assert 'mixedCategoryView: this.mixedCategoryView' in save_section
+    assert 'this.mixedCategoryView = true;' not in save_section
+
+
+def test_tag_filter_modal_filter_category_names_follow_taxonomy_categories_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    filter_names_section = extract_js_function_block(source, 'get filterCategoryNames() {')
+
+    assert 'return this.availableCategoryNames;' in filter_names_section
+    assert 'this.baseTagGroups' not in filter_names_section
+
+
 def test_tag_filter_modal_desktop_category_internal_sort_hooks_persist_via_taxonomy_contract():
     source = read_project_file('static/js/components/tagFilterModal.js')
     template = read_project_file('templates/modals/tag_filter.html')
