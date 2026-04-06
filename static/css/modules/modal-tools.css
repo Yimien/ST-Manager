@@ -669,8 +669,17 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-light);
+  padding: 1rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--border-light), transparent 10%);
+  border-radius: 1rem;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--bg-panel), var(--accent-main) 8%),
+    color-mix(in srgb, var(--bg-sub), transparent 4%)
+  );
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .tag-filter-workspace-topbar {
@@ -678,6 +687,30 @@
   position: sticky;
   top: 0;
   z-index: 3;
+}
+
+.tag-filter-workspace-heading {
+  flex-shrink: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.tag-filter-workspace-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-dim), #ffffff 8%);
+}
+
+.tag-filter-workspace-title {
+  margin: 0;
+  font-size: clamp(1.18rem, 1.1rem + 0.25vw, 1.42rem);
+  line-height: 1.2;
+  font-weight: 800;
+  color: var(--text-main);
 }
 
 .tag-filter-workspace-topbar-main {
@@ -695,6 +728,10 @@
   gap: 0.75rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  padding: 0.35rem 0.45rem 0.35rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--border-light), transparent 18%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-sub), transparent 16%);
 }
 
 .tag-filter-workspace-topbar-search {
@@ -705,6 +742,12 @@
 
 .tag-filter-workspace-topbar-search .form-input {
   width: 100%;
+  border-radius: 0.95rem;
+  border-color: color-mix(in srgb, var(--border-light), transparent 10%);
+  background: color-mix(in srgb, var(--bg-panel), transparent 2%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 18px rgba(0, 0, 0, 0.08);
 }
 
 .tag-filter-workspace-selection-summary {
@@ -712,6 +755,12 @@
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.tag-filter-workspace-selection-summary .text-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
 }
 
 .tag-filter-workspace-topbar-actions {
@@ -725,17 +774,24 @@
 .tag-filter-workspace-fullscreen-btn {
   border: 1px solid var(--border-light);
   border-radius: 999px;
-  background: var(--bg-sub);
+  background: color-mix(in srgb, var(--bg-panel), var(--bg-sub) 18%);
   color: var(--text-sub);
-  padding: 0.4rem 0.9rem;
+  padding: 0.48rem 0.95rem;
   font-size: 0.75rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .tag-filter-workspace-fullscreen-btn:hover {
   border-color: var(--text-sub);
   color: var(--text-main);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.14);
 }
 
 .tag-filter-workspace-fullscreen-btn.is-active {
@@ -758,25 +814,37 @@
   gap: 0.55rem;
   align-items: center;
   max-width: 100%;
+  padding: 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--border-light), transparent 16%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-sub), transparent 14%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tag-filter-workspace-top-tab {
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 10%);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-panel), var(--bg-sub) 18%);
+  background: color-mix(in srgb, var(--bg-panel), var(--bg-sub) 16%);
   color: color-mix(in srgb, var(--text-sub), #ffffff 8%);
   cursor: pointer;
   font-size: 0.76rem;
   font-weight: 700;
   min-height: 2.2rem;
-  padding: 0.42rem 0.9rem;
-  transition: all 0.15s ease;
+  padding: 0.46rem 0.95rem;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .tag-filter-workspace-top-tab:hover {
   border-color: color-mix(in srgb, var(--text-dim), transparent 18%);
   background: color-mix(in srgb, var(--bg-panel), var(--bg-hover) 32%);
   color: var(--text-main);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
 }
 
 .tag-filter-workspace-top-tab.is-active {
@@ -804,9 +872,11 @@
   max-height: min(24rem, calc(100vh - 10rem));
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 12%);
   border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--bg-sub), transparent 26%);
+  background: color-mix(in srgb, var(--bg-panel), transparent 8%);
   padding: 0.75rem 0.9rem;
   overflow-y: auto;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
 }
 
 .tag-filter-governance-drawer.is-open {
@@ -843,7 +913,7 @@
   flex: 1;
   grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 0.5rem;
+  gap: 0.8rem;
 }
 
 .tag-filter-workspace-center {
@@ -873,11 +943,17 @@
 
 .tag-filter-current-mode-tool-panel {
   align-self: stretch;
-  padding: 0.9rem;
+  padding: 1rem;
   border-radius: 0.75rem;
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 8%);
-  background: color-mix(in srgb, var(--bg-panel), transparent 8%);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel), transparent 3%),
+    color-mix(in srgb, var(--bg-sub), transparent 12%)
+  );
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tag-filter-current-mode-tool-panel--delete {
@@ -921,10 +997,14 @@
 
 .tag-filter-current-mode-tool-summary-card {
   min-width: 0;
-  padding: 0.75rem 0.85rem;
+  padding: 0.8rem 0.9rem;
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 10%);
-  border-radius: 0.7rem;
-  background: color-mix(in srgb, var(--bg-sub), transparent 18%);
+  border-radius: 0.9rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-sub), transparent 10%),
+    color-mix(in srgb, var(--bg-panel), transparent 6%)
+  );
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -936,7 +1016,7 @@
 }
 
 .tag-filter-current-mode-tool-summary-value {
-  font-size: 1.2rem;
+  font-size: 1.28rem;
   line-height: 1;
   font-weight: 700;
   color: var(--text-main);
@@ -1039,12 +1119,13 @@
 .tag-filter-delete-stack-item--danger {
   padding: 0.8rem 0.9rem;
   border: 1px solid rgba(239, 68, 68, 0.28);
-  border-radius: 0.75rem;
+  border-radius: 0.9rem;
   background: linear-gradient(
     180deg,
     rgba(127, 29, 29, 0.18),
     rgba(127, 29, 29, 0.1)
   );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tag-filter-workspace-tag-pool {
@@ -1064,20 +1145,27 @@
   gap: 0.65rem;
   padding: 0.8rem 0.9rem;
   border: 1px solid var(--border-light);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--bg-sub), transparent 20%);
+  border-radius: 1rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-sub), transparent 10%),
+    color-mix(in srgb, var(--bg-panel), transparent 6%)
+  );
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tag-filter-selected-basket--workspace {
   grid-column: 1 / -1;
   grid-row: 1;
-  gap: 0.55rem;
-  padding: 0.64rem 0.8rem;
+  gap: 0.6rem;
+  padding: 0.78rem 0.9rem;
   border-color: color-mix(in srgb, var(--border-light), transparent 12%);
   background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--bg-sub), transparent 12%),
-    color-mix(in srgb, var(--bg-panel), transparent 10%)
+    135deg,
+    color-mix(in srgb, var(--bg-sub), var(--accent-main) 5%),
+    color-mix(in srgb, var(--bg-panel), transparent 6%)
   );
 }
 
@@ -1092,7 +1180,7 @@
 }
 
 .tag-filter-selected-basket-header--calm {
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   letter-spacing: 0.02em;
   color: color-mix(in srgb, var(--text-dim), #ffffff 12%);
 }
@@ -1108,7 +1196,7 @@
 
 .tag-filter-selected-basket-list--workspace {
   max-height: 6.5rem;
-  gap: 0.42rem;
+  gap: 0.46rem;
   padding-right: 0.15rem;
 }
 
@@ -1127,7 +1215,7 @@
 .tag-filter-selected-basket-chip--workspace {
   gap: 0.42rem;
   min-height: 1.85rem;
-  padding: 0.28rem 0.68rem;
+  padding: 0.32rem 0.74rem;
   transition:
     transform 0.15s ease,
     box-shadow 0.15s ease,
@@ -1189,9 +1277,18 @@
 }
 
 .tag-filter-desktop-main .tag-cloud-container {
-  gap: 0.5rem;
-  padding: 0.45rem;
-  border-radius: 0.85rem;
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border-radius: 1rem;
+  border-color: color-mix(in srgb, var(--border-light), transparent 10%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-sub), transparent 10%),
+    color-mix(in srgb, var(--bg-panel), transparent 4%)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 36px rgba(0, 0, 0, 0.12);
 }
 
 .tag-filter-desktop-main .tag-chip-btn {
@@ -1206,7 +1303,9 @@
 }
 
 .tag-filter-desktop-main .tag-chip-btn:hover {
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.02),
+    0 10px 22px rgba(0, 0, 0, 0.12);
 }
 
 .tag-filter-desktop-main .tag-chip-selected {
@@ -1307,6 +1406,14 @@
   grid-row: 3;
   grid-column: 1 / -1;
   flex-shrink: 0;
+  margin-top: 0.2rem;
+  padding: 0.95rem 1rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-light), transparent 14%);
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--bg-sub), transparent 14%)
+  );
 }
 
 .tag-filter-workspace-help {
@@ -1325,14 +1432,15 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  padding: 1rem 1.05rem;
+  padding: 1.15rem 1.15rem;
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 8%);
-  border-radius: 0.9rem;
+  border-radius: 1rem;
   background: linear-gradient(
     160deg,
-    color-mix(in srgb, var(--bg-panel), var(--accent-main) 10%),
+    color-mix(in srgb, var(--bg-panel), var(--accent-main) 12%),
     color-mix(in srgb, var(--bg-sub), transparent 8%)
   );
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.14);
 }
 
 .tag-filter-workspace-help-eyebrow {
@@ -1445,10 +1553,63 @@
 
 .tag-filter-workspace-help-card {
   min-width: 0;
-  padding: 0.95rem 1rem;
+  padding: 1rem 1.05rem;
   border: 1px solid color-mix(in srgb, var(--border-light), transparent 10%);
-  border-radius: 0.85rem;
-  background: color-mix(in srgb, var(--bg-panel), transparent 5%);
+  border-radius: 0.95rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel), transparent 3%),
+    color-mix(in srgb, var(--bg-sub), transparent 10%)
+  );
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.1);
+}
+
+.tag-filter-workspace-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid color-mix(in srgb, var(--border-light), transparent 12%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-panel), var(--bg-sub) 20%);
+  color: var(--text-dim);
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.tag-filter-workspace-close-btn:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--text-dim), transparent 12%);
+  background: color-mix(in srgb, var(--bg-panel), var(--bg-hover) 28%);
+  color: var(--text-main);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.14);
+}
+
+.tag-filter-desktop-shell button:focus-visible,
+.tag-filter-desktop-shell input:focus-visible,
+.tag-filter-desktop-shell select:focus-visible,
+.tag-filter-desktop-shell textarea:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--bg-panel), transparent 0%),
+    0 0 0 4px color-mix(in srgb, var(--accent-main), transparent 45%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-filter-desktop-shell *,
+  .tag-filter-desktop-shell *::before,
+  .tag-filter-desktop-shell *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .tag-filter-workspace-help-card-title {

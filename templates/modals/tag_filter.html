@@ -585,11 +585,14 @@
         <div class="tag-filter-workspace-topbar">
           <div class="tag-filter-desktop-toolbar">
             <div class="tag-filter-workspace-topbar-main">
-              <div style="flex-shrink: 0">
-                <div class="text-xs" style="color: var(--text-dim)">
+              <div class="tag-filter-workspace-heading">
+                <div
+                  class="text-xs tag-filter-workspace-eyebrow"
+                  style="color: var(--text-dim)"
+                >
                   桌面端标签工作台
                 </div>
-                <h3 style="font-size: 1.25rem; font-weight: bold">
+                <h3 class="tag-filter-workspace-title">
                   <span x-show="desktopWorkspaceMode === 'filter'"
                     >标签库筛选</span
                   >
@@ -622,6 +625,7 @@
                 <input
                   type="text"
                   x-model="tagSearchQuery"
+                  aria-label="搜索标签"
                   placeholder="搜索标签..."
                   class="form-input"
                   :disabled="isSortMode"
@@ -736,14 +740,9 @@
                 x-text="isDesktopWorkspaceFullscreen ? '退出全屏' : '全屏工作台'"
               ></button>
               <button
+                type="button"
                 @click="requestCloseModal()"
-                style="
-                  color: var(--text-dim);
-                  font-size: 1.5rem;
-                  background: none;
-                  border: none;
-                  cursor: pointer;
-                "
+                class="tag-filter-workspace-close-btn"
               >
                 ✕
               </button>
@@ -888,9 +887,7 @@
                 class="tag-filter-current-mode-tool-area"
                 x-show="!isWorkspaceHelpOpen"
               >
-                <template
-                  x-if="$store.global.deviceType !== 'mobile'"
-                >
+                <template x-if="$store.global.deviceType !== 'mobile'">
                   <div
                     class="tag-filter-current-mode-tool-panel tag-filter-current-mode-tool-panel--view"
                   >
@@ -929,10 +926,12 @@
                       <span x-show="desktopWorkspaceMode !== 'sort'"
                         >当前模式下也会使用这套视图；下方分类条可快速聚焦某一分类。</span
                       >
-                      <span x-show="desktopWorkspaceMode === 'sort' && mixedCategoryView"
+                      <span
+                        x-show="desktopWorkspaceMode === 'sort' && mixedCategoryView"
                         >混合视图下直接拖拽标签，即可调整完整标签库的全局顺序。</span
                       >
-                      <span x-show="desktopWorkspaceMode === 'sort' && !mixedCategoryView"
+                      <span
+                        x-show="desktopWorkspaceMode === 'sort' && !mixedCategoryView"
                         >分组视图下可拖拽分类标题调整分类顺序，并在分类内部拖拽标签调整该分类的内部顺序。</span
                       >
                     </div>
@@ -1452,9 +1451,6 @@
                         class="tag-filter-category-manager-stack-item tag-filter-category-manager-stack-item--registry"
                       >
                         <div class="tag-filter-category-manager-registry-area">
-                          <div class="text-xs" style="color: var(--text-dim)">
-                            这里只维护分类定义本身；分类拖拽排序与分类内排序请在“排序”模式中完成。
-                          </div>
                           <div
                             class="tag-filter-category-manager-registry-list custom-scrollbar"
                           >
@@ -1888,6 +1884,9 @@
                       标签工作台帮助页
                     </div>
                     <h4>如何高效使用标签工作台</h4>
+                    <p>
+                      把筛选、分类、排序、治理和清理集中在同一工作区，先看分布，再做批量整理，最后统一治理。
+                    </p>
                   </div>
                   <div class="tag-filter-workspace-help-hero-actions">
                     <button
@@ -2146,7 +2145,9 @@
                         <li>
                           然后进入分类管理，整理分类定义、默认分类与视觉配置。
                         </li>
-                        <li>最后用排序模式优化全局顺序，以及分组视图中的分类顺序和分类内顺序。</li>
+                        <li>
+                          最后用排序模式优化全局顺序，以及分组视图中的分类顺序和分类内顺序。
+                        </li>
                         <li>只有确认标签确实无用时，再进入删除模式清理。</li>
                       </ol>
                     </section>
