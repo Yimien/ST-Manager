@@ -1,190 +1,337 @@
 <!-- === 模式 2: 世界书网格 (包含滚动、拖拽、分页) === -->
-<div x-show="currentMode === 'worldinfo'" x-data="wiGrid" class="flex-1 min-h-0 flex flex-col overflow-hidden w-full relative">
+<div
+  x-show="currentMode === 'worldinfo'"
+  x-data="wiGrid"
+  class="flex-1 min-h-0 flex flex-col overflow-hidden w-full relative"
+>
+  <!-- 滚动区域 -->
+  <div
+    id="wi-scroll-area"
+    class="scroll-container-y flex-1 min-h-0 p-4 custom-scrollbar relative"
+    @dragover.prevent="dragOverWi = true"
+    @dragleave.prevent="dragOverWi = false"
+    @drop.prevent="handleWiFilesDrop($event)"
+  >
+    <!-- 拖拽上传遮罩 -->
+    <div
+      x-show="dragOverWi"
+      x-transition.opacity
+      class="drag-over-main-overlay"
+    >
+      <div class="text-6xl mb-4">🌎</div>
+      <div class="text-2xl font-bold text-white tracking-wider">
+        松开鼠标上传世界书
+      </div>
+      <div class="text-gray-300 mt-2 text-sm" x-text="wiUploadHintText"></div>
+    </div>
 
-    <!-- 滚动区域 -->
-    <div id="wi-scroll-area" class="scroll-container-y flex-1 min-h-0 p-4 custom-scrollbar relative"
-        @dragover.prevent="dragOverWi = true" @dragleave.prevent="dragOverWi = false"
-        @drop.prevent="handleWiFilesDrop($event)">
+    <div
+      x-show="isLoading"
+      style="text-align: center; padding: 5rem; color: var(--accent-light)"
+    >
+      数据加载中...
+    </div>
 
-        <!-- 拖拽上传遮罩 -->
-        <div x-show="dragOverWi" x-transition.opacity class="drag-over-main-overlay">
-            <div class="text-6xl mb-4">🌎</div>
-            <div class="text-2xl font-bold text-white tracking-wider">松开鼠标上传世界书</div>
-            <div class="text-gray-300 mt-2 text-sm" x-text="wiUploadHintText"></div>
-        </div>
+    <!-- 网格列表 -->
+    <div
+      x-show="!isLoading"
+      class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4"
+    >
+      <template x-for="item in wiList" :key="getWorldInfoRenderKey(item)">
+        <div
+          @click="handleWorldInfoClick($event, item)"
+          class="wi-grid-card group relative rounded-xl p-[1px] cursor-pointer transition-all duration-200 flex flex-col"
+          :class="[$store.global.deviceType === 'mobile' ? '' : 'h-52', selectedIds.includes(item.id) ? 'selected' : '', canSelectWorldInfoItem(item) ? '' : 'is-selection-disabled', isWorldInfoFlipped(item.id) ? 'is-flipped' : '']"
+          :data-wi-id="item.id"
+          draggable="true"
+          @dragstart="dragStart($event, item)"
+          @mouseenter="handleWorldInfoMouseEnter(item.id)"
+          @mouseleave="handleWorldInfoMouseLeave(item.id)"
+        >
+          <div
+            class="card-flip-inner"
+            :class="{'is-flipped': isWorldInfoFlipped(item.id)}"
+          >
+            <div class="card-face card-front wi-card-front">
+              <div class="wi-card-header">
+                <div class="wi-card-header-left">
+                  <div
+                    class="wi-badge"
+                    :class="item.source_type || item.type"
+                    x-text="getWorldInfoSourceBadge(item)"
+                  ></div>
+                  <div
+                    x-show="item.name_source === 'filename'"
+                    class="wi-badge file"
+                  >
+                    FILE
+                  </div>
+                </div>
 
-        <div x-show="isLoading" style="text-align: center; padding: 5rem; color: var(--accent-light);">
-            数据加载中...</div>
+                <div class="wi-card-header-actions" @click.stop>
+                  <button
+                    x-show="$store.global.deviceType !== 'mobile'"
+                    @click.stop="openWorldInfoEditor(item)"
+                    class="wi-grid-tool-btn wi-card-edit-btn rounded-full flex items-center justify-center transition-all duration-200 shadow-md"
+                    title="打开全屏编辑器"
+                  >
+                    ✏️
+                  </button>
 
-        <!-- 网格列表 -->
-        <div x-show="!isLoading"
-            class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            <template x-for="item in wiList" :key="getWorldInfoRenderKey(item)">
-                <div @click="handleWorldInfoClick($event, item)"
-                    class="wi-grid-card group relative rounded-xl p-[1px] cursor-pointer transition-all duration-200 flex flex-col"
-                    :class="[$store.global.deviceType === 'mobile' ? '' : 'h-52', selectedIds.includes(item.id) ? 'selected' : '', canSelectWorldInfoItem(item) ? '' : 'is-selection-disabled', isWorldInfoFlipped(item.id) ? 'is-flipped' : '']"
-                    :data-wi-id="item.id"
-                    draggable="true" @dragstart="dragStart($event, item)" @mouseenter="handleWorldInfoMouseEnter(item.id)"
-                    @mouseleave="handleWorldInfoMouseLeave(item.id)">
+                  <button
+                    type="button"
+                    x-show="canSelectWorldInfoItem(item)"
+                    class="card-select-indicator card-select-overlay"
+                    :class="{ 'is-selected': selectedIds.includes(item.id), 'is-mobile': $store.global.deviceType === 'mobile' }"
+                    @click.stop="toggleSelection(item)"
+                    title="选择世界书"
+                  >
+                    <div
+                      class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 shadow-sm"
+                      :class="selectedIds.includes(item.id) ? 'bg-blue-600 border-blue-500 text-white scale-105' : 'bg-black/25 border-gray-400/60 hover:bg-black/50 hover:border-white/80 text-white/80'"
+                    >
+                      <span
+                        x-show="selectedIds.includes(item.id)"
+                        class="text-xs font-bold"
+                        >✓</span
+                      >
+                    </div>
+                  </button>
+                </div>
+              </div>
 
-                    <div class="card-flip-inner" :class="{'is-flipped': isWorldInfoFlipped(item.id)}">
-                        <div class="card-face card-front wi-card-front">
-                            <div class="wi-card-header">
-                                <div class="wi-card-header-left">
-                                    <div class="wi-badge" :class="item.source_type || item.type"
-                                        x-text="getWorldInfoSourceBadge(item)">
-                                    </div>
-                                    <div x-show="item.name_source === 'filename'" class="wi-badge file">FILE</div>
-                                </div>
-
-                                <div class="wi-card-header-actions" @click.stop>
-                                    <button x-show="$store.global.deviceType !== 'mobile'" @click.stop="openWorldInfoEditor(item)"
-                                        class="wi-grid-tool-btn wi-card-edit-btn rounded-full flex items-center justify-center transition-all duration-200 shadow-md"
-                                        title="打开全屏编辑器">
-                                        ✏️
-                                    </button>
-
-                                    <button type="button" x-show="canSelectWorldInfoItem(item)" class="card-select-indicator card-select-overlay"
-                                        :class="{ 'is-selected': selectedIds.includes(item.id), 'is-mobile': $store.global.deviceType === 'mobile' }"
-                                        @click.stop="toggleSelection(item)" title="选择世界书">
-                                        <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 shadow-sm"
-                                            :class="selectedIds.includes(item.id) ? 'bg-blue-600 border-blue-500 text-white scale-105' : 'bg-black/25 border-gray-400/60 hover:bg-black/50 hover:border-white/80 text-white/80'">
-                                            <span x-show="selectedIds.includes(item.id)" class="text-xs font-bold">✓</span>
-                                        </div>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="wi-card-primary">
-                                <div class="wi-card-title-row">
-                                    <div class="wi-card-bookmark" aria-hidden="true"></div>
-                                    <div class="wi-card-title-group">
-                                        <div class="wi-card-title-wrap">
-                                            <h3 class="wi-card-title"
-                                                :class="item.name_source === 'filename' ? 'wi-title-fallback' : ''"
-                                                x-text="item.name"></h3>
-                                        </div>
-
-                                        <div class="wi-card-owner-row">
-                                            <template x-if="getWorldInfoOwnerName(item)">
-                                                <button type="button" class="wi-card-owner-link" @click.stop="jumpToCardFromWi(getWorldInfoOwnerId(item))"
-                                                    :title="getWorldInfoOwnerName(item)">
-                                                    <span class="wi-card-owner-icon" aria-hidden="true"></span>
-                                                    <span class="wi-card-owner-text" x-text="getWorldInfoOwnerName(item)"></span>
-                                                </button>
-                                            </template>
-                                            <template x-if="!getWorldInfoOwnerName(item)">
-                                                <div class="wi-card-owner-empty" x-text="getWorldInfoOwnerFallback(item)"></div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="wi-card-tag-placeholder wi-card-tag-summary"
-                                    :title="getWorldInfoTagPlaceholder(item)"
-                                    x-text="getWorldInfoTagPlaceholder(item)"></div>
-                            </div>
-
-                            <div class="wi-card-footer" @click.stop>
-                                <div class="wi-card-footer-meta">
-                                    <div class="wi-card-meta-chip wi-card-category-chip"
-                                        :title="formatCategoryLabel(getWorldInfoDisplayCategory(item))">
-                                        <span class="wi-card-meta-icon">📁</span>
-                                        <span class="wi-card-meta-text" x-text="formatCategoryLabel(getWorldInfoDisplayCategory(item))"></span>
-                                    </div>
-                                    <div class="wi-card-meta-chip wi-card-date-chip"
-                                        :title="new Date(item.mtime * 1000).toLocaleString()"
-                                        x-text="new Date(item.mtime * 1000).toLocaleDateString()"></div>
-                                </div>
-
-                                <div class="wi-card-footer-actions">
-                                    <div class="wi-card-note-state"
-                                        :class="worldInfoHasLocalNote(item) ? 'has-note' : 'no-note'"
-                                        x-text="getWorldInfoNoteState(item)"></div>
-                                    <button type="button" class="card-local-note-btn"
-                                        :class="worldInfoHasLocalNote(item) ? 'has-note' : 'no-note'"
-                                        :disabled="!worldInfoHasLocalNote(item)"
-                                        :title="worldInfoHasLocalNote(item) ? '查看本地备注预览' : '暂无本地备注'"
-                                        @click.stop="openWorldInfoLocalNote(item)">
-                                        📝
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="card-face card-back wi-card-back">
-                            <div class="wi-card-back-meta">
-                                <div class="card-back-header wi-card-back-header">
-                                    <p class="card-back-title">文件名</p>
-                                    <p class="card-back-filename" :title="item.file_name || item.name"
-                                        x-text="item.file_name || item.name || '未知文件名'"></p>
-                                    <div class="wi-card-back-meta-row">
-                                        <div class="card-back-category"
-                                            :title="formatCategoryLabel(getWorldInfoDisplayCategory(item))">
-                                            <span class="card-back-category-icon">📁</span>
-                                            <span class="card-back-category-text" x-text="formatCategoryLabel(getWorldInfoDisplayCategory(item))"></span>
-                                        </div>
-                                        <div class="wi-card-back-source" x-text="getWorldInfoSourceBadge(item)"></div>
-                                    </div>
-                                </div>
-
-                                <div class="card-back-times wi-card-back-times">
-                                    <div class="card-back-time-row" :title="`修改时间：${new Date(item.mtime * 1000).toLocaleString()}`">
-                                        <span class="card-back-time-label">修改</span>
-                                        <span class="card-back-time-value" x-text="new Date(item.mtime * 1000).toLocaleDateString()"></span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="wi-card-back-note-wrap">
-                                <div class="wi-card-back-note-title">本地备注</div>
-                                <div class="local-note-preview wi-back-note custom-scrollbar" @click.stop
-                                    :class="item.ui_summary ? 'note-text' : 'note-placeholder'" title="本地备注"
-                                    x-text="item.ui_summary || '无本地备注...'"></div>
-                            </div>
-                        </div>
+              <div class="wi-card-primary">
+                <div class="wi-card-title-row">
+                  <div class="wi-card-bookmark" aria-hidden="true"></div>
+                  <div class="wi-card-title-group">
+                    <div class="wi-card-title-wrap">
+                      <h3
+                        class="wi-card-title"
+                        :class="item.name_source === 'filename' ? 'wi-title-fallback' : ''"
+                        x-text="item.name"
+                      ></h3>
                     </div>
 
-                    <button type="button" class="card-flip-corner wi-item-flip-corner"
-                        :class="[isWorldInfoFlipped(item.id) ? 'is-active' : '', $store.global.deviceType === 'mobile' ? 'is-mobile' : '']"
-                        :aria-label="isWorldInfoFlipped(item.id) ? '翻回正面' : '翻到背面'"
-                        @click.stop="toggleWorldInfoFace(item.id)"
-                        :title="isWorldInfoFlipped(item.id) ? '翻回正面' : '翻到背面'"></button>
+                    <div class="wi-card-owner-row">
+                      <template x-if="getWorldInfoOwnerName(item)">
+                        <button
+                          type="button"
+                          class="wi-card-owner-link"
+                          @click.stop="jumpToCardFromWi(getWorldInfoOwnerId(item))"
+                          :title="getWorldInfoOwnerName(item)"
+                        >
+                          <span
+                            class="wi-card-owner-icon"
+                            aria-hidden="true"
+                          ></span>
+                          <span
+                            class="wi-card-owner-text"
+                            x-text="getWorldInfoOwnerName(item)"
+                          ></span>
+                        </button>
+                      </template>
+                      <template x-if="!getWorldInfoOwnerName(item)">
+                        <div
+                          class="wi-card-owner-empty"
+                          x-text="getWorldInfoOwnerFallback(item)"
+                        ></div>
+                      </template>
+                    </div>
+                  </div>
                 </div>
-            </template>
-        </div>
 
-        <div x-show="!isLoading && wiList.length===0" class="text-center py-20 text-[var(--text-dim)]">
-            <p class="text-lg">没有找到世界书</p>
-            <p class="text-sm mt-2">（拖拽 .json 文件到此处添加）</p>
-        </div>
-    </div>
+                <div
+                  class="wi-card-tag-placeholder wi-card-tag-summary"
+                  :title="getWorldInfoTagPlaceholder(item)"
+                  x-text="getWorldInfoTagPlaceholder(item)"
+                ></div>
+              </div>
 
-    <!-- 底部翻页栏 (World Info 专用) -->
-    <div class="pagination-bar" x-show="wiList.length > 0 || wiCurrentPage > 1" style="flex-shrink: 0;">
-        <div class="card-pagination-summary">
-            <span style="font-size: 0.75rem; color: var(--text-dim);">共 <span x-text="wiTotalItems"></span>
-                本</span>
-            <div class="card-flip-toolbar" x-show="wiList.length > 0">
-                <button @click="toggleWorldInfoBulkFlipMode()" class="btn-secondary card-flip-all-btn"
-                    :title="worldInfoBulkBackMode ? '将当前页全部翻回正面（并关闭背面模式）' : '将当前页全部翻到背面（并保持背面模式）'">
-                    <span x-show="$store.global.deviceType !== 'mobile' && !worldInfoBulkBackMode">一键翻到背面</span>
-                    <span x-show="$store.global.deviceType !== 'mobile' && worldInfoBulkBackMode">一键翻回正面</span>
-                    <span x-show="$store.global.deviceType === 'mobile' && !worldInfoBulkBackMode">翻面</span>
-                    <span x-show="$store.global.deviceType === 'mobile' && worldInfoBulkBackMode">正面</span>
-                </button>
-                <span x-show="$store.global.deviceType !== 'mobile'" class="card-flip-count"
-                    x-text="`背面 ${visibleWorldInfoFlippedCount}/${wiList.length}`"></span>
+              <div class="wi-card-footer" @click.stop>
+                <div class="wi-card-footer-meta">
+                  <div
+                    class="wi-card-meta-chip wi-card-category-chip"
+                    :title="formatCategoryLabel(getWorldInfoDisplayCategory(item))"
+                  >
+                    <span class="wi-card-meta-icon">📁</span>
+                    <span
+                      class="wi-card-meta-text"
+                      x-text="formatCategoryLabel(getWorldInfoDisplayCategory(item))"
+                    ></span>
+                  </div>
+                  <div
+                    class="wi-card-meta-chip wi-card-date-chip"
+                    :title="new Date(item.mtime * 1000).toLocaleString()"
+                    x-text="new Date(item.mtime * 1000).toLocaleDateString()"
+                  ></div>
+                </div>
+
+                <div class="wi-card-footer-actions">
+                  <div
+                    class="wi-card-note-state"
+                    :class="worldInfoHasLocalNote(item) ? 'has-note' : 'no-note'"
+                    x-text="getWorldInfoNoteState(item)"
+                  ></div>
+                  <button
+                    type="button"
+                    class="card-local-note-btn"
+                    :class="worldInfoHasLocalNote(item) ? 'has-note' : 'no-note'"
+                    :disabled="!worldInfoHasLocalNote(item)"
+                    :title="getWorldInfoNotePreviewTitle(item)"
+                    @click.stop="openWorldInfoLocalNote(item)"
+                  >
+                    📝
+                  </button>
+                </div>
+              </div>
             </div>
+
+            <div class="card-face card-back wi-card-back">
+              <div class="wi-card-back-meta">
+                <div class="card-back-header wi-card-back-header">
+                  <p class="card-back-title">文件名</p>
+                  <p
+                    class="card-back-filename"
+                    :title="item.file_name || item.name"
+                    x-text="item.file_name || item.name || '未知文件名'"
+                  ></p>
+                  <div class="wi-card-back-meta-row">
+                    <div
+                      class="card-back-category"
+                      :title="formatCategoryLabel(getWorldInfoDisplayCategory(item))"
+                    >
+                      <span class="card-back-category-icon">📁</span>
+                      <span
+                        class="card-back-category-text"
+                        x-text="formatCategoryLabel(getWorldInfoDisplayCategory(item))"
+                      ></span>
+                    </div>
+                    <div
+                      class="wi-card-back-source"
+                      x-text="getWorldInfoSourceBadge(item)"
+                    ></div>
+                  </div>
+                </div>
+
+                <div class="card-back-times wi-card-back-times">
+                  <div
+                    class="card-back-time-row"
+                    :title="`修改时间：${new Date(item.mtime * 1000).toLocaleString()}`"
+                  >
+                    <span class="card-back-time-label">修改</span>
+                    <span
+                      class="card-back-time-value"
+                      x-text="new Date(item.mtime * 1000).toLocaleDateString()"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="wi-card-back-note-wrap">
+                <div
+                  class="wi-card-back-note-title"
+                  x-text="getWorldInfoNoteTitle(item)"
+                ></div>
+                <div
+                  class="local-note-preview wi-back-note custom-scrollbar"
+                  @click.stop
+                  :class="item.ui_summary ? 'note-text' : 'note-placeholder'"
+                  :title="getWorldInfoNoteTitle(item)"
+                  x-text="item.ui_summary || getWorldInfoEmptyNoteText(item)"
+                ></div>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="card-flip-corner wi-item-flip-corner"
+            :class="[isWorldInfoFlipped(item.id) ? 'is-active' : '', $store.global.deviceType === 'mobile' ? 'is-mobile' : '']"
+            :aria-label="isWorldInfoFlipped(item.id) ? '翻回正面' : '翻到背面'"
+            @click.stop="toggleWorldInfoFace(item.id)"
+            :title="isWorldInfoFlipped(item.id) ? '翻回正面' : '翻到背面'"
+          ></button>
         </div>
-        <div style="display: flex; align-items: center; gap:  0.5rem;">
-            <button @click="changeWiPage(wiCurrentPage-1)" :disabled="wiCurrentPage===1" class="btn-secondary"
-                style="padding: 0.25rem 0.5rem;">上一页</button>
-            <span
-                style="padding: 0.25rem 0.5rem; background: var(--bg-sub); border-radius: 0.25rem; color: var(--text-main); font-size: 0.75rem; height: 100%;"
-                x-text="wiCurrentPage + '/' + wiTotalPages"></span>
-            <button @click="changeWiPage(wiCurrentPage+1)" :disabled="wiCurrentPage===wiTotalPages"
-                class="btn-secondary" style="padding: 0.25rem 0.5rem;">下一页</button>
-        </div>
+      </template>
     </div>
+
+    <div
+      x-show="!isLoading && wiList.length===0"
+      class="text-center py-20 text-[var(--text-dim)]"
+    >
+      <p class="text-lg">没有找到世界书</p>
+      <p class="text-sm mt-2">（拖拽 .json 文件到此处添加）</p>
+    </div>
+  </div>
+
+  <!-- 底部翻页栏 (World Info 专用) -->
+  <div
+    class="pagination-bar"
+    x-show="wiList.length > 0 || wiCurrentPage > 1"
+    style="flex-shrink: 0"
+  >
+    <div class="card-pagination-summary">
+      <span style="font-size: 0.75rem; color: var(--text-dim)"
+        >共 <span x-text="wiTotalItems"></span> 本</span
+      >
+      <div class="card-flip-toolbar" x-show="wiList.length > 0">
+        <button
+          @click="toggleWorldInfoBulkFlipMode()"
+          class="btn-secondary card-flip-all-btn"
+          :title="worldInfoBulkBackMode ? '将当前页全部翻回正面（并关闭背面模式）' : '将当前页全部翻到背面（并保持背面模式）'"
+        >
+          <span
+            x-show="$store.global.deviceType !== 'mobile' && !worldInfoBulkBackMode"
+            >一键翻到背面</span
+          >
+          <span
+            x-show="$store.global.deviceType !== 'mobile' && worldInfoBulkBackMode"
+            >一键翻回正面</span
+          >
+          <span
+            x-show="$store.global.deviceType === 'mobile' && !worldInfoBulkBackMode"
+            >翻面</span
+          >
+          <span
+            x-show="$store.global.deviceType === 'mobile' && worldInfoBulkBackMode"
+            >正面</span
+          >
+        </button>
+        <span
+          x-show="$store.global.deviceType !== 'mobile'"
+          class="card-flip-count"
+          x-text="`背面 ${visibleWorldInfoFlippedCount}/${wiList.length}`"
+        ></span>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 0.5rem">
+      <button
+        @click="changeWiPage(wiCurrentPage-1)"
+        :disabled="wiCurrentPage===1"
+        class="btn-secondary"
+        style="padding: 0.25rem 0.5rem"
+      >
+        上一页
+      </button>
+      <span
+        style="
+          padding: 0.25rem 0.5rem;
+          background: var(--bg-sub);
+          border-radius: 0.25rem;
+          color: var(--text-main);
+          font-size: 0.75rem;
+          height: 100%;
+        "
+        x-text="wiCurrentPage + '/' + wiTotalPages"
+      ></span>
+      <button
+        @click="changeWiPage(wiCurrentPage+1)"
+        :disabled="wiCurrentPage===wiTotalPages"
+        class="btn-secondary"
+        style="padding: 0.25rem 0.5rem"
+      >
+        下一页
+      </button>
+    </div>
+  </div>
 </div>

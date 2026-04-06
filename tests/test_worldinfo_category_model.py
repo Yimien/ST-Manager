@@ -326,7 +326,7 @@ def test_worldinfo_detail_supports_embedded_card_id(monkeypatch, tmp_path):
     assert payload['data']['name'] == 'Embedded Book'
 
 
-def test_worldinfo_list_and_detail_include_local_note_summary(monkeypatch, tmp_path):
+def test_worldinfo_list_and_detail_include_ui_summary(monkeypatch, tmp_path):
     lorebooks_dir = tmp_path / 'lorebooks'
     resources_dir = tmp_path / 'resources'
     cards_dir = tmp_path / 'cards'
@@ -342,7 +342,10 @@ def test_worldinfo_list_and_detail_include_local_note_summary(monkeypatch, tmp_p
     ui_path.write_text(
         json.dumps(
             {
-                'cards/lucy.png': {'resource_folder': 'lucy'},
+                'cards/lucy.png': {
+                    'resource_folder': 'lucy',
+                    'summary': 'card note',
+                },
                 '_worldinfo_notes_v1': {
                     f"global::{str(global_file).replace('\\', '/').lower()}": {'summary': 'global note'},
                     f"resource::{str(resource_file).replace('\\', '/').lower()}": {'summary': 'resource note'},
@@ -376,13 +379,66 @@ def test_worldinfo_list_and_detail_include_local_note_summary(monkeypatch, tmp_p
     items = {item['type']: item for item in list_payload['items']}
     assert items['global']['ui_summary'] == 'global note'
     assert items['resource']['ui_summary'] == 'resource note'
-    assert items['embedded']['ui_summary'] == 'embedded note'
+    assert items['embedded']['ui_summary'] == 'card note'
 
     detail_res = client.post('/api/world_info/detail', json={'id': 'embedded::cards/lucy.png', 'source_type': 'embedded'})
     assert detail_res.status_code == 200
     detail_payload = detail_res.get_json()
     assert detail_payload['success'] is True
-    assert detail_payload['ui_summary'] == 'embedded note'
+    assert detail_payload['ui_summary'] == 'card note'
+
+
+def test_worldinfo_embedded_summary_falls_back_to_legacy_note_when_card_summary_missing(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    card_path = cards_dir / 'cards' / 'lucy.png'
+
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'fake-card')
+    ui_path.write_text(
+        json.dumps(
+            {
+                'cards/lucy.png': {'resource_folder': 'lucy'},
+                '_worldinfo_notes_v1': {
+                    'embedded::cards/lucy.png': {'summary': 'embedded fallback note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    cards = [_make_card('cards/lucy.png', '科幻', has_character_book=True)]
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache(cards))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(
+        world_info_api,
+        'extract_card_info',
+        lambda _path: {'data': {'character_book': {'name': 'Embedded Book', 'entries': {'0': {'content': 'hello'}}}}},
+    )
+    world_info_api.ctx.wi_list_cache.clear()
+
+    client = _make_test_app().test_client()
+    list_res = client.get('/api/world_info/list?type=embedded')
+
+    assert list_res.status_code == 200
+    payload = list_res.get_json()
+    embedded_item = next(item for item in payload['items'] if item['id'] == 'embedded::cards/lucy.png')
+    assert embedded_item['ui_summary'] == 'embedded fallback note'
+
+    detail_res = client.post('/api/world_info/detail', json={'id': 'embedded::cards/lucy.png', 'source_type': 'embedded'})
+    assert detail_res.status_code == 200
+    detail_payload = detail_res.get_json()
+    assert detail_payload['success'] is True
+    assert detail_payload['ui_summary'] == 'embedded fallback note'
 
 
 def test_worldinfo_search_matches_local_note_summary(monkeypatch, tmp_path):
@@ -454,6 +510,220 @@ def test_worldinfo_note_save_updates_ui_store_for_all_source_types(monkeypatch, 
     assert notes[f"global::{str(global_file).replace('\\', '/').lower()}"]['summary'] == 'global note'
     assert notes[f"resource::{str(resource_file).replace('\\', '/').lower()}"]['summary'] == 'resource note'
     assert notes['embedded::cards/lucy.png']['summary'] == 'embedded note'
+
+
+def test_update_card_ui_only_flag_uses_string_aware_bool_parsing():
+    from core.api.v1 import cards as cards_api
+
+    assert cards_api._coerce_request_bool(False) is False
+    assert cards_api._coerce_request_bool(True) is True
+    assert cards_api._coerce_request_bool('false') is False
+    assert cards_api._coerce_request_bool('0') is False
+    assert cards_api._coerce_request_bool('true') is True
+    assert cards_api._coerce_request_bool('1') is True
+
+
+def test_update_card_ui_only_updates_summary_without_touching_card_payload(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    card_rel = 'cards/lucy.png'
+    card_path = cards_dir / card_rel
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'fake-card')
+    ui_path.write_text(
+        json.dumps({card_rel: {'summary': 'old note', 'link': 'keep-link', 'resource_folder': 'keep-folder'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    captured = {}
+
+    def _fake_update_card_data(_raw_id, payload):
+        card_obj = {
+            'id': card_rel,
+            'filename': 'lucy.png',
+            'char_name': 'Lucy',
+            'description': 'kept description',
+            'tags': ['tag'],
+            'ui_summary': 'old note',
+            'source_link': 'keep-link',
+            'resource_folder': 'keep-folder',
+            'token_count': 0,
+            'last_modified': 0,
+            'import_time': 0,
+            'dir_path': 'cards',
+            'char_version': 'v1',
+            'creator': 'tester',
+            'image_url': '/cards_file/cards%2Flucy.png?t=1',
+            'thumb_url': '/api/thumbnail/cards%2Flucy.png?t=1',
+            'category': '',
+        }
+        card_obj.update(payload)
+        return card_obj
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: {
+        'data': {
+            'name': 'Lucy',
+            'description': 'kept description',
+            'first_mes': 'hello',
+            'mes_example': 'example',
+            'personality': 'calm',
+            'scenario': 'lab',
+            'creator_notes': 'creator',
+            'system_prompt': 'system',
+            'post_history_instructions': 'post',
+            'creator': 'tester',
+            'character_version': 'v1',
+            'tags': ['tag'],
+            'extensions': {},
+            'alternate_greetings': [],
+            'character_book': {'name': 'Embedded Book', 'entries': {}},
+        }
+    })
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: captured.setdefault('write_called', True))
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
+    monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
+    monkeypatch.setattr(cards_api, 'get_last_sent_to_st', lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path: True)
+    monkeypatch.setattr(cards_api, '_is_safe_filename', lambda _name: True)
+    monkeypatch.setattr(cards_api.ctx, 'cache', type('Cache', (), {
+        'update_card_data': staticmethod(_fake_update_card_data),
+        'id_map': {},
+        'bundle_map': {},
+        'lock': threading.Lock(),
+    })())
+
+    client = app.test_client()
+    res = client.post('/api/update_card', json={
+        'id': card_rel,
+        'ui_summary': 'new ui note',
+        'source_link': '',
+        'resource_folder': '',
+        'ui_only': True,
+    })
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body['success'] is True
+    assert body['updated_card']['ui_summary'] == 'new ui note'
+    assert 'write_called' not in captured
+
+    saved = json.loads(ui_path.read_text(encoding='utf-8'))
+    assert saved[card_rel]['summary'] == 'new ui note'
+    assert saved[card_rel]['link'] == 'keep-link'
+    assert saved[card_rel]['resource_folder'] == 'keep-folder'
+
+
+def test_update_card_ui_only_can_clear_selected_ui_fields_when_opted_in(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    card_rel = 'cards/lucy.png'
+    card_path = cards_dir / card_rel
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'fake-card')
+    ui_path.write_text(
+        json.dumps({card_rel: {'summary': 'old note', 'link': 'keep-link', 'resource_folder': 'keep-folder'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    captured = {}
+
+    def _fake_update_card_data(_raw_id, payload):
+        card_obj = {
+            'id': card_rel,
+            'filename': 'lucy.png',
+            'char_name': 'Lucy',
+            'description': 'kept description',
+            'tags': ['tag'],
+            'ui_summary': 'old note',
+            'source_link': 'keep-link',
+            'resource_folder': 'keep-folder',
+            'token_count': 0,
+            'last_modified': 0,
+            'import_time': 0,
+            'dir_path': 'cards',
+            'char_version': 'v1',
+            'creator': 'tester',
+            'image_url': '/cards_file/cards%2Flucy.png?t=1',
+            'thumb_url': '/api/thumbnail/cards%2Flucy.png?t=1',
+            'category': '',
+        }
+        card_obj.update(payload)
+        return card_obj
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: {
+        'data': {
+            'name': 'Lucy',
+            'description': 'kept description',
+            'first_mes': 'hello',
+            'mes_example': 'example',
+            'personality': 'calm',
+            'scenario': 'lab',
+            'creator_notes': 'creator',
+            'system_prompt': 'system',
+            'post_history_instructions': 'post',
+            'creator': 'tester',
+            'character_version': 'v1',
+            'tags': ['tag'],
+            'extensions': {},
+            'alternate_greetings': [],
+            'character_book': {'name': 'Embedded Book', 'entries': {}},
+        }
+    })
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: captured.setdefault('write_called', True))
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
+    monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
+    monkeypatch.setattr(cards_api, 'get_last_sent_to_st', lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path: True)
+    monkeypatch.setattr(cards_api, '_is_safe_filename', lambda _name: True)
+    monkeypatch.setattr(cards_api.ctx, 'cache', type('Cache', (), {
+        'update_card_data': staticmethod(_fake_update_card_data),
+        'id_map': {},
+        'bundle_map': {},
+        'lock': threading.Lock(),
+    })())
+
+    client = app.test_client()
+    res = client.post('/api/update_card', json={
+        'id': card_rel,
+        'ui_summary': 'new ui note',
+        'source_link': '',
+        'resource_folder': '',
+        'ui_only': True,
+        'ui_only_fields': ['source_link', 'resource_folder'],
+    })
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body['success'] is True
+    assert body['updated_card']['ui_summary'] == 'new ui note'
+    assert body['updated_card']['source_link'] == ''
+    assert body['updated_card']['resource_folder'] == ''
+    assert 'write_called' not in captured
+
+    saved = json.loads(ui_path.read_text(encoding='utf-8'))
+    assert saved[card_rel]['summary'] == 'new ui note'
+    assert saved[card_rel]['link'] == ''
+    assert saved[card_rel]['resource_folder'] == ''
 
 
 def test_worldinfo_delete_removes_note_and_rejects_embedded_delete(monkeypatch, tmp_path):

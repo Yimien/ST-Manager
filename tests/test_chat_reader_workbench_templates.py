@@ -2124,6 +2124,28 @@ def test_worldinfo_mobile_back_note_is_constrained_within_card_bounds():
     assert 'min-height: 0;' in back_note_mobile_block
 
 
+def test_worldinfo_mobile_css_reuses_shared_page_boundary_tokens_for_front_and_back():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+
+    assert '@media (max-width: 768px)' in wi_css
+    mobile_block = extract_media_block(wi_css, '@media (max-width: 768px)')
+    mobile_header_footer_padding_block = extract_exact_css_block(
+        mobile_block,
+        '.wi-card-header-actions,\n  .wi-card-footer',
+    )
+    front_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-front')
+    back_note_wrap_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-back-note-wrap')
+    back_note_frame_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-back-note-wrap::before')
+
+    assert '--wi-card-page-inset-x:' in mobile_block
+    assert '--wi-card-page-inset-y:' in mobile_block
+    assert '--wi-card-page-frame-inset:' in mobile_block
+    assert 'padding: var(--wi-card-page-inset-y) var(--wi-card-page-inset-x);' in front_mobile_block
+    assert 'padding: 0.18rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_wrap_mobile_block
+    assert 'inset: 0.1rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_frame_mobile_block
+    assert 'padding-right: 1.5rem;' in mobile_header_footer_padding_block
+
+
 def test_worldinfo_grid_template_uses_back_note_reading_layout():
     wi_grid_template = read_project_file('templates/components/grid_wi.html')
 
@@ -2152,23 +2174,97 @@ def test_worldinfo_css_uses_single_shell_card_and_stretches_flip_inner():
     assert 'height: 100%;' in flip_inner_block
 
 
-def test_worldinfo_detail_template_includes_local_note_editor_actions():
+def test_worldinfo_css_exposes_shared_page_boundary_tokens_for_card_faces():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+    face_selector = '.wi-card-front,\n.wi-card-back'
+    face_block = extract_exact_css_block(wi_css, face_selector)
+    front_block = extract_exact_css_block(wi_css, '.wi-card-front')
+    back_block = extract_exact_css_block(wi_css, '.wi-card-back')
+    front_frame_block = extract_exact_css_block(wi_css, '.wi-card-front::before')
+    back_note_wrap_block = extract_exact_css_block(wi_css, '.wi-card-back-note-wrap')
+    back_note_frame_block = extract_exact_css_block(wi_css, '.wi-card-back-note-wrap::before')
+
+    assert '--wi-card-page-inset-x:' in wi_css
+    assert '--wi-card-page-inset-y:' in wi_css
+    assert '--wi-card-page-frame-inset:' in wi_css
+    assert 'position: absolute;' in front_block
+    assert 'inset: 0;' in front_block
+    assert 'padding: var(--wi-card-page-inset-y) var(--wi-card-page-inset-x);' in front_block
+    assert 'position: absolute;' not in back_block
+    assert 'inset: var(--wi-card-page-frame-inset);' in front_frame_block
+    assert 'padding: 0.18rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_wrap_block
+    assert 'inset: 0.1rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_frame_block
+    assert 'border-radius: inherit;' in face_block
+
+
+def test_worldinfo_css_keeps_flip_corner_on_outer_shell_instead_of_face_offsets():
+    wi_css = read_project_file('static/css/modules/view-wi.css')
+    card_css = read_project_file('static/css/modules/view-cards.css')
+    grid_card_block = extract_exact_css_block(wi_css, '.wi-grid-card')
+    front_block = extract_exact_css_block(wi_css, '.wi-card-front')
+    header_actions_block = extract_exact_css_block(wi_css, '.wi-card-header-actions')
+    footer_block = extract_exact_css_block(wi_css, '.wi-card-footer')
+    flip_corner_block = extract_exact_css_block(card_css, '.card-flip-corner')
+
+    assert 'padding: 0;' in grid_card_block
+    assert 'position: absolute;' in front_block
+    assert 'inset: 0;' in front_block
+    assert 'padding-right: 1.75rem;' in header_actions_block
+    assert 'padding-right: 1.75rem;' in footer_block
+    assert '.wi-item-flip-corner {' in wi_css
+    assert 'right: 0;' in flip_corner_block
+    assert 'bottom: 0;' in flip_corner_block
+    assert 'width: 2rem;' in flip_corner_block
+    assert 'height: 2rem;' in flip_corner_block
+
+
+def test_worldinfo_detail_template_uses_embedded_character_note_wording():
     wi_detail_template = read_project_file('templates/modals/detail_wi_popup.html')
 
+    assert "activeWiDetail?.type === 'embedded'" in wi_detail_template
+    assert '角色卡备注' in wi_detail_template
     assert '本地备注' in wi_detail_template
+    assert '清空角色卡备注' in wi_detail_template
+    assert '清空备注' in wi_detail_template
+    assert "placeholder=\"activeWiDetail?.type === 'embedded' ? '这是仅存储在角色卡中的私有备注，不会写入世界书文件...' : '这是仅存储在本地的私有备注，不会写入世界书文件...'\"" in wi_detail_template
     assert 'saveActiveWorldInfoNote()' in wi_detail_template
     assert 'clearActiveWorldInfoNote()' in wi_detail_template
     assert 'openActiveWorldInfoNotePreview()' in wi_detail_template
-    assert 'activeWiDetail?.type === \'embedded\'' in wi_detail_template or 'activeWiDetail?.type !== \'embedded\'' in wi_detail_template
 
 
-def test_worldinfo_editor_template_includes_local_note_panel():
+def test_worldinfo_editor_template_uses_embedded_character_note_wording():
     wi_editor_template = read_project_file('templates/modals/detail_wi_fullscreen.html')
 
+    assert "editingWiFile?.type === 'embedded'" in wi_editor_template
+    assert '角色卡备注 (Character Note)' in wi_editor_template
     assert '本地备注 (Local Note)' in wi_editor_template
+    assert "placeholder=\"editingWiFile?.type === 'embedded' ? '这是仅存储在角色卡中的私有备注，不会写入世界书文件...' : '这是仅存储在本地的私有备注，不会写入世界书文件...'\"" in wi_editor_template
+    assert 'openLargeEditor(' in wi_editor_template
+    assert 'ui_summary' in wi_editor_template
     assert 'saveEditingWorldInfoNote()' in wi_editor_template
-    assert "openLargeEditor('ui_summary','本地备注', false, 0, editingData)" in wi_editor_template
     assert 'openEditingWorldInfoNotePreview()' in wi_editor_template
+
+
+def test_worldinfo_frontend_note_sources_switch_embedded_saves_to_update_card():
+    wi_detail_source = read_project_file('static/js/components/wiDetailPopup.js')
+    wi_editor_source = read_project_file('static/js/components/wiEditor.js')
+    detail_save_block = extract_js_function_block(wi_detail_source, 'async saveActiveWorldInfoNote()')
+    editor_save_block = extract_js_function_block(wi_editor_source, 'async saveEditingWorldInfoNote()')
+
+    assert 'updateCard' in wi_detail_source
+    assert 'saveWorldInfoNote' in wi_detail_source
+    assert 'embedded' in wi_detail_source
+    assert 'updateCard' in detail_save_block
+    assert 'saveWorldInfoNote' in detail_save_block
+    assert 'card_id' in wi_detail_source
+
+    assert 'updateCard' in wi_editor_source
+    assert 'saveWorldInfoNote' in wi_editor_source
+    assert 'embedded' in wi_editor_source
+    assert "return this.editingWiFile?.type === 'embedded' ? '角色卡备注' : '本地备注';" in wi_editor_source
+    assert 'updateCard' in editor_save_block
+    assert 'saveWorldInfoNote' in editor_save_block
+    assert 'card_id' in wi_editor_source
 
 
 def test_preset_grid_template_exposes_category_metadata_and_mode_hints():
@@ -2256,10 +2352,20 @@ def test_worldinfo_grid_js_syncs_local_note_updates_without_waiting_for_refetch(
 
 def test_worldinfo_grid_js_exposes_redesign_display_helpers():
     wi_grid_source = read_project_file('static/js/components/wiGrid.js')
+    wi_grid_template = read_project_file('templates/components/grid_wi.html')
+    note_title_block = extract_js_function_block(wi_grid_source, 'getWorldInfoNoteTitle(item)')
+    note_empty_block = extract_js_function_block(wi_grid_source, 'getWorldInfoEmptyNoteText(item)')
+    note_preview_block = extract_js_function_block(wi_grid_source, 'getWorldInfoNotePreviewTitle(item)')
+    note_state_block = extract_js_function_block(wi_grid_source, 'getWorldInfoNoteState(item)')
 
     assert 'getWorldInfoRenderKey(item)' in wi_grid_source
     assert 'getWorldInfoTagPlaceholder(' in wi_grid_source
     assert 'getWorldInfoNoteState(' in wi_grid_source
+    assert "const sourceType = item?.source_type || item?.type;" in note_title_block
+    assert "const sourceType = item?.source_type || item?.type;" in note_empty_block
+    assert "const sourceType = item?.source_type || item?.type;" in note_preview_block
+    assert "const sourceType = item?.source_type || item?.type;" in note_state_block
+    assert 'getWorldInfoEmptyNoteText(item)' in wi_grid_template
 
 
 def test_preset_grid_js_uses_category_metadata_and_explicit_upload_fallback_contract():

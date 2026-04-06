@@ -415,6 +415,18 @@ def _is_safe_filename(name: str) -> bool:
     return True
 
 
+def _coerce_request_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'off', ''}:
+            return False
+    return bool(value)
+
+
 def _normalize_sort_mode(sort_mode: str) -> str:
     allowed = {
         'date_desc', 'date_asc',
@@ -993,7 +1005,8 @@ def api_update_card():
         data = request.json
         raw_id = data.get('id')
         # 获取强制更新标记 (用于设为封面)
-        force_set_cover = data.get('set_as_cover', False) 
+        force_set_cover = data.get('set_as_cover', False)
+        ui_only = _coerce_request_bool(data.get('ui_only', False))
         
         if not raw_id: return jsonify({"success": False, "msg": "Missing ID"})
         if not _is_safe_rel_path(raw_id):
@@ -1044,7 +1057,7 @@ def api_update_card():
         # =========================================================
         # 1. 元数据写入逻辑 (如果是设为封面，完全跳过此步骤)
         # =========================================================
-        if info and not force_set_cover:
+        if info and not force_set_cover and not ui_only:
             target = info.get('data', info)
             
             # 仅当不是设为封面时，才从前端 data 获取字段并比对
@@ -1153,8 +1166,17 @@ def api_update_card():
 
         if not force_set_cover:
             new_summary = data.get('ui_summary', '')
+            existing_ui_entry = ui_data.get(ui_key, {}) if isinstance(ui_data.get(ui_key), dict) else {}
             new_link = str(data.get('source_link') or '').strip()
             new_resource_folder = data.get('resource_folder', '')
+            raw_ui_only_fields = data.get('ui_only_fields') or []
+            ui_only_fields = {str(field).strip() for field in raw_ui_only_fields if str(field).strip()}
+
+            if ui_only:
+                if not new_link and 'source_link' not in ui_only_fields:
+                    new_link = existing_ui_entry.get('link', '')
+                if new_resource_folder == '' and 'resource_folder' not in ui_only_fields:
+                    new_resource_folder = existing_ui_entry.get('resource_folder', '')
 
             if data.get('save_ui_to_bundle') and data.get('bundle_dir'):
                 # For bundle mode, link is stored in bundle global (not version remark)

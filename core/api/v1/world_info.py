@@ -23,6 +23,7 @@ from core.data.ui_store import (
     set_worldinfo_note,
     delete_worldinfo_note,
 )
+from core.services.card_service import resolve_ui_key
 from core.services.cache_service import invalidate_wi_list_cache
 from core.services.wi_entry_history_service import (
     ensure_entry_uids,
@@ -203,6 +204,23 @@ def _build_worldinfo_note_kwargs(source_type: str, file_path: str = '', card_id:
 def _get_worldinfo_ui_summary(ui_data: dict, source_type: str, file_path: str = '', card_id: str = '') -> str:
     note = get_worldinfo_note(ui_data, source_type, **_build_worldinfo_note_kwargs(source_type, file_path=file_path, card_id=card_id))
     return note.get('summary', '') if isinstance(note, dict) else ''
+
+
+def _get_embedded_worldinfo_ui_summary(ui_data: dict, card_id: str = '') -> str:
+    try:
+        ui_key = resolve_ui_key(card_id)
+    except Exception:
+        ui_key = card_id
+    card_summary = ''
+    if ui_key and isinstance(ui_data, dict):
+        card_meta = ui_data.get(ui_key)
+        if isinstance(card_meta, dict):
+            card_summary = str(card_meta.get('summary') or '')
+
+    if card_summary.strip():
+        return card_summary
+
+    return _get_worldinfo_ui_summary(ui_data, 'embedded', card_id=card_id)
 
 
 def _iter_category_ancestors(category: str):
@@ -897,7 +915,7 @@ def api_list_world_infos():
                     "owner_card_id": row['id'],
                     "owner_card_name": row['char_name'],
                     "owner_card_category": owner_category,
-                    "ui_summary": _get_worldinfo_ui_summary(ui_data, 'embedded', card_id=row['id']),
+                    "ui_summary": _get_embedded_worldinfo_ui_summary(ui_data, card_id=row['id']),
                 })
 
         source_items = list(items)
@@ -1235,7 +1253,7 @@ def api_get_world_info_detail():
 
             cfg = load_config()
             resp = _apply_world_info_preview(book, cfg, preview_limit=preview_limit, force_full=force_full)
-            resp['ui_summary'] = _get_worldinfo_ui_summary(ui_data, 'embedded', card_id=card_id)
+            resp['ui_summary'] = _get_embedded_worldinfo_ui_summary(ui_data, card_id=card_id)
             return jsonify(resp)
 
         if not file_path:
