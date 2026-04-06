@@ -436,7 +436,14 @@
         :title="cardAdvancedFilterCount > 0 ? `已启用 ${cardAdvancedFilterCount} 个筛选条件` : '打开高级筛选'"
       >
         <span class="header-advanced-filter-icon">⚲</span>
-        <span>筛选</span>
+        <span class="header-advanced-filter-btn-meta">
+          <span class="header-advanced-filter-label">筛选工作台</span>
+          <span class="header-advanced-filter-status">
+            <span
+              x-text="cardAdvancedFilterCount > 0 ? `已启用 ${cardAdvancedFilterCount} 项条件` : '当前无附加条件'"
+            ></span>
+          </span>
+        </span>
         <span
           class="header-advanced-filter-count"
           x-show="cardAdvancedFilterCount > 0"
@@ -637,6 +644,11 @@
           <div class="mobile-advanced-filter-entry-icon">⚗️</div>
           <div>
             <div class="mobile-advanced-filter-entry-title">高级筛选</div>
+            <div class="mobile-advanced-filter-entry-status">
+              <span
+                x-text="cardAdvancedFilterCount > 0 ? `已启用 ${cardAdvancedFilterCount} 项条件` : '当前无附加条件'"
+              ></span>
+            </div>
             <div class="mobile-advanced-filter-entry-desc">
               范围、收藏、时间、Token、标签
             </div>

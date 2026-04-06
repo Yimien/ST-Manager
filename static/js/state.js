@@ -174,6 +174,21 @@ function buildDefaultCardAdvancedFilterFields() {
   };
 }
 
+const CARD_ADVANCED_FILTER_SECTIONS = ["basic", "time", "numeric", "tags"];
+
+function normalizeCardAdvancedFilterSection(value = "") {
+  const section = String(value || "").trim();
+  return CARD_ADVANCED_FILTER_SECTIONS.includes(section) ? section : "basic";
+}
+
+function buildDefaultCardAdvancedFilterValidationState() {
+  return {
+    section: "",
+    field: "",
+    message: "",
+  };
+}
+
 function buildCardAdvancedFilterDraftFromViewState(
   viewState,
   currentSort,
@@ -194,6 +209,8 @@ function buildCardAdvancedFilterDraftFromViewState(
     modifiedDateTo: toSummaryLabel(viewState.modifiedDateTo),
     tokenMin: toSummaryLabel(viewState.tokenMin),
     tokenMax: toSummaryLabel(viewState.tokenMax),
+    filterTags: [...(viewState.filterTags || [])],
+    excludedTags: [...(viewState.excludedTags || [])],
   };
 }
 
@@ -257,6 +274,10 @@ export function initState() {
     showTagFilterModal: false,
     showCardAdvancedFilterDrawer: false,
     cardAdvancedFilterDraft: null,
+    cardAdvancedFilterActiveSection: "basic",
+    cardAdvancedFilterValidationState:
+      buildDefaultCardAdvancedFilterValidationState(),
+    cardAdvancedFilterTagEditSource: "",
 
     // 分页配置
     itemsPerPage: 20,
@@ -1137,7 +1158,9 @@ export function initState() {
     // 全局标签切换逻辑 (三态：包含 -> 排除 -> 无)
     // options.forceExclude=true 时可直接进入“排除”状态（用于 Shift+点击）
     toggleFilterTag(tag, options = {}) {
-      const vs = this.viewState;
+      const vs = this.isCardAdvancedFilterTagEditActive()
+        ? this.getCardAdvancedFilterTagState()
+        : this.viewState;
       let includeTags = [...vs.filterTags];
       let excludeTags = [...vs.excludedTags];
       const forceExclude = !!(options && options.forceExclude);
@@ -1171,12 +1194,21 @@ export function initState() {
       vs.filterTags = includeTags;
       vs.excludedTags = excludeTags;
 
+      if (this.isCardAdvancedFilterTagEditActive()) {
+        this.syncCardAdvancedFilterValidationState();
+        return;
+      }
+
       // 触发列表刷新
       window.dispatchEvent(new CustomEvent("refresh-card-list"));
     },
 
-    openCardAdvancedFilterDrawer() {
+    openCardAdvancedFilterDrawer(section = "") {
       this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
+      this.clearCardAdvancedFilterValidationState();
+      this.setCardAdvancedFilterSection(
+        section || this.cardAdvancedFilterActiveSection,
+      );
       this.showCardAdvancedFilterDrawer = true;
     },
 
@@ -1188,8 +1220,71 @@ export function initState() {
       );
     },
 
-    closeCardAdvancedFilterDrawer() {
+    closeCardAdvancedFilterDrawer(clearTagEditSource = true) {
       this.showCardAdvancedFilterDrawer = false;
+      if (clearTagEditSource) {
+        this.setCardAdvancedFilterTagEditSource("");
+      }
+    },
+
+    setCardAdvancedFilterSection(section = "") {
+      const nextSection = normalizeCardAdvancedFilterSection(
+        section || this.cardAdvancedFilterActiveSection,
+      );
+      this.cardAdvancedFilterActiveSection = nextSection;
+      return nextSection;
+    },
+
+    clearCardAdvancedFilterValidationState() {
+      this.cardAdvancedFilterValidationState =
+        buildDefaultCardAdvancedFilterValidationState();
+    },
+
+    syncCardAdvancedFilterValidationState() {
+      const validationError = this.validateCardAdvancedFilterDraft();
+      this.cardAdvancedFilterValidationState = validationError
+        ? validationError
+        : buildDefaultCardAdvancedFilterValidationState();
+      return this.cardAdvancedFilterValidationState;
+    },
+
+    setCardAdvancedFilterTagEditSource(source = "") {
+      this.cardAdvancedFilterTagEditSource =
+        String(source || "").trim() === "card-advanced-filter"
+          ? "card-advanced-filter"
+          : "";
+      return this.cardAdvancedFilterTagEditSource;
+    },
+
+    isCardAdvancedFilterTagEditActive() {
+      return (
+        this.cardAdvancedFilterTagEditSource === "card-advanced-filter" &&
+        !!this.cardAdvancedFilterDraft
+      );
+    },
+
+    getCardAdvancedFilterTagState() {
+      if (!this.isCardAdvancedFilterTagEditActive()) {
+        return this.viewState;
+      }
+
+      return this.getCardAdvancedFilterDraftTagState();
+    },
+
+    getCardAdvancedFilterDraftTagState() {
+      if (!this.cardAdvancedFilterDraft) {
+        this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
+      }
+
+      if (!Array.isArray(this.cardAdvancedFilterDraft.filterTags)) {
+        this.cardAdvancedFilterDraft.filterTags = [];
+      }
+
+      if (!Array.isArray(this.cardAdvancedFilterDraft.excludedTags)) {
+        this.cardAdvancedFilterDraft.excludedTags = [];
+      }
+
+      return this.cardAdvancedFilterDraft;
     },
 
     clearCardAdvancedFilterDraft() {
@@ -1197,31 +1292,47 @@ export function initState() {
         this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
       }
 
+      const nextSort =
+        toSummaryLabel(this.settingsForm.default_sort) ||
+        toSummaryLabel(this.currentSort) ||
+        "date_desc";
+
       this.cardAdvancedFilterDraft = {
         ...this.cardAdvancedFilterDraft,
         favFilter: "none",
         searchScope: "current",
         recursiveFilter: true,
-        sort: "",
+        sort: nextSort,
         ...buildDefaultCardAdvancedFilterFields(),
+        filterTags: [],
+        excludedTags: [],
       };
+      this.clearCardAdvancedFilterValidationState();
     },
 
     validateCardAdvancedFilterDraft(draft = null) {
       const currentDraft = draft || this.cardAdvancedFilterDraft;
       if (!currentDraft) {
-        return "";
+        return null;
       }
 
       const tokenMin = toSummaryLabel(currentDraft.tokenMin);
       const tokenMax = toSummaryLabel(currentDraft.tokenMax);
 
       if (tokenMin !== "" && !/^\d+$/.test(tokenMin)) {
-        return "Token 最小值必须是非负整数";
+        return {
+          section: "numeric",
+          field: "tokenMin",
+          message: "Token 最小值必须是非负整数",
+        };
       }
 
       if (tokenMax !== "" && !/^\d+$/.test(tokenMax)) {
-        return "Token 最大值必须是非负整数";
+        return {
+          section: "numeric",
+          field: "tokenMax",
+          message: "Token 最大值必须是非负整数",
+        };
       }
 
       if (
@@ -1229,7 +1340,11 @@ export function initState() {
         tokenMax !== "" &&
         Number(tokenMin) > Number(tokenMax)
       ) {
-        return "Token 最小值不能大于最大值";
+        return {
+          section: "numeric",
+          field: "tokenRange",
+          message: "Token 最小值不能大于最大值",
+        };
       }
 
       if (
@@ -1238,7 +1353,11 @@ export function initState() {
           currentDraft.importDateTo,
         )
       ) {
-        return "导入时间开始日期不能晚于结束日期";
+        return {
+          section: "time",
+          field: "importDate",
+          message: "导入时间开始日期不能晚于结束日期",
+        };
       }
 
       if (
@@ -1247,10 +1366,14 @@ export function initState() {
           currentDraft.modifiedDateTo,
         )
       ) {
-        return "修改时间开始日期不能晚于结束日期";
+        return {
+          section: "time",
+          field: "modifiedDate",
+          message: "修改时间开始日期不能晚于结束日期",
+        };
       }
 
-      return "";
+      return null;
     },
 
     applyCardAdvancedFilterDraft() {
@@ -1262,7 +1385,8 @@ export function initState() {
         this.cardAdvancedFilterDraft,
       );
       if (validationError) {
-        return { success: false, error: validationError };
+        this.cardAdvancedFilterValidationState = validationError;
+        return { success: false, ...validationError };
       }
 
       const draft = this.cardAdvancedFilterDraft;
@@ -1275,11 +1399,19 @@ export function initState() {
       this.viewState.modifiedDateTo = toSummaryLabel(draft.modifiedDateTo);
       this.viewState.tokenMin = toSummaryLabel(draft.tokenMin);
       this.viewState.tokenMax = toSummaryLabel(draft.tokenMax);
+      this.viewState.filterTags = Array.isArray(draft.filterTags)
+        ? [...draft.filterTags]
+        : [];
+      this.viewState.excludedTags = Array.isArray(draft.excludedTags)
+        ? [...draft.excludedTags]
+        : [];
       this.currentSort =
         toSummaryLabel(draft.sort) ||
         this.settingsForm.default_sort ||
         "date_desc";
+      this.clearCardAdvancedFilterValidationState();
       this.showCardAdvancedFilterDrawer = false;
+      this.setCardAdvancedFilterTagEditSource("");
       window.dispatchEvent(new CustomEvent("refresh-card-list"));
       return { success: true };
     },
@@ -1289,25 +1421,38 @@ export function initState() {
       const items = [];
 
       if (vs.favFilter === "included") {
-        items.push({ key: "favFilter", label: "只看收藏" });
+        items.push({ key: "favFilter", label: "只看收藏", section: "basic" });
       } else if (vs.favFilter === "excluded") {
-        items.push({ key: "favFilter", label: "排除收藏" });
+        items.push({ key: "favFilter", label: "排除收藏", section: "basic" });
       }
 
       if (vs.searchScope === "all_dirs") {
-        items.push({ key: "searchScope", label: "搜索范围: 全部目录" });
+        items.push({
+          key: "searchScope",
+          label: "搜索范围: 全部目录",
+          section: "basic",
+        });
       } else if (vs.searchScope === "full") {
-        items.push({ key: "searchScope", label: "搜索范围: 全库全文" });
+        items.push({
+          key: "searchScope",
+          label: "搜索范围: 全库全文",
+          section: "basic",
+        });
       }
 
       if (vs.recursiveFilter === false) {
-        items.push({ key: "recursiveFilter", label: "不包含子目录" });
+        items.push({
+          key: "recursiveFilter",
+          label: "不包含子目录",
+          section: "basic",
+        });
       }
 
       if (vs.importDateFrom || vs.importDateTo) {
         items.push({
           key: "importDate",
           label: `导入时间: ${vs.importDateFrom || "不限"} - ${vs.importDateTo || "不限"}`,
+          section: "time",
         });
       }
 
@@ -1315,6 +1460,7 @@ export function initState() {
         items.push({
           key: "modifiedDate",
           label: `修改时间: ${vs.modifiedDateFrom || "不限"} - ${vs.modifiedDateTo || "不限"}`,
+          section: "time",
         });
       }
 
@@ -1322,6 +1468,7 @@ export function initState() {
         items.push({
           key: "tokenRange",
           label: `Token: ${vs.tokenMin || "不限"} - ${vs.tokenMax || "不限"}`,
+          section: "numeric",
         });
       }
 
@@ -1335,15 +1482,65 @@ export function initState() {
         if (excludeTags.length) {
           parts.push(`排除 ${excludeTags.join(", ")}`);
         }
-        items.push({ key: "tags", label: `标签: ${parts.join(" / ")}` });
+        items.push({
+          key: "tags",
+          label: `标签: ${parts.join(" / ")}`,
+          section: "tags",
+        });
       }
 
       const defaultSort = this.settingsForm.default_sort || "date_desc";
       if ((this.currentSort || defaultSort) !== defaultSort) {
-        items.push({ key: "sort", label: `排序: ${this.currentSort}` });
+        items.push({
+          key: "sort",
+          label: `排序: ${this.currentSort}`,
+          section: "basic",
+        });
       }
 
       return items;
+    },
+
+    getCardAdvancedFilterStatItems() {
+      const vs = this.viewState || {};
+      const hasTimeRange = !!(
+        vs.importDateFrom ||
+        vs.importDateTo ||
+        vs.modifiedDateFrom ||
+        vs.modifiedDateTo
+      );
+      const hasNumericRange = vs.tokenMin !== "" || vs.tokenMax !== "";
+      const includeTags = (Array.isArray(vs.filterTags) ? vs.filterTags : [])
+        .length;
+      const excludeTags = (
+        Array.isArray(vs.excludedTags) ? vs.excludedTags : []
+      ).length;
+      const hasNumericOrTagFilters =
+        hasNumericRange || includeTags || excludeTags;
+      // One combined status card summarizes numeric and tag filters,
+      // then routes back to whichever editor section is currently relevant.
+      const numericAndTagSection = hasNumericRange ? "numeric" : "tags";
+
+      return [
+        {
+          key: "basic",
+          label: "已启用条件",
+          value: String(this.getCardAdvancedFilterCount()),
+          section: "basic",
+        },
+        {
+          key: "time",
+          label: "时间范围",
+          value: hasTimeRange ? "已设置" : "未设置",
+          section: "time",
+        },
+        {
+          key: "numeric",
+          label: "数值 / 标签",
+          value: hasNumericOrTagFilters ? "已设置" : "未设置",
+          section: numericAndTagSection,
+        },
+      ];
     },
 
     getCardAdvancedFilterCount() {
@@ -1390,6 +1587,7 @@ export function initState() {
       if (this.cardAdvancedFilterDraft) {
         this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
       }
+      this.clearCardAdvancedFilterValidationState();
       window.dispatchEvent(new CustomEvent("refresh-card-list"));
     },
 
@@ -1409,6 +1607,7 @@ export function initState() {
       if (this.cardAdvancedFilterDraft) {
         this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
       }
+      this.clearCardAdvancedFilterValidationState();
       window.dispatchEvent(new CustomEvent("refresh-card-list"));
     },
 

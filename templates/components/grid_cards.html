@@ -15,22 +15,27 @@
         x-for="item in $store.global.getCardAdvancedFilterSummaryItems()"
         :key="item.key"
       >
-        <button
-          type="button"
-          class="card-filter-summary-chip"
-          @click="$store.global.openCardAdvancedFilterDrawer()"
-          :title="`查看筛选：${item.label}`"
-        >
-          <span
-            class="card-filter-summary-chip-label"
-            x-text="item.label"
-          ></span>
-          <span
-            class="card-filter-summary-chip-clear"
-            @click.stop="$store.global.clearCardAdvancedFilterItem(item.key)"
-            >×</span
+        <div class="card-filter-summary-chip">
+          <button
+            type="button"
+            class="card-filter-summary-chip-main"
+            @click="$store.global.openCardAdvancedFilterDrawer(item.section)"
+            :title="`查看筛选：${item.label}`"
           >
-        </button>
+            <span
+              class="card-filter-summary-chip-label"
+              x-text="item.label"
+            ></span>
+          </button>
+          <button
+            type="button"
+            class="card-filter-summary-chip-remove"
+            @click.stop="$store.global.clearCardAdvancedFilterItem(item.key)"
+            :title="`清除筛选：${item.label}`"
+          >
+            ×
+          </button>
+        </div>
       </template>
     </div>
     <button

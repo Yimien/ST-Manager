@@ -24,7 +24,7 @@
             <div style="font-size: 1rem; font-weight: 700">标签库筛选</div>
           </div>
           <button
-            @click="requestCloseModal()"
+            @click="requestCloseTagFilterEditor()"
             style="
               color: var(--text-dim);
               font-size: 1.25rem;
@@ -449,15 +449,15 @@
                       class="tag-chip-btn flex items-center"
                       :class="{
                                                 'tag-chip-selected': !isDeleteMode && !showCategoryMode && filterTags.includes(tag),
-                                                'tag-chip-excluded': !isDeleteMode && !showCategoryMode && $store.global.viewState.excludedTags.includes(tag),
-                                                'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !filterTags.includes(tag) && !$store.global.viewState.excludedTags.includes(tag),
+                                                'tag-chip-excluded': !isDeleteMode && !showCategoryMode && excludedTags.includes(tag),
+                                                'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !filterTags.includes(tag) && !excludedTags.includes(tag),
                                                 'tag-chip-delete-selected': isDeleteMode && selectedTagsForDeletion.includes(tag),
                                                 'tag-chip-delete-unselected': isDeleteMode && !selectedTagsForDeletion.includes(tag),
                                                 'tag-chip-category-selected': showCategoryMode && selectedCategoryTags.includes(tag),
                                                 'tag-chip-category-unselected tag-chip-categorized': showCategoryMode && !selectedCategoryTags.includes(tag)
                                             }"
-                      :style="(!isDeleteMode && (($store.global.viewState.filterTags || []).indexOf(tag) === -1) && (($store.global.viewState.excludedTags || []).indexOf(tag) === -1)) ? getTagChipStyle(tag) : ''"
-                      :title="!isDeleteMode && !showCategoryMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : ($store.global.viewState.excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : '')"
+                      :style="(!isDeleteMode && (filterTags.indexOf(tag) === -1) && (excludedTags.indexOf(tag) === -1)) ? getTagChipStyle(tag) : ''"
+                      :title="!isDeleteMode && !showCategoryMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : (excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : '')"
                     >
                       <span
                         x-show="isDeleteMode && selectedTagsForDeletion.includes(tag)"
@@ -511,15 +511,15 @@
                             class="tag-chip-btn flex items-center"
                             :class="{
                                                             'tag-chip-selected': !isDeleteMode && !showCategoryMode && filterTags.includes(tag),
-                                                            'tag-chip-excluded': !isDeleteMode && !showCategoryMode && $store.global.viewState.excludedTags.includes(tag),
-                                                            'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !filterTags.includes(tag) && !$store.global.viewState.excludedTags.includes(tag),
+                                                            'tag-chip-excluded': !isDeleteMode && !showCategoryMode && excludedTags.includes(tag),
+                                                            'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !filterTags.includes(tag) && !excludedTags.includes(tag),
                                                             'tag-chip-delete-selected': isDeleteMode && selectedTagsForDeletion.includes(tag),
                                                             'tag-chip-delete-unselected': isDeleteMode && !selectedTagsForDeletion.includes(tag),
                                                             'tag-chip-category-selected': showCategoryMode && selectedCategoryTags.includes(tag),
                                                             'tag-chip-category-unselected tag-chip-categorized': showCategoryMode && !selectedCategoryTags.includes(tag)
                                                         }"
-                            :style="(!isDeleteMode && (($store.global.viewState.filterTags || []).indexOf(tag) === -1) && (($store.global.viewState.excludedTags || []).indexOf(tag) === -1)) ? getTagChipStyle(tag) : ''"
-                            :title="!isDeleteMode && !showCategoryMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : ($store.global.viewState.excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : '')"
+                            :style="(!isDeleteMode && (filterTags.indexOf(tag) === -1) && (excludedTags.indexOf(tag) === -1)) ? getTagChipStyle(tag) : ''"
+                            :title="!isDeleteMode && !showCategoryMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : (excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : '')"
                           >
                             <span
                               x-show="isDeleteMode && selectedTagsForDeletion.includes(tag)"
@@ -637,7 +637,7 @@
                   <span class="text-sm" style="color: var(--text-dim)"
                     >已选
                     <span
-                      x-text="filterTags.length + $store.global.viewState.excludedTags.length"
+                      x-text="filterTags.length + excludedTags.length"
                       class="text-accent font-bold"
                     ></span>
                     个标签</span
@@ -826,7 +826,7 @@
                 >
                   <span>已选标签区</span>
                   <button
-                    @click="filterTags=[]; $store.global.viewState.excludedTags=[]"
+                    @click="filterTags=[]; excludedTags=[]"
                     x-show="!isSortMode && !showCategoryMode"
                     style="
                       color: #f87171;
@@ -859,13 +859,13 @@
                     </button>
                   </template>
                   <template
-                    x-for="tag in $store.global.viewState.excludedTags"
+                    x-for="tag in $store.global.getCardAdvancedFilterTagState().excludedTags"
                     :key="'basket-exclude-' + tag"
                   >
                     <button
                       type="button"
                       class="tag-filter-selected-basket-chip tag-filter-selected-basket-chip--excluded tag-filter-selected-basket-chip--workspace"
-                      @click="$store.global.viewState.excludedTags = $store.global.viewState.excludedTags.filter(item => item !== tag)"
+                      @click="excludedTags = excludedTags.filter(item => item !== tag)"
                     >
                       <span
                         class="tag-filter-selected-basket-chip-label"
@@ -875,7 +875,7 @@
                     </button>
                   </template>
                   <div
-                    x-show="filterTags.length === 0 && $store.global.viewState.excludedTags.length === 0"
+                    x-show="filterTags.length === 0 && excludedTags.length === 0"
                     class="tag-filter-selected-basket-empty"
                     style="color: var(--text-dim)"
                   >
@@ -958,9 +958,9 @@
                       <button
                         type="button"
                         class="tag-category-clear"
-                        @click="filterTags=[]; $store.global.viewState.excludedTags=[]"
-                        :disabled="filterTags.length === 0 && $store.global.viewState.excludedTags.length === 0"
-                        :style="filterTags.length === 0 && $store.global.viewState.excludedTags.length === 0 ? 'opacity:0.45; cursor:not-allowed;' : ''"
+                        @click="filterTags=[]; excludedTags=[]"
+                        :disabled="filterTags.length === 0 && excludedTags.length === 0"
+                        :style="filterTags.length === 0 && excludedTags.length === 0 ? 'opacity:0.45; cursor:not-allowed;' : ''"
                       >
                         清空筛选
                       </button>
@@ -981,7 +981,7 @@
                         >
                         <span
                           class="tag-filter-current-mode-tool-summary-value"
-                          x-text="$store.global.viewState.excludedTags.length"
+                          x-text="excludedTags.length"
                         ></span>
                       </div>
                       <div class="tag-filter-current-mode-tool-summary-card">
@@ -1582,15 +1582,15 @@
                             class="tag-chip-btn flex items-center"
                             :class="{
                                         'tag-chip-selected': !isDeleteMode && !showCategoryMode && !isBlacklistMode && filterTags.includes(tag),
-                                        'tag-chip-excluded': !isDeleteMode && !showCategoryMode && !isBlacklistMode && $store.global.viewState.excludedTags.includes(tag),
-                                        'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !isBlacklistMode && !filterTags.includes(tag) && !$store.global.viewState.excludedTags.includes(tag),
+                                        'tag-chip-excluded': !isDeleteMode && !showCategoryMode && !isBlacklistMode && excludedTags.includes(tag),
+                                        'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !isBlacklistMode && !filterTags.includes(tag) && !excludedTags.includes(tag),
                                         'tag-chip-delete-selected': isDeleteMode && selectedTagsForDeletion.includes(tag),
                                         'tag-chip-delete-unselected': isDeleteMode && !selectedTagsForDeletion.includes(tag),
                                         'tag-chip-category-selected': (showCategoryMode && selectedCategoryTags.includes(tag)) || (isBlacklistMode && selectedBlacklistTags.includes(tag)),
                                         'tag-chip-category-unselected tag-chip-categorized': (showCategoryMode && !selectedCategoryTags.includes(tag)) || (isBlacklistMode && !selectedBlacklistTags.includes(tag))
                                     }"
                             :style="!isDeleteMode ? getTagChipStyle(tag) : ''"
-                            :title="!isDeleteMode && !showCategoryMode && !isBlacklistMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : ($store.global.viewState.excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : (isBlacklistMode ? `标签：${tag}（${isTagBlacklisted(tag) ? '已在黑名单中，点击可移出' : '点击加入黑名单选择'}）` : ''))"
+                            :title="!isDeleteMode && !showCategoryMode && !isBlacklistMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : (excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : (isBlacklistMode ? `标签：${tag}（${isTagBlacklisted(tag) ? '已在黑名单中，点击可移出' : '点击加入黑名单选择'}）` : ''))"
                           >
                             <span
                               x-show="isDeleteMode && selectedTagsForDeletion.includes(tag)"
@@ -1646,15 +1646,15 @@
                                   class="tag-chip-btn flex items-center"
                                   :class="{
                                                     'tag-chip-selected': !isDeleteMode && !showCategoryMode && !isBlacklistMode && filterTags.includes(tag),
-                                                    'tag-chip-excluded': !isDeleteMode && !showCategoryMode && !isBlacklistMode && $store.global.viewState.excludedTags.includes(tag),
-                                                    'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !isBlacklistMode && !filterTags.includes(tag) && !$store.global.viewState.excludedTags.includes(tag),
+                                                    'tag-chip-excluded': !isDeleteMode && !showCategoryMode && !isBlacklistMode && excludedTags.includes(tag),
+                                                    'tag-chip-unselected tag-chip-categorized': !isDeleteMode && !showCategoryMode && !isBlacklistMode && !filterTags.includes(tag) && !excludedTags.includes(tag),
                                                     'tag-chip-delete-selected': isDeleteMode && selectedTagsForDeletion.includes(tag),
                                                     'tag-chip-delete-unselected': isDeleteMode && !selectedTagsForDeletion.includes(tag),
                                                     'tag-chip-category-selected': (showCategoryMode && selectedCategoryTags.includes(tag)) || (isBlacklistMode && selectedBlacklistTags.includes(tag)),
                                                     'tag-chip-category-unselected tag-chip-categorized': (showCategoryMode && !selectedCategoryTags.includes(tag)) || (isBlacklistMode && !selectedBlacklistTags.includes(tag))
                                                 }"
                                   :style="!isDeleteMode ? getTagChipStyle(tag) : ''"
-                                  :title="!isDeleteMode && !showCategoryMode && !isBlacklistMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : ($store.global.viewState.excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : (isBlacklistMode ? `标签：${tag}（${isTagBlacklisted(tag) ? '已在黑名单中，点击可移出' : '点击加入黑名单选择'}）` : ''))"
+                                  :title="!isDeleteMode && !showCategoryMode && !isBlacklistMode ? (filterTags.includes(tag) ? `标签：${tag}（已包含，点击改为排除）` : (excludedTags.includes(tag) ? `标签：${tag}（已排除，点击取消筛选）` : `标签：${tag}（分类：${getTagCategory(tag)}，点击加入筛选，Shift+点击可直接排除）`)) : (showCategoryMode ? `标签：${tag}（当前分类：${getTagCategory(tag)}）` : (isBlacklistMode ? `标签：${tag}（${isTagBlacklisted(tag) ? '已在黑名单中，点击可移出' : '点击加入黑名单选择'}）` : ''))"
                                 >
                                   <span
                                     x-show="isDeleteMode && selectedTagsForDeletion.includes(tag)"
@@ -1858,7 +1858,7 @@
                   </div>
                   <button
                     @click="deleteFilterTags()"
-                    x-show="(filterTags.length > 0 || $store.global.viewState.excludedTags.length > 0) && !isDeleteMode && !isSortMode && !showCategoryMode"
+                    x-show="(filterTags.length > 0 || excludedTags.length > 0) && !isDeleteMode && !isSortMode && !showCategoryMode"
                     class="text-xs bg-red-600 hover:bg-red-500 px-2 py-1 rounded text-white"
                   >
                     从当前视图移除选中标签
