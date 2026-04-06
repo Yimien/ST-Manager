@@ -69,20 +69,14 @@ export default function cardAdvancedFilter() {
     },
 
     get tagIncludeCount() {
-      return Array.isArray(
-        this.$store.global.getCardAdvancedFilterDraftTagState().filterTags,
-      )
-        ? this.$store.global.getCardAdvancedFilterDraftTagState().filterTags
-            .length
+      return Array.isArray(this.$store.global.viewState.filterTags)
+        ? this.$store.global.viewState.filterTags.length
         : 0;
     },
 
     get tagExcludeCount() {
-      return Array.isArray(
-        this.$store.global.getCardAdvancedFilterDraftTagState().excludedTags,
-      )
-        ? this.$store.global.getCardAdvancedFilterDraftTagState().excludedTags
-            .length
+      return Array.isArray(this.$store.global.viewState.excludedTags)
+        ? this.$store.global.viewState.excludedTags.length
         : 0;
     },
 
@@ -113,10 +107,10 @@ export default function cardAdvancedFilter() {
     },
 
     clearTagFilters() {
-      const tagState = this.$store.global.getCardAdvancedFilterDraftTagState();
-      tagState.filterTags = [];
-      tagState.excludedTags = [];
+      this.$store.global.viewState.filterTags = [];
+      this.$store.global.viewState.excludedTags = [];
       this.syncValidationState();
+      window.dispatchEvent(new CustomEvent("refresh-card-list"));
     },
 
     setSection(section) {

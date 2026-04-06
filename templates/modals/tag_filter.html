@@ -9,7 +9,7 @@
   <div
     class="tag-modal-container"
     :class="[isDesktopWorkspaceFullscreen && $store.global.deviceType !== 'mobile' ? 'tag-modal-container--desktop-fullscreen' : '', $store.global.deviceType !== 'mobile' ? 'tag-modal-container--desktop-workspace' : '']"
-    @click.away="requestCloseModal()"
+    @click.away="requestCloseTagFilterEditor()"
   >
     <template x-if="$store.global.deviceType === 'mobile'">
       <div
@@ -741,7 +741,7 @@
               ></button>
               <button
                 type="button"
-                @click="requestCloseModal()"
+                @click="requestCloseTagFilterEditor()"
                 class="tag-filter-workspace-close-btn"
               >
                 ✕
@@ -859,7 +859,7 @@
                     </button>
                   </template>
                   <template
-                    x-for="tag in $store.global.getCardAdvancedFilterTagState().excludedTags"
+                    x-for="tag in excludedTags"
                     :key="'basket-exclude-' + tag"
                   >
                     <button

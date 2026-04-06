@@ -164,22 +164,34 @@ def test_card_advanced_filter_component_exposes_section_navigation_and_inline_va
     assert 'sort: "",' not in state_source
 
 
-def test_tag_filter_modal_and_drawer_use_draft_aware_tag_state_when_opened_from_workbench():
+def test_tag_filter_modal_and_drawer_keep_tags_live_and_only_use_return_context_from_workbench():
     state_source = read_project_file('static/js/state.js')
     drawer_component = read_project_file('static/js/components/cardAdvancedFilter.js')
     tag_modal_source = read_project_file('static/js/components/tagFilterModal.js')
     tag_modal_template = read_project_file('templates/modals/tag_filter.html')
+    clear_draft_block = state_source.split('clearCardAdvancedFilterDraft() {', 1)[1].split('validateCardAdvancedFilterDraft', 1)[0]
 
-    assert 'filterTags: [...(viewState.filterTags || [])],' in state_source
-    assert 'excludedTags: [...(viewState.excludedTags || [])],' in state_source
-    assert 'this.viewState.filterTags = Array.isArray(draft.filterTags)' in state_source
-    assert 'this.viewState.excludedTags = Array.isArray(draft.excludedTags)' in state_source
+    assert 'filterTags: [...(viewState.filterTags || [])],' not in state_source
+    assert 'excludedTags: [...(viewState.excludedTags || [])],' not in state_source
+    assert 'this.viewState.filterTags = Array.isArray(draft.filterTags)' not in state_source
+    assert 'this.viewState.excludedTags = Array.isArray(draft.excludedTags)' not in state_source
+    assert 'getCardAdvancedFilterDraftTagState()' not in state_source
+    assert 'return this.viewState;' in state_source
     assert 'this.setCardAdvancedFilterTagEditSource("card-advanced-filter");' in drawer_component
+    assert 'getCardAdvancedFilterDraftTagState' not in drawer_component
     assert 'requestCloseTagFilterEditor()' in tag_modal_source
     assert 'this.$store.global.getCardAdvancedFilterTagState()' in tag_modal_source
+    assert 'this.$store.global.openCardAdvancedFilterDrawer("tags")' in tag_modal_source
     assert 'this.$store.global.setCardAdvancedFilterTagEditSource("")' in tag_modal_source
-    assert '$store.global.getCardAdvancedFilterTagState().excludedTags' in tag_modal_template
-    assert '@click="requestCloseTagFilterEditor()"' in tag_modal_template
+    assert 'window.dispatchEvent(new CustomEvent("refresh-card-list"));' in state_source
+    assert 'if (this.isCardAdvancedFilterTagEditActive()) {' in state_source
+    assert 'return;' not in state_source.split('if (this.isCardAdvancedFilterTagEditActive()) {', 1)[1].split('// 触发列表刷新', 1)[0]
+    assert 'this.viewState.filterTags = [];' not in clear_draft_block
+    assert 'this.viewState.excludedTags = [];' not in clear_draft_block
+    assert 'x-for="tag in excludedTags"' in tag_modal_template
+    assert '@click.away="requestCloseTagFilterEditor()"' in tag_modal_template
+    assert tag_modal_template.count('@click="requestCloseTagFilterEditor()"') >= 2
+    assert '@click="requestCloseModal()"' not in tag_modal_template
     assert 'closeCardAdvancedFilterDrawer(false)' in drawer_component
     assert 'closeCardAdvancedFilterDrawer(clearTagEditSource = true) {' in state_source
     assert 'if (clearTagEditSource) {' in state_source

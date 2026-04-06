@@ -735,7 +735,7 @@ export default function tagFilterModal() {
         return;
       }
 
-      this.$store.global.showCardAdvancedFilterDrawer = true;
+      this.$store.global.openCardAdvancedFilterDrawer("tags");
     },
 
     toggleFilterTag(tag, event = null) {

@@ -209,8 +209,6 @@ function buildCardAdvancedFilterDraftFromViewState(
     modifiedDateTo: toSummaryLabel(viewState.modifiedDateTo),
     tokenMin: toSummaryLabel(viewState.tokenMin),
     tokenMax: toSummaryLabel(viewState.tokenMax),
-    filterTags: [...(viewState.filterTags || [])],
-    excludedTags: [...(viewState.excludedTags || [])],
   };
 }
 
@@ -1196,7 +1194,6 @@ export function initState() {
 
       if (this.isCardAdvancedFilterTagEditActive()) {
         this.syncCardAdvancedFilterValidationState();
-        return;
       }
 
       // 触发列表刷新
@@ -1257,34 +1254,11 @@ export function initState() {
     },
 
     isCardAdvancedFilterTagEditActive() {
-      return (
-        this.cardAdvancedFilterTagEditSource === "card-advanced-filter" &&
-        !!this.cardAdvancedFilterDraft
-      );
+      return this.cardAdvancedFilterTagEditSource === "card-advanced-filter";
     },
 
     getCardAdvancedFilterTagState() {
-      if (!this.isCardAdvancedFilterTagEditActive()) {
-        return this.viewState;
-      }
-
-      return this.getCardAdvancedFilterDraftTagState();
-    },
-
-    getCardAdvancedFilterDraftTagState() {
-      if (!this.cardAdvancedFilterDraft) {
-        this.cardAdvancedFilterDraft = this.getDefaultCardAdvancedFilterDraft();
-      }
-
-      if (!Array.isArray(this.cardAdvancedFilterDraft.filterTags)) {
-        this.cardAdvancedFilterDraft.filterTags = [];
-      }
-
-      if (!Array.isArray(this.cardAdvancedFilterDraft.excludedTags)) {
-        this.cardAdvancedFilterDraft.excludedTags = [];
-      }
-
-      return this.cardAdvancedFilterDraft;
+      return this.viewState;
     },
 
     clearCardAdvancedFilterDraft() {
@@ -1304,8 +1278,6 @@ export function initState() {
         recursiveFilter: true,
         sort: nextSort,
         ...buildDefaultCardAdvancedFilterFields(),
-        filterTags: [],
-        excludedTags: [],
       };
       this.clearCardAdvancedFilterValidationState();
     },
@@ -1399,12 +1371,6 @@ export function initState() {
       this.viewState.modifiedDateTo = toSummaryLabel(draft.modifiedDateTo);
       this.viewState.tokenMin = toSummaryLabel(draft.tokenMin);
       this.viewState.tokenMax = toSummaryLabel(draft.tokenMax);
-      this.viewState.filterTags = Array.isArray(draft.filterTags)
-        ? [...draft.filterTags]
-        : [];
-      this.viewState.excludedTags = Array.isArray(draft.excludedTags)
-        ? [...draft.excludedTags]
-        : [];
       this.currentSort =
         toSummaryLabel(draft.sort) ||
         this.settingsForm.default_sort ||
