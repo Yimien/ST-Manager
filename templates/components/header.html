@@ -67,6 +67,27 @@
       </button>
     </div>
 
+    <div
+      x-show="['cards', 'worldinfo'].includes(currentMode)"
+      class="mobile-search-mode-toggle"
+    >
+      <button
+        type="button"
+        @click='searchMode = "fast"'
+        :class="searchMode === 'fast' ? 'is-active' : ''"
+      >
+        快搜
+      </button>
+      <button
+        type="button"
+        x-show="canUseFulltextSearch"
+        @click='searchMode = "fulltext"'
+        :class="searchMode === 'fulltext' ? 'is-active' : ''"
+      >
+        全文
+      </button>
+    </div>
+
     <!-- 右侧：菜单按钮 -->
     <button @click="toggleMobileMenu()" class="mobile-menu-btn-compact">
       <span x-show="!showMobileMenu">☰</span>
@@ -149,6 +170,32 @@
           >V99</span
         >
       </div>
+    </div>
+
+    <div
+      x-show="['cards', 'worldinfo'].includes(currentMode)"
+      class="search-mode-toggle"
+    >
+      <button
+        type="button"
+        @click='searchMode = "fast"'
+        :class="searchMode === 'fast' ? 'is-active' : ''"
+      >
+        快搜
+      </button>
+      <button
+        type="button"
+        x-show="canUseFulltextSearch"
+        @click='searchMode = "fulltext"'
+        :class="searchMode === 'fulltext' ? 'is-active' : ''"
+      >
+        全文
+      </button>
+    </div>
+
+    <div class="index-status-chip" :class="$store.global.indexStatus.state">
+      <span x-text="$store.global.indexStatus.state"></span>
+      <span x-text="$store.global.indexStatus.pending_jobs"></span>
     </div>
 
     <!-- 桌面端：筛选标签云 -->
