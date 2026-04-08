@@ -22,6 +22,9 @@ from core.utils.data import get_wi_meta, sanitize_for_utf8
 logger = logging.getLogger(__name__)
 
 
+WRITE_LIKE_EVENT_TYPES = {'created', 'modified', 'deleted', 'moved'}
+
+
 def _normalize_watch_path(path):
     return os.path.normcase(os.path.abspath(str(path or '')))
 
@@ -89,6 +92,10 @@ def start_fs_watcher():
         def on_any_event(self, event):
             # 忽略目录本身的修改事件，只关注文件
             if event.is_directory:
+                return
+
+            # 仅处理真正会改变索引结果的写类事件，避免读取/打开文件触发无意义重建
+            if str(getattr(event, 'event_type', '') or '').lower() not in WRITE_LIKE_EVENT_TYPES:
                 return
 
             # 本进程写文件期间抑制 watchdog

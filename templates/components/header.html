@@ -175,8 +175,12 @@
       </div>
     </div>
 
-    <div class="index-status-chip" :class="$store.global.indexStatus.state">
-      <span x-text="$store.global.indexStatus.state"></span>
+    <div
+      x-show="$store.global.indexStatus.state === 'building' || $store.global.indexStatus.state === 'error'"
+      class="index-status-chip"
+      :class="$store.global.indexStatus.state"
+    >
+      <span x-text="indexStatusLabel"></span>
       <span x-text="$store.global.indexStatus.pending_jobs"></span>
     </div>
 

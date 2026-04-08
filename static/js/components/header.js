@@ -219,6 +219,12 @@ export default function header() {
       if (this.activeFavFilter === "excluded") return "当前：排除收藏";
       return "当前：显示全部";
     },
+    get indexStatusLabel() {
+      const state = String(this.$store.global.indexStatus?.state || "");
+      if (state === "building") return "索引构建中";
+      if (state === "error") return "索引异常";
+      return "";
+    },
     get favoriteFilterLabel() {
       if (this.activeFavFilter === "included") return "只看收藏";
       if (this.activeFavFilter === "excluded") return "排除收藏";

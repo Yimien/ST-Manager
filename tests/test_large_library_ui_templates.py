@@ -55,6 +55,25 @@ def test_header_template_exposes_search_mode_and_index_status_contracts():
     assert 'indexStatus: {' in state_source
 
 
+def test_header_template_hides_index_status_chip_when_state_is_not_actionable():
+    header_template = read_project_file('templates/components/header.html')
+
+    assert (
+        'x-show="$store.global.indexStatus.state === \'building\' || $store.global.indexStatus.state === \'error\'"'
+        in header_template
+    )
+    assert 'x-text="indexStatusLabel"' in header_template
+
+
+def test_header_source_maps_index_status_to_human_readable_labels():
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert 'get indexStatusLabel() {' in header_source
+    assert 'const state = String(this.$store.global.indexStatus?.state || "")' in header_source
+    assert 'if (state === "building") return "索引构建中";' in header_source
+    assert 'if (state === "error") return "索引异常";' in header_source
+
+
 def test_grid_sources_propagate_search_mode_contracts():
     card_grid_source = read_project_file('static/js/components/cardGrid.js')
     wi_grid_source = read_project_file('static/js/components/wiGrid.js')
@@ -79,7 +98,10 @@ def test_header_source_gates_search_mode_and_handles_index_status_poll_failures(
     assert 'this.$store.global.indexStatus = {' in header_source
     assert 'fast_search_use_index: false,' in state_source
     assert 'class="mobile-search-mode-toggle"' in header_template
-    assert 'x-show="canUseFulltextSearch"' in header_template
+    assert (
+        'x-show="[\'cards\', \'worldinfo\'].includes(currentMode) && canUseFulltextSearch"'
+        in header_template
+    )
 
 
 def test_header_source_forces_stale_fulltext_modes_back_to_fast():
@@ -117,8 +139,8 @@ def test_desktop_header_places_search_mode_toggle_inside_search_block_contract()
 
     toggle_tag = toggle_match.group(0)
     assert 'x-show=' in toggle_tag
-    assert 'canUseFulltextSearch' in toggle_tag
     assert '.includes(currentMode)' in toggle_tag
+    assert 'canUseFulltextSearch' in toggle_tag
     assert "'cards'" in toggle_tag or '"cards"' in toggle_tag
     assert "'worldinfo'" in toggle_tag or '"worldinfo"' in toggle_tag
 
