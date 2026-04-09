@@ -3,6 +3,7 @@
  * 预设详情阅读器组件 - 独立的弹窗组件
  */
 import { clearActiveRuntimeContext, setActiveRuntimeContext } from '../runtime/runtimeContext.js';
+import { downloadFileFromApi } from '../utils/download.js';
 
 export default function presetDetailReader() {
     return {
@@ -68,7 +69,25 @@ export default function presetDetailReader() {
                 detail: this.activePresetDetail
             }));
         },
-        
+
+        async exportActivePreset() {
+            const detail = this.activePresetDetail;
+            if (!detail) return;
+
+            try {
+                await downloadFileFromApi({
+                    url: '/api/presets/export',
+                    body: {
+                        id: detail.id,
+                    },
+                    defaultFilename: detail.filename || `${detail.name || 'preset'}.json`,
+                    showToast: this.$store?.global?.showToast,
+                });
+            } catch (err) {
+                this.$store.global.showToast(err.message || '导出失败', 'error');
+            }
+        },
+
         openAdvancedExtensions() {
             if (!this.activePresetDetail) return;
             

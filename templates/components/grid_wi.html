@@ -77,6 +77,15 @@
 
                 <div class="wi-card-header-actions" @click.stop>
                   <button
+                    type="button"
+                    @click.stop="exportWorldInfoItem(item)"
+                    class="wi-grid-tool-btn rounded-full flex items-center justify-center transition-all duration-200 shadow-md"
+                    title="导出世界书 JSON"
+                  >
+                    📤
+                  </button>
+
+                  <button
                     x-show="$store.global.deviceType !== 'mobile'"
                     @click.stop="openWorldInfoEditor(item)"
                     class="wi-grid-tool-btn wi-card-edit-btn rounded-full flex items-center justify-center transition-all duration-200 shadow-md"

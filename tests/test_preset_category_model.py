@@ -325,6 +325,60 @@ def test_preset_detail_returns_source_aware_resource_id(monkeypatch, tmp_path):
     assert payload['preset']['id'] == 'resource::lucy::companion'
 
 
+def test_export_preset_returns_attachment_for_global_id(monkeypatch, tmp_path):
+    presets_dir, _ = _setup_preset_env(monkeypatch, tmp_path)
+    _write_json(
+        presets_dir / '写作' / '长文' / 'companion.json',
+        {'name': 'Companion', 'temperature': 0.7},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/presets/export', json={'id': 'global::写作/长文/companion.json'})
+
+    assert res.status_code == 200
+    assert 'application/json' in res.headers['Content-Type']
+    assert 'attachment' in res.headers['Content-Disposition']
+    assert 'companion.json' in res.headers['Content-Disposition']
+
+    payload = json.loads(res.data.decode('utf-8'))
+    assert payload['name'] == 'Companion'
+    assert payload['temperature'] == 0.7
+
+
+def test_export_preset_returns_attachment_for_resource_id(monkeypatch, tmp_path):
+    _, resources_dir = _setup_preset_env(
+        monkeypatch,
+        tmp_path,
+        cards=[_make_card('cards/lucy.png', '角色分类')],
+        ui_payload={'cards/lucy.png': {'resource_folder': 'lucy'}},
+    )
+    _write_json(resources_dir / 'lucy' / 'presets' / 'scene.json', {'name': 'Scene Preset', 'top_p': 0.9})
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/presets/export', json={'id': 'resource::lucy::scene'})
+
+    assert res.status_code == 200
+    assert 'application/json' in res.headers['Content-Type']
+    assert 'attachment' in res.headers['Content-Disposition']
+    assert 'scene.json' in res.headers['Content-Disposition']
+
+    payload = json.loads(res.data.decode('utf-8'))
+    assert payload['name'] == 'Scene Preset'
+    assert payload['top_p'] == 0.9
+
+
+def test_export_preset_rejects_invalid_id(monkeypatch, tmp_path):
+    _setup_preset_env(monkeypatch, tmp_path)
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/presets/export', json={'id': 'bad::format'})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == 'Invalid preset ID'
+
+
 def test_delete_preset_uses_relative_path_global_id(monkeypatch, tmp_path):
     presets_dir, _ = _setup_preset_env(monkeypatch, tmp_path)
     preset_path = presets_dir / '写作' / '长文' / 'companion.json'

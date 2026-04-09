@@ -401,6 +401,14 @@
 
           <div class="grid grid-cols-3 gap-1.5">
             <button
+              @click="exportActiveWorldInfo()"
+              class="btn-secondary py-1.5 text-xs flex flex-col items-center justify-center gap-0.5"
+              title="导出 JSON"
+            >
+              <span class="text-base">📤</span
+              ><span class="scale-90">导出</span>
+            </button>
+            <button
               @click="createSnapshot('lorebook')"
               class="btn-secondary py-1.5 text-xs flex flex-col items-center justify-center gap-0.5"
               title="快速备份"

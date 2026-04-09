@@ -1,150 +1,235 @@
 <!-- templates/components/grid_presets.html -->
-<div x-show="$store.global.currentMode === 'presets'" x-cloak
-    style="display: none;" x-data="presetGrid"
-    class="flex-1 flex flex-col overflow-hidden w-full relative h-full bg-[var(--bg-body)]">
+<div
+  x-show="$store.global.currentMode === 'presets'"
+  x-cloak
+  style="display: none"
+  x-data="presetGrid"
+  class="flex-1 flex flex-col overflow-hidden w-full relative h-full bg-[var(--bg-body)]"
+>
+  <!-- 顶部工具条 -->
+  <div
+    class="h-12 border-b border-[var(--border-light)] flex items-center justify-between px-4 bg-[var(--bg-panel)] flex-shrink-0"
+  >
+    <div class="flex items-center gap-4">
+      <!-- 标题 -->
+      <div class="flex items-center gap-2 text-sm">
+        <span class="text-2xl">📝</span>
+        <span
+          x-show="$store.global.deviceType !== 'mobile'"
+          class="font-bold text-[var(--text-main)]"
+          >预设 Presets</span
+        >
+        <span class="text-[var(--text-dim)]">/</span>
+        <span class="text-xs opacity-60">AI 生成参数预设</span>
+      </div>
+    </div>
 
-    <!-- 顶部工具条 -->
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-[var(--text-dim)] mr-2">
+        共
+        <span
+          x-text="items.length"
+          class="text-[var(--text-main)] font-bold"
+        ></span>
+        个预设
+      </span>
+      <button
+        @click="fetchItems()"
+        class="btn-secondary px-3 py-1 text-xs flex items-center gap-1"
+      >
+        <span>↻</span> 刷新
+      </button>
+    </div>
+  </div>
+
+  <!-- 拖拽上传遮罩 -->
+  <div
+    class="flex-1 flex flex-col min-w-0 relative overflow-hidden"
+    @dragover.prevent="dragOver = true"
+    @dragleave.prevent="dragOver = false"
+    @drop.prevent="handleDrop($event)"
+  >
     <div
-        class="h-12 border-b border-[var(--border-light)] flex items-center justify-between px-4 bg-[var(--bg-panel)] flex-shrink-0">
-        <div class="flex items-center gap-4">
-            <!-- 标题 -->
-            <div class="flex items-center gap-2 text-sm">
-                <span class="text-2xl">📝</span>
-                <span x-show="$store.global.deviceType !== 'mobile'" class="font-bold text-[var(--text-main)]">预设 Presets</span>
-                <span class="text-[var(--text-dim)]">/</span>
-                <span class="text-xs opacity-60">AI 生成参数预设</span>
-            </div>
-        </div>
+      x-show="dragOver"
+      x-transition.opacity
+      class="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center border-4 border-dashed border-[var(--accent-main)] m-4 rounded-xl"
+    >
+      <div class="text-6xl mb-4">📥</div>
+      <div class="text-2xl font-bold text-white">松开上传预设</div>
+      <div class="text-gray-300 mt-2" x-text="presetUploadHintText"></div>
+    </div>
 
-        <div class="flex items-center gap-2">
-            <span class="text-xs text-[var(--text-dim)] mr-2">
-                共 <span x-text="items.length" class="text-[var(--text-main)] font-bold"></span> 个预设
-            </span>
-            <button @click="fetchItems()" class="btn-secondary px-3 py-1 text-xs flex items-center gap-1">
-                <span>↻</span> 刷新
+    <!-- 列表内容区 -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-4">
+      <div
+        x-show="isLoading"
+        class="flex flex-col items-center justify-center h-64 text-[var(--text-dim)]"
+      >
+        <div class="text-4xl animate-bounce mb-2">⏳</div>
+        <div>加载中...</div>
+      </div>
+
+      <div
+        x-show="!isLoading"
+        class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+      >
+        <template x-for="item in items" :key="item.id">
+          <div
+            @click="handlePresetClick($event, item)"
+            @dragstart="dragStart($event, item)"
+            draggable="true"
+            :data-preset-id="item.id"
+            :class="selectedIds.includes(item.id) ? 'border-[var(--accent-main)] ring-2 ring-[var(--accent-main)]/40' : 'border-[var(--border-light)]'"
+            class="group bg-[var(--bg-panel)] p-4 rounded-lg cursor-pointer hover:border-[var(--accent-main)] hover:shadow-lg transition-all relative overflow-hidden flex flex-col"
+          >
+            <button
+              type="button"
+              class="card-select-indicator card-select-overlay"
+              :class="{ 'is-selected': selectedIds.includes(item.id), 'is-mobile': $store.global.deviceType === 'mobile' }"
+              @click.stop="toggleSelection(item)"
+              title="选择预设"
+            >
+              <div
+                class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 shadow-sm"
+                :class="selectedIds.includes(item.id) ? 'bg-blue-600 border-blue-500 text-white scale-105' : 'bg-black/25 border-gray-400/60 hover:bg-black/50 hover:border-white/80 text-white/80'"
+              >
+                <span
+                  x-show="selectedIds.includes(item.id)"
+                  class="text-xs font-bold"
+                  >✓</span
+                >
+              </div>
             </button>
-        </div>
+
+            <!-- 来源角标 -->
+            <div
+              class="absolute top-0 right-0 px-2 py-1 text-[10px] font-bold text-white rounded-bl-lg shadow-sm"
+              :class="(item.source_type || item.type) === 'global' ? 'bg-blue-600' : 'bg-green-600'"
+            >
+              <span x-text="getPresetSourceHint(item)"></span>
+            </div>
+
+            <button
+              x-show="getPresetOwnerId(item)"
+              @click.stop="locatePresetOwnerCard(item)"
+              class="absolute bottom-2 left-8 px-2 py-1 text-[10px] rounded bg-[var(--bg-sub)] text-[var(--text-dim)] hover:text-[var(--text-main)] z-20"
+              title="定位所属角色卡"
+            >
+              定位所属角色卡
+            </button>
+
+            <!-- 删除按钮 -->
+            <button
+              @click="deletePreset(item, $event)"
+              class="absolute top-0 left-0 w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-br-lg opacity-0 group-hover:opacity-100 transition-opacity"
+              title="删除预设"
+            >
+              ✕
+            </button>
+
+            <button
+              @click.stop="exportPresetItem(item, $event)"
+              class="absolute top-0 left-7 w-6 h-6 flex items-center justify-center text-sky-300 hover:text-sky-200 hover:bg-sky-500/20 rounded-br-lg opacity-0 group-hover:opacity-100 transition-opacity"
+              title="导出预设 JSON"
+            >
+              ⇩
+            </button>
+
+            <div class="flex items-start gap-3 mb-3">
+              <div class="text-3xl pt-1 opacity-80 select-none">📝</div>
+              <div class="min-w-0 flex-1">
+                <div
+                  class="font-bold text-sm truncate text-[var(--text-main)] mb-1"
+                  :title="item.name"
+                  x-text="item.name"
+                ></div>
+                <div
+                  class="text-[10px] font-mono text-[var(--text-dim)] truncate opacity-70"
+                  :title="item.filename"
+                  x-text="item.filename"
+                ></div>
+              </div>
+            </div>
+
+            <!-- 参数概览 -->
+            <div class="flex flex-wrap gap-2 mb-3">
+              <template
+                x-if="item.temperature !== null && item.temperature !== undefined"
+              >
+                <span
+                  class="px-2 py-0.5 text-[10px] bg-orange-500/20 text-orange-300 rounded"
+                >
+                  🌡️ <span x-text="item.temperature"></span>
+                </span>
+              </template>
+              <template x-if="item.max_tokens">
+                <span
+                  class="px-2 py-0.5 text-[10px] bg-blue-500/20 text-blue-300 rounded"
+                >
+                  📊 <span x-text="item.max_tokens"></span>
+                </span>
+              </template>
+              <template x-if="item.prompt_count > 0">
+                <span
+                  class="px-2 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 rounded"
+                >
+                  💬 <span x-text="item.prompt_count"></span> prompts
+                </span>
+              </template>
+              <template x-if="item.regex_count > 0">
+                <span
+                  class="px-2 py-0.5 text-[10px] bg-green-500/20 text-green-300 rounded"
+                >
+                  🧩 <span x-text="item.regex_count"></span> regex
+                </span>
+              </template>
+            </div>
+
+            <!-- 描述 -->
+            <div
+              x-show="item.description"
+              class="text-xs text-[var(--text-dim)] line-clamp-2 mb-3"
+              x-text="item.description"
+            ></div>
+
+            <div
+              class="mt-auto pt-2 border-t border-[var(--border-light)] flex justify-between items-center"
+            >
+              <!-- 资源归属提示 -->
+              <div class="min-w-0 flex-1 mr-2">
+                <div
+                  x-show="getPresetOwnerName(item)"
+                  class="text-[10px] text-green-400 flex items-center gap-1 truncate"
+                  :title="getPresetOwnerName(item)"
+                >
+                  <span>👤</span>
+                  <span x-text="getPresetOwnerName(item)"></span>
+                </div>
+                <div
+                  x-show="!getPresetOwnerName(item)"
+                  class="text-[10px] text-blue-400 opacity-60"
+                >
+                  Global Library
+                </div>
+              </div>
+
+              <span
+                class="text-[10px] text-[var(--text-dim)] whitespace-nowrap"
+                x-text="formatDate(item.mtime)"
+              ></span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div
+        x-show="!isLoading && items.length === 0"
+        class="flex flex-col items-center justify-center h-64 text-[var(--text-dim)] opacity-60"
+      >
+        <div class="text-4xl mb-2 grayscale">📭</div>
+        <div>没有找到预设文件</div>
+        <div class="text-xs mt-2">拖拽 .json 预设文件到此处上传</div>
+      </div>
     </div>
-
-    <!-- 拖拽上传遮罩 -->
-    <div class="flex-1 flex flex-col min-w-0 relative overflow-hidden" @dragover.prevent="dragOver = true"
-        @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop($event)">
-
-        <div x-show="dragOver" x-transition.opacity
-            class="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center border-4 border-dashed border-[var(--accent-main)] m-4 rounded-xl">
-            <div class="text-6xl mb-4">📥</div>
-            <div class="text-2xl font-bold text-white">松开上传预设</div>
-            <div class="text-gray-300 mt-2" x-text="presetUploadHintText"></div>
-        </div>
-
-        <!-- 列表内容区 -->
-        <div class="flex-1 overflow-y-auto custom-scrollbar p-4">
-            <div x-show="isLoading" class="flex flex-col items-center justify-center h-64 text-[var(--text-dim)]">
-                <div class="text-4xl animate-bounce mb-2">⏳</div>
-                <div>加载中...</div>
-            </div>
-
-            <div x-show="!isLoading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                <template x-for="item in items" :key="item.id">
-                    <div @click="handlePresetClick($event, item)" @dragstart="dragStart($event, item)"
-                        draggable="true" :data-preset-id="item.id"
-                        :class="selectedIds.includes(item.id) ? 'border-[var(--accent-main)] ring-2 ring-[var(--accent-main)]/40' : 'border-[var(--border-light)]'"
-                        class="group bg-[var(--bg-panel)] p-4 rounded-lg cursor-pointer hover:border-[var(--accent-main)] hover:shadow-lg transition-all relative overflow-hidden flex flex-col">
-
-                        <button type="button" class="card-select-indicator card-select-overlay"
-                            :class="{ 'is-selected': selectedIds.includes(item.id), 'is-mobile': $store.global.deviceType === 'mobile' }"
-                            @click.stop="toggleSelection(item)" title="选择预设">
-                            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 shadow-sm"
-                                :class="selectedIds.includes(item.id) ? 'bg-blue-600 border-blue-500 text-white scale-105' : 'bg-black/25 border-gray-400/60 hover:bg-black/50 hover:border-white/80 text-white/80'">
-                                <span x-show="selectedIds.includes(item.id)" class="text-xs font-bold">✓</span>
-                            </div>
-                        </button>
-
-                        <!-- 来源角标 -->
-                        <div class="absolute top-0 right-0 px-2 py-1 text-[10px] font-bold text-white rounded-bl-lg shadow-sm"
-                            :class="(item.source_type || item.type) === 'global' ? 'bg-blue-600' : 'bg-green-600'">
-                            <span x-text="getPresetSourceHint(item)"></span>
-                        </div>
-
-                        <button x-show="getPresetOwnerId(item)" @click.stop="locatePresetOwnerCard(item)"
-                            class="absolute bottom-2 left-8 px-2 py-1 text-[10px] rounded bg-[var(--bg-sub)] text-[var(--text-dim)] hover:text-[var(--text-main)] z-20"
-                            title="定位所属角色卡">
-                            定位所属角色卡
-                        </button>
-
-                        <!-- 删除按钮 -->
-                        <button @click="deletePreset(item, $event)"
-                            class="absolute top-0 left-0 w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-br-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="删除预设">
-                            ✕
-                        </button>
-
-                        <div class="flex items-start gap-3 mb-3">
-                            <div class="text-3xl pt-1 opacity-80 select-none">📝</div>
-                            <div class="min-w-0 flex-1">
-                                <div class="font-bold text-sm truncate text-[var(--text-main)] mb-1" :title="item.name"
-                                    x-text="item.name"></div>
-                                <div class="text-[10px] font-mono text-[var(--text-dim)] truncate opacity-70"
-                                    :title="item.filename" x-text="item.filename"></div>
-                            </div>
-                        </div>
-
-                        <!-- 参数概览 -->
-                        <div class="flex flex-wrap gap-2 mb-3">
-                            <template x-if="item.temperature !== null && item.temperature !== undefined">
-                                <span class="px-2 py-0.5 text-[10px] bg-orange-500/20 text-orange-300 rounded">
-                                    🌡️ <span x-text="item.temperature"></span>
-                                </span>
-                            </template>
-                            <template x-if="item.max_tokens">
-                                <span class="px-2 py-0.5 text-[10px] bg-blue-500/20 text-blue-300 rounded">
-                                    📊 <span x-text="item.max_tokens"></span>
-                                </span>
-                            </template>
-                            <template x-if="item.prompt_count > 0">
-                                <span class="px-2 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 rounded">
-                                    💬 <span x-text="item.prompt_count"></span> prompts
-                                </span>
-                            </template>
-                            <template x-if="item.regex_count > 0">
-                                <span class="px-2 py-0.5 text-[10px] bg-green-500/20 text-green-300 rounded">
-                                    🧩 <span x-text="item.regex_count"></span> regex
-                                </span>
-                            </template>
-                        </div>
-
-                        <!-- 描述 -->
-                        <div x-show="item.description" 
-                            class="text-xs text-[var(--text-dim)] line-clamp-2 mb-3"
-                            x-text="item.description"></div>
-
-                        <div
-                            class="mt-auto pt-2 border-t border-[var(--border-light)] flex justify-between items-center">
-                            <!-- 资源归属提示 -->
-                            <div class="min-w-0 flex-1 mr-2">
-                                <div x-show="getPresetOwnerName(item)"
-                                    class="text-[10px] text-green-400 flex items-center gap-1 truncate"
-                                    :title="getPresetOwnerName(item)">
-                                    <span>👤</span> <span x-text="getPresetOwnerName(item)"></span>
-                                </div>
-                                <div x-show="!getPresetOwnerName(item)" class="text-[10px] text-blue-400 opacity-60">Global
-                                    Library</div>
-                            </div>
-
-                            <span class="text-[10px] text-[var(--text-dim)] whitespace-nowrap"
-                                x-text="formatDate(item.mtime)"></span>
-                        </div>
-                    </div>
-                </template>
-            </div>
-
-            <div x-show="!isLoading && items.length === 0"
-                class="flex flex-col items-center justify-center h-64 text-[var(--text-dim)] opacity-60">
-                <div class="text-4xl mb-2 grayscale">📭</div>
-                <div>没有找到预设文件</div>
-                <div class="text-xs mt-2">拖拽 .json 预设文件到此处上传</div>
-            </div>
-        </div>
-    </div>
-
+  </div>
 </div>

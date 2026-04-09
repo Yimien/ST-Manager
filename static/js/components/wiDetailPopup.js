@@ -12,6 +12,7 @@ import {
 } from "../api/wi.js";
 import { getCardDetail, updateCard } from "../api/card.js";
 import { normalizeWiBook } from "../utils/data.js";
+import { downloadFileFromApi } from "../utils/download.js";
 import {
   formatWiKeys,
   estimateTokens,
@@ -736,6 +737,28 @@ export default function wiDetailPopup() {
           detail: content,
         }),
       );
+    },
+
+    async exportActiveWorldInfo() {
+      const detail = this.activeWiDetail;
+      if (!detail) return;
+
+      try {
+        await downloadFileFromApi({
+          url: "/api/world_info/export",
+          body: {
+            source_type: detail.type,
+            file_path: detail.path,
+            card_id: detail.card_id,
+            id: detail.id,
+          },
+          defaultFilename:
+            detail.file_name || `${detail.name || "worldinfo"}.json`,
+          showToast: this.$store?.global?.showToast,
+        });
+      } catch (err) {
+        this.$store.global.showToast(err.message || "导出失败", 2600);
+      }
     },
 
     // === 交互逻辑 ===

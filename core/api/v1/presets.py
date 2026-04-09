@@ -7,7 +7,9 @@ import json
 import logging
 import shutil
 import time
-from flask import Blueprint, request, jsonify
+from io import BytesIO
+
+from flask import Blueprint, request, jsonify, send_file
 from core.config import BASE_DIR, load_config
 from core.context import ctx
 from core.data.ui_store import (
@@ -247,6 +249,9 @@ def _get_cards_by_resource_folder():
 
 def _resolve_preset_file_path(preset_id, presets_root):
     if not preset_id:
+        return '', None, None
+
+    if '::' in preset_id and not (preset_id.startswith('resource::') or preset_id.startswith('global::')):
         return '', None, None
 
     if preset_id.startswith('resource::'):
@@ -905,6 +910,37 @@ def delete_preset():
     except Exception as e:
         logger.error(f"Error deleting preset: {e}")
         return jsonify({"success": False, "msg": str(e)}), 500
+
+
+@bp.route('/api/presets/export', methods=['POST'])
+def export_preset():
+    try:
+        data = request.get_json(silent=True) or {}
+        preset_id = data.get('id')
+        presets_root = _get_presets_path()
+        file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
+
+        if not file_path:
+            return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'msg': 'Preset not found'}), 404
+
+        with open(file_path, 'r', encoding='utf-8') as handle:
+            payload = json.load(handle)
+
+        json_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
+        buf = BytesIO(json_bytes)
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype='application/json; charset=utf-8',
+            as_attachment=True,
+            download_name=os.path.basename(file_path),
+        )
+    except Exception as e:
+        logger.error(f"Error exporting preset: {e}")
+        return jsonify({'success': False, 'msg': str(e)}), 500
 
 
 @bp.route('/api/presets/save', methods=['POST'])

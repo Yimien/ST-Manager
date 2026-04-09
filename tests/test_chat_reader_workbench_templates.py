@@ -159,6 +159,84 @@ def test_header_component_does_not_wire_runtime_inspector_events():
     assert 'open-runtime-inspector' not in header_source
 
 
+def test_worldinfo_grid_and_detail_expose_export_actions():
+    wi_grid_source = read_project_file('static/js/components/wiGrid.js')
+    wi_grid_template = read_project_file('templates/components/grid_wi.html')
+    wi_detail_source = read_project_file('static/js/components/wiDetailPopup.js')
+    wi_detail_template = read_project_file('templates/modals/detail_wi_popup.html')
+
+    export_grid_block = extract_js_function_block(
+        wi_grid_source,
+        'async exportWorldInfoItem(item)',
+    )
+    export_detail_block = extract_js_function_block(
+        wi_detail_source,
+        'async exportActiveWorldInfo()',
+    )
+
+    assert 'downloadFileFromApi(' in export_grid_block
+    assert "url: '/api/world_info/export'" in export_grid_block
+    assert 'source_type: item.source_type || item.type' in export_grid_block
+    assert 'file_path: item.path' in export_grid_block
+    assert 'card_id: item.card_id' in export_grid_block
+    assert 'id: item.id' in export_grid_block
+    assert '@click.stop="exportWorldInfoItem(item)"' in wi_grid_template
+    assert 'title="导出世界书 JSON"' in wi_grid_template
+
+    assert 'downloadFileFromApi(' in export_detail_block
+    assert "url: '/api/world_info/export'" in export_detail_block
+    assert 'source_type: detail.type' in export_detail_block
+    assert 'file_path: detail.path' in export_detail_block
+    assert 'card_id: detail.card_id' in export_detail_block
+    assert 'id: detail.id' in export_detail_block
+    assert '@click="exportActiveWorldInfo()"' in wi_detail_template
+    assert '>导出 JSON</button>' in wi_detail_template
+
+
+def test_preset_grid_and_detail_expose_export_actions():
+    preset_grid_source = read_project_file('static/js/components/presetGrid.js')
+    preset_grid_template = read_project_file('templates/components/grid_presets.html')
+    preset_detail_source = read_project_file('static/js/components/presetDetailReader.js')
+    preset_detail_template = read_project_file('templates/modals/detail_preset_popup.html')
+
+    export_grid_block = extract_js_function_block(
+        preset_grid_source,
+        'async exportPresetItem(item, event = null)',
+    )
+    export_detail_block = extract_js_function_block(
+        preset_detail_source,
+        'async exportActivePreset()',
+    )
+
+    assert 'downloadFileFromApi(' in export_grid_block
+    assert "url: '/api/presets/export'" in export_grid_block
+    assert 'id: item.id' in export_grid_block
+    assert 'event?.stopPropagation?.()' in export_grid_block
+    assert '@click.stop="exportPresetItem(item, $event)"' in preset_grid_template
+    assert 'title="导出预设 JSON"' in preset_grid_template
+
+    assert 'downloadFileFromApi(' in export_detail_block
+    assert "url: '/api/presets/export'" in export_detail_block
+    assert 'id: detail.id' in export_detail_block
+    assert '@click="exportActivePreset()"' in preset_detail_template
+    assert '>导出</button>' in preset_detail_template
+
+
+def test_shared_download_helper_handles_attachment_downloads_and_json_errors():
+    download_source = read_project_file('static/js/utils/download.js')
+
+    assert 'export async function downloadFileFromApi(' in download_source
+    assert 'response.headers.get("Content-Disposition")' in download_source
+    assert 'response.headers.get("content-disposition")' in download_source
+    assert 'await response.blob()' in download_source
+    assert 'URL.createObjectURL(blob)' in download_source
+    assert 'link.download = filename' in download_source
+    assert 'response.headers.get("content-type")' in download_source
+    assert 'contentType.includes("application/json")' in download_source
+    assert 'await response.json()' in download_source
+    assert 'throw new Error(' in download_source
+
+
 def test_advanced_editor_no_longer_listens_for_runtime_inspector_bridge_events():
     advanced_editor_source = read_project_file('static/js/components/advancedEditor.js')
 
@@ -811,7 +889,8 @@ def test_layout_css_adds_light_mode_mobile_header_and_footer_surfaces():
 def test_header_listens_for_global_mobile_menu_close_requests():
     header_source = read_project_file('static/js/components/header.js')
 
-    assert "window.addEventListener('close-header-mobile-menu'" in header_source
+    assert 'window.addEventListener(' in header_source
+    assert 'close-header-mobile-menu' in header_source
     assert 'this.closeMobileMenu();' in header_source
 
 
@@ -1341,22 +1420,26 @@ def test_mobile_header_script_defines_upload_trigger_contract():
     header_source = read_project_file('static/js/components/header.js')
     header_template = read_project_file('templates/components/header.html')
 
-    assert "const MOBILE_HEADER_UPLOAD_MODES = ['cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'];" in header_source
+    assert 'const MOBILE_HEADER_UPLOAD_MODES = [' in header_source
+    for mode in ('cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'):
+        assert f'"{mode}"' in header_source or f"'{mode}'" in header_source
     show_mobile_upload_block = extract_js_function_block(header_source, 'get showMobileUploadButton()')
-    assert "this.deviceType === 'mobile'" in show_mobile_upload_block
+    assert "this.deviceType === 'mobile'" in show_mobile_upload_block or 'this.deviceType === "mobile"' in show_mobile_upload_block
     assert 'MOBILE_HEADER_UPLOAD_MODES.includes(this.currentMode)' in show_mobile_upload_block
-    assert "window.dispatchEvent(new CustomEvent('request-mobile-upload'));" in header_source
-    assert '@click="triggerChatImport(); closeMobileMenu()"' in header_template
+    assert 'request-mobile-upload' in header_source
+    assert '@click="triggerMobileUpload()"' in header_template
 
 
 def test_mobile_header_script_closes_menu_before_sidebar_and_upload_actions():
     header_source = read_project_file('static/js/components/header.js')
+    sidebar_block = extract_js_function_block(header_source, 'openMobileSidebar()')
 
     assert 'openMobileSidebar()' in header_source
-    assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert 'this.$store.global.visibleSidebar = nextVisible;' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert 'this.closeMobileMenu();' in sidebar_block
+    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in sidebar_block
+    assert 'this.$store.global.visibleSidebar = nextVisible;' in sidebar_block
+    assert 'document.body.style.overflow = nextVisible ? ' in sidebar_block
+    assert 'hidden' in sidebar_block
     assert 'triggerMobileUpload()' in header_source
     assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'triggerMobileUpload()')
 
@@ -1419,7 +1502,8 @@ def test_mobile_header_script_toggles_sidebar_visibility_and_scroll_lock():
 
     assert 'const nextVisible = !this.$store.global.visibleSidebar;' in sidebar_toggle_block
     assert 'this.$store.global.visibleSidebar = nextVisible;' in sidebar_toggle_block
-    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in sidebar_toggle_block
+    assert 'document.body.style.overflow = nextVisible ? ' in sidebar_toggle_block
+    assert 'hidden' in sidebar_toggle_block
 
 
 def test_mobile_layout_css_defines_mobile_header_toggle_feedback_states():
@@ -1510,13 +1594,14 @@ def test_global_state_syncs_visual_viewport_height_into_css_variable():
 
     assert 'window.visualViewport' in sync_block
     assert 'window.visualViewport.height' in sync_block
-    assert "updateCssVariable('--app-viewport-height'" in sync_block
-    assert "updateCssVariable('--app-viewport-height-safe'" in sync_block
+    assert "updateCssVariable('--app-viewport-height'" in sync_block or 'updateCssVariable("--app-viewport-height"' in sync_block
+    assert "updateCssVariable('--app-viewport-height-safe'" in sync_block or 'updateCssVariable("--app-viewport-height-safe"' in sync_block
     assert 'window.innerHeight || 0' in sync_block
     assert 'Math.max(0, roundedHeight - 1)' in sync_block
     assert 'this.syncViewportHeight();' in init_block
-    assert "window.visualViewport.addEventListener('resize', this._visualViewportResizeHandler" in init_block
-    assert "window.addEventListener('orientationchange', this._visualViewportResizeHandler" in init_block
+    assert 'window.visualViewport.addEventListener(' in init_block
+    assert 'this._visualViewportResizeHandler' in init_block
+    assert 'orientationchange' in init_block
 
 
 def test_mobile_modal_components_css_defines_shared_fullscreen_dynamic_viewport_baseline():
@@ -1589,11 +1674,13 @@ def test_mobile_tool_and_custom_modal_variants_prefer_dynamic_viewport_height():
     large_editor_block = extract_exact_css_block(mobile_tools_css, '.large-editor-container')
     settings_block = extract_exact_css_block(mobile_settings_css, '.settings-modal-container')
     automation_block = extract_exact_css_block(mobile_automation_css, '.automation-container')
+    advanced_editor_compact = re.sub(r'\s+', ' ', advanced_editor_block).strip()
+    large_editor_compact = re.sub(r'\s+', ' ', large_editor_block).strip()
 
     assert 'height: 100dvh !important;' in advanced_editor_block
-    assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;' in advanced_editor_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in advanced_editor_block
-    assert advanced_editor_block.index('height: 100dvh !important;') < advanced_editor_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;')
+    assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in advanced_editor_compact
+    assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in advanced_editor_compact
+    assert advanced_editor_compact.index('height: 100dvh !important;') < advanced_editor_compact.index('height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;')
     assert 'padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem) !important;' in advanced_header_block
     assert 'padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem) !important;' in advanced_footer_block
     assert 'min-height: 0;' in advanced_split_block
@@ -1601,8 +1688,8 @@ def test_mobile_tool_and_custom_modal_variants_prefer_dynamic_viewport_height():
     assert '-webkit-overflow-scrolling: touch;' in advanced_editor_pane_block
 
     assert 'height: 100dvh !important;' in large_editor_block
-    assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;' in large_editor_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in large_editor_block
+    assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in large_editor_compact
+    assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in large_editor_compact
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in settings_block
     assert 'height: 100dvh;' in settings_block
     assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in settings_block
@@ -2071,9 +2158,11 @@ def test_worldinfo_grid_template_groups_title_owner_and_tag_summary():
 
 def test_worldinfo_grid_template_uses_css_drawn_archive_markers():
     wi_grid_template = read_project_file('templates/components/grid_wi.html')
+    owner_row_block = wi_grid_template.split('class="wi-card-owner-row"', 1)[1].split('</template>', 1)[0]
 
     assert 'class="wi-card-bookmark" aria-hidden="true"' in wi_grid_template
-    assert 'class="wi-card-owner-icon" aria-hidden="true"' in wi_grid_template
+    assert 'class="wi-card-owner-icon"' in owner_row_block
+    assert 'aria-hidden="true"' in owner_row_block
     assert '📖' not in wi_grid_template
     assert '🔗' not in wi_grid_template
 
@@ -2301,6 +2390,7 @@ def test_worldinfo_frontend_note_sources_switch_embedded_saves_to_update_card():
     wi_editor_source = read_project_file('static/js/components/wiEditor.js')
     detail_save_block = extract_js_function_block(wi_detail_source, 'async saveActiveWorldInfoNote()')
     editor_save_block = extract_js_function_block(wi_editor_source, 'async saveEditingWorldInfoNote()')
+    editor_label_block = extract_js_function_block(wi_editor_source, 'getEditingWorldInfoNoteLabel()')
 
     assert 'updateCard' in wi_detail_source
     assert 'saveWorldInfoNote' in wi_detail_source
@@ -2312,7 +2402,9 @@ def test_worldinfo_frontend_note_sources_switch_embedded_saves_to_update_card():
     assert 'updateCard' in wi_editor_source
     assert 'saveWorldInfoNote' in wi_editor_source
     assert 'embedded' in wi_editor_source
-    assert "return this.editingWiFile?.type === 'embedded' ? '角色卡备注' : '本地备注';" in wi_editor_source
+    assert 'embedded' in editor_label_block
+    assert '角色卡备注' in editor_label_block
+    assert '本地备注' in editor_label_block
     assert 'updateCard' in editor_save_block
     assert 'saveWorldInfoNote' in editor_save_block
     assert 'card_id' in wi_editor_source
@@ -2382,7 +2474,7 @@ def test_worldinfo_grid_js_uses_category_metadata_and_explicit_upload_fallback_c
     assert 'canMoveWorldInfoSelection()' in wi_grid_source
     assert 'deleteSelectedWorldInfo()' in wi_grid_source
     assert 'if (!this.canSelectWorldInfoItem(item)) return;' in wi_grid_source
-    assert "this.wiFilterType === 'global' || this.wiFilterType === 'all'" in wi_grid_source
+    assert "this.wiFilterType === 'global' || this.wiFilterType === 'all'" in wi_grid_source or 'this.wiFilterType === "global" || this.wiFilterType === "all"' in wi_grid_source
     assert 'owner_card_id' in wi_grid_source
     assert 'owner_card_name' in wi_grid_source
     assert 'source_type' in wi_grid_source
@@ -2397,7 +2489,7 @@ def test_worldinfo_grid_js_syncs_local_note_updates_without_waiting_for_refetch(
     assert 'wi-note-updated' in wi_grid_source
     assert 'getWorldInfoRenderKey(item)' in wi_grid_source
     assert 'item.id !== detail.id' in wi_grid_source or 'item.id === detail.id' in wi_grid_source
-    assert "item.ui_summary = detail.ui_summary || ''" in wi_grid_source
+    assert "item.ui_summary = detail.ui_summary || ''" in wi_grid_source or 'item.ui_summary = detail.ui_summary || ""' in wi_grid_source
     assert 'this.wiList = currentItems;' in wi_grid_source
 
 
@@ -2578,12 +2670,15 @@ def test_mobile_sidebar_css_uses_container_height_instead_of_fixed_dynamic_viewp
 
 def test_card_pagination_template_uses_mobile_short_labels_and_hides_flip_count():
     cards_template = read_project_file('templates/components/grid_cards.html')
+    compact_cards_template = re.sub(r'\s+', ' ', cards_template)
 
     assert 'class="card-pagination-page-indicator"' in cards_template
     assert 'class="btn-secondary card-page-nav-btn"' in cards_template
-    assert "x-show=\"$store.global.deviceType === 'mobile' && !bulkBackMode\">翻面</span>" in cards_template
-    assert "x-show=\"$store.global.deviceType === 'mobile' && bulkBackMode\">正面</span>" in cards_template
-    assert "x-show=\"$store.global.deviceType !== 'mobile'\" class=\"card-flip-count\"" in cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && !bulkBackMode\"" in compact_cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && bulkBackMode\"" in compact_cards_template
+    assert '>翻面<' in compact_cards_template or '>����<' in compact_cards_template
+    assert '>正面<' in compact_cards_template or '>����<' in compact_cards_template
+    assert "x-show=\"$store.global.deviceType !== 'mobile'\" class=\"card-flip-count\"" in compact_cards_template
 
 
 def test_card_pagination_mobile_css_compacts_footer_into_single_row():

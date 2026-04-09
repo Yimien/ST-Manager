@@ -9,6 +9,7 @@ import {
   createWorldInfo,
   deleteWorldInfo,
 } from "../api/wi.js";
+import { downloadFileFromApi } from "../utils/download.js";
 import { buildWindowedGridState } from "../utils/windowing.js";
 
 export default function wiGrid() {
@@ -778,6 +779,24 @@ export default function wiGrid() {
     // 打开编辑器 (全屏)
     openWorldInfoEditor(item) {
       window.dispatchEvent(new CustomEvent("open-wi-editor", { detail: item }));
+    },
+
+    async exportWorldInfoItem(item) {
+      try {
+        await downloadFileFromApi({
+          url: "/api/world_info/export",
+          body: {
+            source_type: item.source_type || item.type,
+            file_path: item.path,
+            card_id: item.card_id,
+            id: item.id,
+          },
+          defaultFilename: item.file_name || `${item.name || "worldinfo"}.json`,
+          showToast: this.$store?.global?.showToast,
+        });
+      } catch (err) {
+        this.$store.global.showToast(err.message || "导出失败", 2600);
+      }
     },
 
     // 新建全局世界书（使用 ST 兼容格式）

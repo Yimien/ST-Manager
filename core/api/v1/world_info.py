@@ -35,6 +35,7 @@ from core.services.wi_entry_history_service import (
     get_history_limit
 )
 from core.utils.filesystem import safe_move_to_trash
+from core.utils.filesystem import sanitize_filename
 from core.utils.source_revision import build_file_source_revision
 
 def _safe_mtime(path: str) -> float:
@@ -73,6 +74,28 @@ def _is_valid_wi_file(path: str, cfg: dict) -> bool:
         return '/lorebooks/' in f"/{rel_path}/"
 
     return False
+
+
+def _safe_join_under_base(base_dir: str, rel_path: str) -> str:
+    if not base_dir or not rel_path:
+        return ''
+
+    rel_value = str(rel_path).strip()
+    if not rel_value or os.path.isabs(rel_value):
+        return ''
+
+    drive, _ = os.path.splitdrive(rel_value)
+    if drive:
+        return ''
+
+    base_abs = os.path.abspath(base_dir)
+    candidate = os.path.abspath(os.path.join(base_abs, rel_value.replace('/', os.sep)))
+    try:
+        if os.path.commonpath([candidate, base_abs]) != base_abs:
+            return ''
+    except Exception:
+        return ''
+    return candidate
 
 def _normalize_wi_entries(raw):
     if raw is None:
@@ -141,6 +164,63 @@ def _build_st_compatible_worldbook_payload(name: str) -> dict:
         "name": clean_name,
         "entries": {}
     }
+
+
+def _build_export_worldbook_payload(book, fallback_name='World Info'):
+    export_entries = {}
+    entries_raw = []
+
+    if isinstance(book, list):
+        entries_raw = book
+    elif isinstance(book, dict):
+        entries = book.get('entries', [])
+        if isinstance(entries, list):
+            entries_raw = entries
+        elif isinstance(entries, dict):
+            entries_raw = list(entries.values())
+
+    for idx, entry in enumerate(entries_raw):
+        if not isinstance(entry, dict):
+            continue
+
+        final_entry = entry.copy()
+        final_entry['uid'] = idx
+        final_entry['displayIndex'] = idx
+
+        if 'keys' in entry:
+            final_entry['key'] = entry['keys']
+        if 'key' not in final_entry:
+            final_entry['key'] = []
+
+        if 'secondary_keys' in entry:
+            final_entry['keysecondary'] = entry['secondary_keys']
+        if 'keysecondary' not in final_entry:
+            final_entry['keysecondary'] = []
+
+        is_enabled = entry.get('enabled', not entry.get('disable', False))
+        final_entry['disable'] = not is_enabled
+
+        if 'insertion_order' in entry:
+            final_entry['order'] = entry['insertion_order']
+
+        final_entry.pop('enabled', None)
+        final_entry.pop('keys', None)
+        final_entry.pop('secondary_keys', None)
+        final_entry.pop('insertion_order', None)
+
+        export_entries[str(idx)] = final_entry
+
+    final_export = {
+        'entries': export_entries,
+        'name': book.get('name', fallback_name) if isinstance(book, dict) else fallback_name,
+    }
+
+    if isinstance(book, dict):
+        for key, value in book.items():
+            if key not in ['entries', 'name']:
+                final_export[key] = value
+
+    return final_export
 
 def _compute_wi_signature(raw):
     try:
@@ -1372,6 +1452,84 @@ def api_upload_world_info():
         logger.error(f"Upload WI error: {e}")
         return jsonify({"success": False, "msg": str(e)})
 
+
+@bp.route('/api/world_info/export', methods=['POST'])
+def api_export_world_info():
+    try:
+        req = request.get_json(silent=True) or {}
+        source_type = str(req.get('source_type') or '').strip().lower()
+        file_path = str(req.get('file_path') or '').strip()
+        card_id = str(req.get('card_id') or '').strip()
+
+        if source_type not in ('global', 'resource', 'embedded'):
+            return jsonify({'success': False, 'msg': '不支持的世界书来源'}), 400
+
+        if source_type == 'embedded':
+            if not card_id:
+                wi_id = str(req.get('id') or '').strip()
+                if wi_id.startswith('embedded::'):
+                    card_id = wi_id.split('::', 1)[1]
+            if not card_id:
+                return jsonify({'success': False, 'msg': '角色卡ID缺失'})
+
+            file_path = _safe_join_under_base(str(CARDS_FOLDER), card_id)
+            if not file_path:
+                return jsonify({'success': False, 'msg': '非法路径'}), 400
+            if not os.path.exists(file_path):
+                return jsonify({'success': False, 'msg': '未找到角色卡'})
+
+            info = extract_card_info(file_path)
+            if not info:
+                return jsonify({'success': False, 'msg': '未找到元数据'})
+
+            data_block = info.get('data', {}) if isinstance(info, dict) and 'data' in info else info
+            book = data_block.get('character_book') if isinstance(data_block, dict) else None
+            if not book:
+                return jsonify({'success': False, 'msg': '角色卡无世界书'})
+
+            payload = _build_export_worldbook_payload(book)
+            book_name = book.get('name', 'World Info') if isinstance(book, dict) else 'World Info'
+            safe_name = sanitize_filename(str(book_name or 'World Info')).strip() or 'World Info'
+            download_name = f'{safe_name}.json'
+        else:
+            cfg = load_config()
+            global_dir = _resolve_wi_dir(cfg)
+            resources_dir = _resolve_resources_dir(cfg)
+
+            if source_type == 'global':
+                if not _is_under_base(file_path, global_dir):
+                    return jsonify({'success': False, 'msg': '非法路径'}), 400
+            elif source_type == 'resource':
+                if not _is_under_base(file_path, resources_dir):
+                    return jsonify({'success': False, 'msg': '非法路径'}), 400
+                rel_path = os.path.relpath(file_path, resources_dir).replace('\\', '/')
+                if '/lorebooks/' not in f'/{rel_path}/':
+                    return jsonify({'success': False, 'msg': '非法路径'}), 400
+
+            if not _is_valid_wi_file(file_path, cfg):
+                return jsonify({'success': False, 'msg': '非法路径'}), 400
+            if not os.path.exists(file_path):
+                return jsonify({'success': False, 'msg': '文件不存在'})
+
+            with open(file_path, 'r', encoding='utf-8') as handle:
+                book = json.load(handle)
+
+            payload = _build_export_worldbook_payload(book)
+            download_name = os.path.basename(file_path)
+
+        json_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
+        buf = BytesIO(json_bytes)
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype='application/json; charset=utf-8',
+            as_attachment=True,
+            download_name=download_name,
+        )
+    except Exception as e:
+        logger.error(f"Export WI error: {e}")
+        return jsonify({'success': False, 'msg': str(e)}), 500
+
 @bp.route('/api/world_info/detail', methods=['POST'])
 def api_get_world_info_detail():
     try:
@@ -1771,8 +1929,9 @@ def api_export_worldbook_single():
         if not cid:
             return jsonify({"success": False, "msg": "角色卡ID缺失"})
 
-        rel = cid.replace('/', os.sep)
-        file_path = os.path.join(CARDS_FOLDER, rel)
+        file_path = _safe_join_under_base(str(CARDS_FOLDER), cid)
+        if not file_path:
+            return jsonify({"success": False, "msg": "非法路径"}), 400
         if not os.path.exists(file_path):
             return jsonify({"success": False, "msg": "未找到角色卡"})
 
@@ -1785,69 +1944,7 @@ def api_export_worldbook_single():
         if not book:
             return jsonify({"success": False, "msg": "角色卡无世界书"})
 
-        # === 数据源获取 ===
-        entries_raw = []
-        if isinstance(book, list):
-            entries_raw = book
-        elif isinstance(book, dict):
-            if 'entries' in book:
-                if isinstance(book['entries'], list):
-                    entries_raw = book['entries']
-                elif isinstance(book['entries'], dict):
-                    entries_raw = list(book['entries'].values())
-        
-        # === 增量导出逻辑 (Pass-through) ===
-        export_entries = {}
-        for idx, entry in enumerate(entries_raw):
-            # 1. 【关键】复制原始数据，保留所有未知字段 (如 vectorized, depth 等)
-            final_entry = entry.copy()
-            
-            # 2. 更新/标准化 ST 核心字段
-            # 我们内部使用 keys(复数)/enabled(正向)，ST 使用 key(单数)/disable(反向)
-            
-            # UID 重置为索引
-            final_entry['uid'] = idx
-            final_entry['displayIndex'] = idx
-            
-            # 关键字映射: keys -> key
-            # 优先使用内部的 keys，如果没有则保留原有的 key
-            if 'keys' in entry:
-                final_entry['key'] = entry['keys']
-            if 'key' not in final_entry:
-                final_entry['key'] = []
-
-            # 次要关键字映射
-            if 'secondary_keys' in entry:
-                final_entry['keysecondary'] = entry['secondary_keys']
-            if 'keysecondary' not in final_entry:
-                final_entry['keysecondary'] = []
-
-            # 启用状态映射: enabled -> disable
-            is_enabled = entry.get('enabled', not entry.get('disable', False))
-            final_entry['disable'] = not is_enabled
-            
-            # 权重映射: insertion_order -> order
-            if 'insertion_order' in entry:
-                final_entry['order'] = entry['insertion_order']
-            
-            # 移除我们内部使用的临时字段 (可选，为了保持 JSON 整洁)
-            final_entry.pop('enabled', None)
-            final_entry.pop('keys', None)
-            final_entry.pop('secondary_keys', None)
-            final_entry.pop('insertion_order', None)
-
-            export_entries[str(idx)] = final_entry
-
-        final_export = {
-            "entries": export_entries,
-            "name": book.get('name', 'World Info') if isinstance(book, dict) else "World Info"
-        }
-        
-        # 保留原始书的其他顶层属性 (如 description 等，如果有的话)
-        if isinstance(book, dict):
-            for k, v in book.items():
-                if k not in ['entries', 'name']:
-                    final_export[k] = v
+        final_export = _build_export_worldbook_payload(book)
 
         json_bytes = json.dumps(final_export, ensure_ascii=False, indent=2).encode("utf-8")
         buf = BytesIO(json_bytes)

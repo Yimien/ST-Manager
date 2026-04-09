@@ -326,6 +326,320 @@ def test_worldinfo_detail_supports_embedded_card_id(monkeypatch, tmp_path):
     assert payload['data']['name'] == 'Embedded Book'
 
 
+def test_worldinfo_export_returns_attachment_for_global_file(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / '科幻' / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(
+        global_file,
+        {
+            'name': 'Dragon Lore',
+            'entries': {
+                '0': {
+                    'key': ['dragon'],
+                    'content': 'A dragon entry',
+                }
+            },
+        },
+    )
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'global', 'file_path': str(global_file), 'id': 'global::科幻/dragon.json'},
+    )
+
+    assert res.status_code == 200
+    assert 'application/json' in res.headers['Content-Type']
+    assert 'attachment' in res.headers['Content-Disposition']
+
+    payload = json.loads(res.data.decode('utf-8'))
+    assert payload['name'] == 'Dragon Lore'
+    assert payload['entries']['0']['key'] == ['dragon']
+
+
+def test_worldinfo_export_returns_attachment_for_resource_file(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    resource_file = resources_dir / 'lucy' / 'lorebooks' / 'companion.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(
+        resource_file,
+        {
+            'name': 'Companion Lore',
+            'entries': {
+                '0': {
+                    'key': ['companion'],
+                    'content': 'A companion entry',
+                }
+            },
+        },
+    )
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'resource', 'file_path': str(resource_file), 'id': 'resource::lucy::companion.json'},
+    )
+
+    assert res.status_code == 200
+    assert 'application/json' in res.headers['Content-Type']
+    assert 'attachment' in res.headers['Content-Disposition']
+
+    payload = json.loads(res.data.decode('utf-8'))
+    assert payload['name'] == 'Companion Lore'
+    assert payload['entries']['0']['key'] == ['companion']
+
+
+def test_worldinfo_export_returns_attachment_for_embedded_book(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    cards_dir = tmp_path / 'cards'
+    card_path = cards_dir / 'cards' / 'lucy.png'
+    ui_path = tmp_path / 'ui_data.json'
+
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'fake-card')
+
+    cards = [_make_card('cards/lucy.png', '科幻', has_character_book=True)]
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache(cards))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+    monkeypatch.setattr(
+        world_info_api,
+        'extract_card_info',
+        lambda _path: {
+            'data': {
+                'character_book': {
+                    'name': 'Embedded Book',
+                    'entries': {
+                        '0': {
+                            'keys': ['embedded'],
+                            'content': 'Embedded entry',
+                            'enabled': True,
+                        }
+                    },
+                }
+            }
+        },
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'embedded', 'card_id': 'cards/lucy.png', 'id': 'embedded::cards/lucy.png'},
+    )
+
+    assert res.status_code == 200
+    assert 'application/json' in res.headers['Content-Type']
+    assert 'attachment' in res.headers['Content-Disposition']
+    assert 'Embedded Book.json' in res.headers['Content-Disposition']
+
+    payload = json.loads(res.data.decode('utf-8'))
+    assert payload['name'] == 'Embedded Book'
+    assert payload['entries']['0']['key'] == ['embedded']
+    assert payload['entries']['0']['disable'] is False
+
+
+def test_worldinfo_export_rejects_invalid_file_path(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    ui_path = tmp_path / 'ui_data.json'
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'global', 'file_path': str(tmp_path / 'outside.json')},
+    )
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '非法路径'
+
+
+def test_worldinfo_export_rejects_embedded_card_path_escape(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    ui_path = tmp_path / 'ui_data.json'
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'embedded', 'card_id': '../outside.png'},
+    )
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '非法路径'
+
+
+def test_worldinfo_export_rejects_unsupported_source_type(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'remote', 'file_path': str(global_file)},
+    )
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '不支持的世界书来源'
+
+
+def test_worldinfo_export_rejects_global_source_with_resource_file(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    resource_file = resources_dir / 'lucy' / 'lorebooks' / 'companion.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(resource_file, {'name': 'Companion Lore', 'entries': {}})
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'global', 'file_path': str(resource_file)},
+    )
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '非法路径'
+
+
+def test_worldinfo_export_rejects_resource_source_with_global_file(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(
+        world_info_api,
+        'load_config',
+        lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/export',
+        json={'source_type': 'resource', 'file_path': str(global_file)},
+    )
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '非法路径'
+
+
+def test_legacy_worldinfo_export_rejects_card_path_escape(monkeypatch, tmp_path):
+    ui_path = tmp_path / 'ui_data.json'
+    ui_path.write_text(json.dumps({}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/export_worldbook_single', json={'card_id': '../outside.png'})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert payload['msg'] == '非法路径'
+
+
 def test_worldinfo_list_and_detail_include_ui_summary(monkeypatch, tmp_path):
     lorebooks_dir = tmp_path / 'lorebooks'
     resources_dir = tmp_path / 'resources'
