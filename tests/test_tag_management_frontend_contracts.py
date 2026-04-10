@@ -25,6 +25,10 @@ def extract_js_function_block(source, signature):
     raise AssertionError(f'Could not extract JS block for {signature!r}')
 
 
+def compact_whitespace(value):
+    return ' '.join(value.split())
+
+
 def test_automation_modal_defines_shared_tag_splitter_contract_for_slash_separator_setting():
     source = read_project_file('static/js/components/automationModal.js')
     save_section = extract_js_function_block(source, 'saveCurrentRuleSet() {')
@@ -145,15 +149,29 @@ def test_state_tag_view_prefs_contract_includes_category_filter_and_last_categor
     assert "lastCategorySortName: ''" in source
 
 
-def test_tag_filter_modal_governance_blacklist_uses_shared_splitter_with_optional_slash_separator():
+def test_tag_filter_modal_governance_blacklist_uses_literal_selection_flow():
     source = read_project_file('static/js/components/tagFilterModal.js')
-    split_section = extract_js_function_block(source, 'splitManualTagInput(rawValue) {')
+    split_section = compact_whitespace(
+        extract_js_function_block(source, 'splitManualTagInput(rawValue) {')
+    )
     apply_section = extract_js_function_block(source, 'applyBlacklistSelectionInput() {')
 
     assert 'splitTagTokens(' in source
-    assert 'const slashIsSeparator = !!(this.$store?.global?.settingsForm?.automation_slash_is_tag_separator);' in split_section
-    assert 'splitTagTokens(rawValue, { slashIsSeparator })' in split_section
-    assert 'this.splitManualTagInput(this.blacklistSelectionInput)' in apply_section
+    assert 'automation_slash_is_tag_separator' in split_section
+    assert 'splitTagTokens(rawValue' in split_section
+    assert 'slashIsSeparator' in split_section
+    assert 'appendTokensToBlacklistSelection(tokens)' in apply_section
+    assert "appendTokensToSelection(tokens, 'selectedBlacklistTags')" not in apply_section
+
+
+def test_tag_filter_modal_delete_mode_can_add_selected_tags_to_blacklist_contract():
+    source = read_project_file('static/js/components/tagFilterModal.js')
+    action_section = extract_js_function_block(source, 'addDeleteSelectionToBlacklist() {')
+
+    assert 'addDeleteSelectionToBlacklist() {' in source
+    assert 'this.selectedTagsForDeletion.length === 0' in action_section
+    assert 'this.mergeTagsIntoBlacklist(this.selectedTagsForDeletion, {' in action_section
+    assert 'clearDeleteSelectionOnSuccess: true' in action_section
 
 
 def test_tag_filter_modal_blacklist_mode_supports_click_and_splitter_selection_contract():
@@ -163,12 +181,14 @@ def test_tag_filter_modal_blacklist_mode_supports_click_and_splitter_selection_c
     save_section = extract_js_function_block(source, 'saveBlacklistSelection() {')
 
     assert "selectedBlacklistTags: []" in source
-    assert "blacklistSelectionInput: ''" in source
+    assert 'blacklistSelectionInput: ""' in source
     assert "get isBlacklistMode() {" in source
     assert 'toggleTagSelectionForBlacklist(tag) {' in source
     assert 'this.selectedBlacklistTags.push(name);' in toggle_section
     assert 'saveBlacklistSelection() {' in source
-    assert 'this.tagBlacklistTags = nextBlacklist;' in save_section
+    assert 'return this.mergeTagsIntoBlacklist(this.selectedBlacklistTags, {' in save_section
+    assert 'clearBlacklistSelectionOnSuccess: true' in save_section
+    assert 'clearBlacklistInputOnSuccess: true' in save_section
     assert '@click="desktopWorkspaceMode === \'blacklist\' ? setDesktopWorkspaceMode(\'filter\') : setDesktopWorkspaceMode(\'blacklist\')"' in template
     assert 'x-model="blacklistSelectionInput"' in template
     assert '@click="applyBlacklistSelectionInput()"' in template

@@ -853,7 +853,16 @@ def test_desktop_single_current_mode_tool_area_exposes_delete_pending_list_and_c
     assert find_contract_index(template_source, '待删除标签', tool_area_index) > tool_area_index
     assert find_contract_index(template_source, "x-text=\"selectedTagsForDeletion.length\"", tool_area_index) > tool_area_index
     assert find_contract_index(template_source, "x-for=\"tag in selectedTagsForDeletion\"", tool_area_index) > tool_area_index
+    assert find_contract_index(template_source, '@click="addDeleteSelectionToBlacklist()"', tool_area_index) > tool_area_index
     assert find_contract_index(template_source, '@click="deleteSelectedTags()"', tool_area_index) > tool_area_index
+
+
+def test_blacklist_and_delete_mode_copy_reflects_blacklist_governance_flow():
+    template_source = read_project_file('templates/modals/tag_filter.html')
+
+    assert '可直接将选中标签加入黑名单，避免误删。' in template_source
+    assert '输入任意标签名，使用 |、逗号或换行批量加入黑名单选择' in template_source
+    assert '加入黑名单' in template_source
 
 
 def test_integrates_tag_pool_and_footer():
