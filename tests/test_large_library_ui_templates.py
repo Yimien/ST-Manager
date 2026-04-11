@@ -113,6 +113,16 @@ def test_header_source_forces_stale_fulltext_modes_back_to_fast():
     assert 'this.ensureSearchModeAllowed();' in header_source
 
 
+def test_header_template_exposes_beautify_search_contract():
+    header_template = read_project_file('templates/components/header.html')
+    header_source = read_project_file('static/js/components/header.js')
+
+    assert "x-show=\"currentMode === 'beautify'\"" in header_template
+    assert 'x-model.debounce.300ms="beautifySearch"' in header_template
+    assert 'get beautifySearch() {' in header_source
+    assert 'set beautifySearch(val) {' in header_source
+
+
 def test_desktop_header_places_search_mode_toggle_inside_search_block_contract():
     header_template = read_project_file('templates/components/header.html')
 

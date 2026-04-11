@@ -193,6 +193,7 @@ def test_ensure_runtime_dirs_creates_all_configured_runtime_directories(tmp_path
         'regex_dir': 'data/library/extensions/regex',
         'scripts_dir': 'data/library/extensions/tavern_helper',
         'quick_replies_dir': 'data/library/extensions/quick-replies',
+        'beautify_dir': 'data/library/beautify',
         'resources_dir': 'data/assets/card_assets',
     }
 
@@ -200,6 +201,7 @@ def test_ensure_runtime_dirs_creates_all_configured_runtime_directories(tmp_path
 
     expected_keys = [
         'cards_dir',
+        'beautify_dir',
         'chats_dir',
         'presets_dir',
         'quick_replies_dir',
@@ -226,6 +228,7 @@ def test_ensure_runtime_dirs_keeps_absolute_paths_and_resolves_relative_paths(tm
         'regex_dir': 'regex',
         'scripts_dir': 'scripts',
         'quick_replies_dir': 'quick-replies',
+        'beautify_dir': 'beautify',
         'resources_dir': str(absolute_resources),
     }
 

@@ -1,0 +1,138 @@
+import json
+import sys
+from pathlib import Path
+
+from flask import Flask
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+from core.api.v1 import presets as presets_api
+
+
+def _make_test_app():
+    app = Flask(__name__)
+    app.register_blueprint(presets_api.bp)
+    return app
+
+
+def _write_json(path: Path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def test_preset_detail_identifies_textgen_and_returns_sections(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'textgen-main.json',
+        {
+            'name': 'Textgen Main',
+            'temp': 0.95,
+            'top_p': 0.9,
+            'top_k': 40,
+            'repetition_penalty': 1.1,
+            'json_schema': '{"type":"object"}',
+            'extensions': {'regex_scripts': []},
+            'custom_flag': True,
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::textgen-main.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['preset']['preset_kind'] == 'textgen'
+    assert payload['preset']['source_revision']
+    assert payload['preset']['sections']['sampling'][0]['key'] == 'temp'
+    assert payload['preset']['has_unknown_fields'] is True
+    assert 'custom_flag' in payload['preset']['unknown_fields']
+
+
+def test_preset_detail_identifies_sysprompt_by_shape_when_folder_missing(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'prompt.json',
+        {
+            'name': 'Sys Prompt',
+            'content': '你是助手',
+            'post_history': True,
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::prompt.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['preset']['preset_kind'] == 'sysprompt'
+    assert payload['preset']['preset_kind_label'] == '系统提示词'
+    assert payload['preset']['sections']['prompt'][0]['key'] == 'content'
+
+
+def test_preset_detail_identifies_instruct_context_and_reasoning(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'instruct.json',
+        {
+            'name': 'Instruct',
+            'input_sequence': 'User:',
+            'output_sequence': 'Assistant:',
+            'system_sequence': 'System:',
+        },
+    )
+    _write_json(
+        presets_dir / 'context.json',
+        {
+            'name': 'Context',
+            'story_string': '{{char}}',
+            'chat_start': '###',
+        },
+    )
+    _write_json(
+        presets_dir / 'reasoning.json',
+        {
+            'name': 'Reasoning',
+            'prefix': '<think>',
+            'suffix': '</think>',
+            'separator': '\n',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    instruct = client.get('/api/presets/detail/global::instruct.json').get_json()['preset']
+    context = client.get('/api/presets/detail/global::context.json').get_json()['preset']
+    reasoning = client.get('/api/presets/detail/global::reasoning.json').get_json()['preset']
+
+    assert instruct['preset_kind'] == 'instruct'
+    assert 'sequences' in instruct['sections']
+    assert context['preset_kind'] == 'context'
+    assert 'story' in context['sections']
+    assert reasoning['preset_kind'] == 'reasoning'
+    assert 'template' in reasoning['sections']

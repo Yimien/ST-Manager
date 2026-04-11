@@ -1,0 +1,347 @@
+<div
+  x-show="$store.global.currentMode === 'beautify'"
+  x-cloak
+  style="display: none"
+  x-data="beautifyGrid"
+  class="beautify-layout"
+>
+  <aside class="beautify-sidebar-pane">
+    <div class="beautify-toolbar">
+      <div class="beautify-toolbar-row">
+        <div class="beautify-toolbar-title">
+          <span class="beautify-title-icon">🎨</span>
+          <div>
+            <div class="beautify-title-main">美化</div>
+            <div class="beautify-title-sub">Theme JSON + 壁纸管理</div>
+          </div>
+        </div>
+        <button class="btn-secondary text-xs" @click="fetchPackages()">
+          ↻ 刷新
+        </button>
+      </div>
+
+      <div class="beautify-toolbar-filters">
+        <input
+          x-model.debounce.200ms="beautifySearch"
+          type="text"
+          class="beautify-filter-input"
+          placeholder="搜索美化包..."
+        />
+        <select x-model="platformFilter" class="beautify-filter-select">
+          <option value="all">全部端</option>
+          <option value="pc">PC</option>
+          <option value="mobile">移动端</option>
+          <option value="dual">双端</option>
+        </select>
+        <select x-model="installFilter" class="beautify-filter-select">
+          <option value="all">全部状态</option>
+          <option value="installed">已安装</option>
+          <option value="applied">当前应用中</option>
+          <option value="uninstalled">未安装</option>
+        </select>
+      </div>
+
+      <div class="beautify-toolbar-actions">
+        <label class="beautify-action-btn cursor-pointer">
+          <input
+            type="file"
+            class="hidden"
+            accept=".json,application/json"
+            multiple
+            @change="handleThemeFiles($event.target.files); $event.target.value = ''"
+          />
+          导入主题
+        </label>
+        <label
+          class="beautify-action-btn cursor-pointer"
+          :class="!selectedVariantId ? 'is-disabled' : ''"
+        >
+          <input
+            type="file"
+            class="hidden"
+            accept="image/*"
+            :disabled="!selectedVariantId"
+            @change="handleWallpaperFiles($event.target.files); $event.target.value = ''"
+          />
+          导入壁纸
+        </label>
+      </div>
+    </div>
+
+    <div class="beautify-package-list custom-scrollbar">
+      <template x-for="item in filteredPackages" :key="item.id">
+        <button
+          type="button"
+          class="beautify-package-card cursor-pointer"
+          :class="selectedPackageId === item.id ? 'is-active' : ''"
+          @click="selectPackage(item.id)"
+        >
+          <div class="beautify-package-card-head">
+            <div>
+              <div class="beautify-package-name" x-text="item.name"></div>
+              <div
+                class="beautify-package-meta"
+                x-text="item.author || '未填写作者'"
+              ></div>
+            </div>
+            <div
+              class="beautify-status-pill"
+              :class="item.install_state?.applied_variant_id ? 'is-applied' : (item.install_state?.installed_variant_id ? 'is-installed' : '')"
+              x-text="item.install_state?.applied_variant_id ? '当前应用中' : (item.install_state?.installed_variant_id ? '已安装' : '未安装')"
+            ></div>
+          </div>
+          <div class="beautify-package-chips">
+            <span class="beautify-chip" x-show="supportsPlatform(item, 'pc')"
+              >PC</span
+            >
+            <span
+              class="beautify-chip"
+              x-show="supportsPlatform(item, 'mobile')"
+              >移动端</span
+            >
+            <span class="beautify-chip" x-show="supportsPlatform(item, 'dual')"
+              >双端</span
+            >
+          </div>
+          <div class="beautify-package-stats">
+            <span x-text="`变体 ${item.variant_count}`"></span>
+            <span x-text="`壁纸 ${item.wallpaper_count}`"></span>
+          </div>
+          <div
+            class="beautify-package-thumbs"
+            x-show="item.wallpaper_previews && item.wallpaper_previews.length"
+          >
+            <template x-for="thumb in item.wallpaper_previews" :key="thumb">
+              <span
+                class="beautify-thumb"
+                :style="`background-image:url('${wallpaperPreviewUrl(thumb)}')`"
+              ></span>
+            </template>
+          </div>
+        </button>
+      </template>
+
+      <div
+        x-show="!isLoading && filteredPackages.length === 0"
+        class="beautify-empty-state"
+      >
+        <div class="beautify-empty-title">还没有美化包</div>
+        <div class="beautify-empty-copy">
+          先导入一个 theme JSON，管理器会自动创建美化包。
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="beautify-stage-pane" x-data="beautifyPreviewFrame">
+    <template x-if="activePackage">
+      <div class="beautify-stage-shell">
+        <div class="beautify-stage-header">
+          <div>
+            <div class="beautify-stage-title" x-text="activePackage.name"></div>
+            <div class="beautify-stage-subtitle">
+              <span x-text="activeVariant?.theme_name || '未选择变体'"></span>
+              <span>·</span>
+              <span x-text="activeWallpaper?.filename || '纯主题预览'"></span>
+            </div>
+          </div>
+          <div class="beautify-stage-header-actions">
+            <button
+              type="button"
+              class="beautify-soft-btn"
+              @click="removeCurrentPackage()"
+            >
+              删除包
+            </button>
+            <select
+              class="beautify-filter-select"
+              x-show="activeVariant"
+              x-model="activeVariant.platform"
+              @change="updateCurrentVariantPlatform($event.target.value)"
+            >
+              <option value="pc">PC</option>
+              <option value="mobile">移动端</option>
+              <option value="dual">双端</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="beautify-stage-controls">
+          <div class="beautify-device-switches">
+            <button
+              type="button"
+              class="beautify-device-btn"
+              :class="selectedVariantPlatform === 'pc' ? 'is-active' : ''"
+              :disabled="!hasPcVariant"
+              @click="previewPlatform('pc')"
+            >
+              PC
+            </button>
+            <button
+              type="button"
+              class="beautify-device-btn"
+              :class="selectedVariantPlatform === 'mobile' ? 'is-active' : ''"
+              :disabled="!hasMobileVariant"
+              @click="previewPlatform('mobile')"
+            >
+              移动端
+            </button>
+            <button
+              type="button"
+              class="beautify-device-btn"
+              :class="activeVariant?.platform === 'dual' ? 'is-active' : ''"
+              :disabled="!hasDualVariant"
+              @click="previewPlatform('pc')"
+            >
+              双端
+            </button>
+          </div>
+          <div class="beautify-stage-actions">
+            <button
+              type="button"
+              class="beautify-soft-btn"
+              @click="cycleWallpaper()"
+              :disabled="wallpaperOptions.length === 0"
+            >
+              壁纸切换
+            </button>
+            <button
+              type="button"
+              class="beautify-primary-btn"
+              @click="installCurrentSelection()"
+            >
+              安装到 ST
+            </button>
+            <button
+              type="button"
+              class="beautify-primary-btn"
+              @click="applyCurrentSelection()"
+            >
+              立即应用
+            </button>
+          </div>
+        </div>
+
+        <div class="beautify-stage-body">
+          <div class="beautify-preview-column">
+            <div
+              class="beautify-preview-notice"
+              x-show="previewApproximateNoticeVisible"
+            >
+              当前预览为近似效果，安装到 ST 后为完整效果。
+            </div>
+            <div
+              class="beautify-preview-shell"
+              :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
+              :style="Object.entries(previewStyleObject).map(([key, value]) => `${key}:${value}`).join(';')"
+            >
+              <div class="beautify-preview-wallpaper"></div>
+              <div class="beautify-preview-overlay"></div>
+              <div class="beautify-preview-device-frame">
+                <div class="beautify-preview-topbar">
+                  <span>ST Theme Preview</span>
+                  <span x-text="activeVariant?.platform || 'dual'"></span>
+                </div>
+                <div class="beautify-preview-chat-window">
+                  <div class="beautify-preview-message is-bot">
+                    <div class="beautify-preview-avatar"></div>
+                    <div class="beautify-preview-bubble">
+                      <div class="beautify-preview-name">Bot</div>
+                      <p>这是一段接近 SillyTavern 聊天气泡的预览文本。</p>
+                      <p class="is-quote">引用与高亮颜色会映射到主题变量。</p>
+                    </div>
+                  </div>
+                  <div class="beautify-preview-message is-user">
+                    <div class="beautify-preview-avatar"></div>
+                    <div class="beautify-preview-bubble">
+                      <div class="beautify-preview-name">You</div>
+                      <p>
+                        <em>字体缩放、边框、阴影、模糊强度</em>
+                        都会在这里近似体现。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="beautify-preview-inputbar">
+                  <span>输入框预览</span>
+                  <span>chat width</span>
+                </div>
+              </div>
+              <div x-html="customCssMarkup()"></div>
+            </div>
+          </div>
+
+          <div class="beautify-detail-column">
+            <div class="beautify-detail-card">
+              <div class="beautify-detail-heading">当前变体</div>
+              <div class="beautify-detail-kv">
+                <span>平台</span
+                ><span x-text="activeVariant?.platform || '-' "></span>
+              </div>
+              <div class="beautify-detail-kv">
+                <span>主题</span
+                ><span x-text="activeVariant?.theme_name || '-' "></span>
+              </div>
+              <div class="beautify-detail-kv">
+                <span>待确认</span
+                ><span
+                  x-text="activeVariant?.preview_hint?.needs_platform_review ? '需要人工确认' : '已确认' "
+                ></span>
+              </div>
+            </div>
+
+            <div class="beautify-detail-card">
+              <div class="beautify-detail-heading">壁纸</div>
+              <div
+                class="beautify-wallpaper-list"
+                x-show="wallpaperOptions.length > 0"
+              >
+                <template
+                  x-for="wallpaper in wallpaperOptions"
+                  :key="wallpaper.id"
+                >
+                  <button
+                    type="button"
+                    class="beautify-wallpaper-item cursor-pointer"
+                    :class="selectedWallpaperId === wallpaper.id ? 'is-active' : ''"
+                    @click="selectWallpaper(wallpaper.id)"
+                  >
+                    <span
+                      class="beautify-wallpaper-thumb"
+                      :style="`background-image:url('${wallpaperPreviewUrl(wallpaper.file)}')`"
+                    ></span>
+                    <span class="beautify-wallpaper-info">
+                      <span
+                        class="beautify-wallpaper-name"
+                        x-text="wallpaper.filename"
+                      ></span>
+                      <span
+                        class="beautify-wallpaper-size"
+                        x-text="`${wallpaper.width} × ${wallpaper.height}`"
+                      ></span>
+                    </span>
+                  </button>
+                </template>
+              </div>
+              <div
+                class="beautify-empty-inline"
+                x-show="wallpaperOptions.length === 0"
+              >
+                当前变体还没有绑定壁纸。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="!activePackage">
+      <div class="beautify-stage-placeholder">
+        <div class="beautify-empty-title">选择一个美化包开始预览</div>
+        <div class="beautify-empty-copy">
+          右侧舞台会实时显示主题近似渲染，并提供安装与立即应用操作。
+        </div>
+      </div>
+    </template>
+  </section>
+</div>

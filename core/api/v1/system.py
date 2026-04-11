@@ -161,6 +161,26 @@ def _is_valid_lorebook_path(path: str) -> bool:
 
     return False
 
+
+def _is_valid_preset_path(path: str) -> bool:
+    if not path:
+        return False
+    cfg = load_config()
+    raw_presets = cfg.get('presets_dir', 'data/library/presets')
+    presets_root = raw_presets if os.path.isabs(raw_presets) else os.path.join(BASE_DIR, raw_presets)
+
+    raw_res = cfg.get('resources_dir', 'data/assets/card_assets')
+    res_root = raw_res if os.path.isabs(raw_res) else os.path.join(BASE_DIR, raw_res)
+
+    if _is_under_base(path, presets_root):
+        return True
+
+    if _is_under_base(path, res_root):
+        rel_path = os.path.relpath(path, res_root).replace('\\', '/')
+        return '/presets/' in f'/{rel_path}/'
+
+    return False
+
 @bp.route('/api/status')
 def api_status():
     return jsonify(ctx.init_status)
@@ -379,7 +399,10 @@ def api_create_snapshot():
         backups_root = ""
         
         # === 路径解析逻辑 (保持不变) ===
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            src_path = req_data.get('file_path')
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 src_path = os.path.join(CARDS_FOLDER, real_card_id.replace('/', os.sep))
@@ -399,7 +422,11 @@ def api_create_snapshot():
             src_path = os.path.join(CARDS_FOLDER, rel_path)
             backups_root = os.path.join(system_backups_dir, 'cards')
 
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
+            if not _is_valid_preset_path(src_path):
+                return jsonify({"success": False, "msg": "非法路径"})
+        elif snapshot_type == 'lorebook':
             src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
             if not _is_valid_lorebook_path(src_path):
                 return jsonify({"success": False, "msg": "非法路径"})
@@ -496,7 +523,11 @@ def api_smart_auto_snapshot():
         filename = ""
         
         # 解析路径逻辑
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            path = req_data.get('file_path')
+            filename = os.path.basename(path) if path else 'Unknown.json'
+            backups_root = os.path.join(res_base, 'backups', 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 filename = os.path.basename(real_card_id)
@@ -566,7 +597,7 @@ def api_smart_auto_snapshot():
         # 4. 执行保存 (如果没被跳过)
         # 复用之前的 create_snapshot 逻辑，但这里我们自己在内部处理，或者调用内部函数
         # 为了方便，这里简单重写核心路径逻辑 
-        ext = '.json' if snapshot_type == 'lorebook' else '.png' # 默认后缀
+        ext = '.json' if snapshot_type in ('lorebook', 'preset') else '.png' # 默认后缀
         # 尝试沿用原文件后缀
         if req_data.get('file_path'):
             ext = os.path.splitext(req_data.get('file_path'))[1]
@@ -593,8 +624,11 @@ def api_smart_auto_snapshot():
         elif req_data.get('file_path'):
              src_path = req_data.get('file_path')
              src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
-             if not _is_valid_lorebook_path(src_path):
-                 return jsonify({"success": False, "msg": "非法路径"})
+             if snapshot_type == 'preset':
+                 if not _is_valid_preset_path(src_path):
+                     return jsonify({"success": False, "msg": "非法路径"})
+             elif not _is_valid_lorebook_path(src_path):
+                  return jsonify({"success": False, "msg": "非法路径"})
 
         if is_png and os.path.exists(src_path):
             write_snapshot_file(src_path, dst_path, content, True)
@@ -628,7 +662,13 @@ def api_list_backups():
         backups_root = ""
         filename = ""
         
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            if file_path_param:
+                filename = os.path.basename(file_path_param)
+            elif target_id:
+                filename = os.path.basename(target_id)
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id and target_id.startswith('embedded::'):
                 # 内嵌WI：备份在 cards 目录下，使用宿主卡片名
                 real_card_id = target_id.replace('embedded::', '')
@@ -715,7 +755,13 @@ def api_cleanup_init_backups():
         backups_root = ""
         filename = ""
 
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            if file_path_param:
+                filename = os.path.basename(file_path_param)
+            elif target_id:
+                filename = os.path.basename(target_id)
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id and target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 filename = os.path.basename(real_card_id)
@@ -799,7 +845,9 @@ def api_restore_backup():
 
         # 确定目标路径
         target_path = ""
-        if type_ == 'lorebook':
+        if type_ == 'preset':
+            target_path = target_file_path_param
+        elif type_ == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 target_path = os.path.join(CARDS_FOLDER, real_card_id.replace('/', os.sep))
@@ -840,7 +888,9 @@ def api_restore_backup():
                     break
 
         # 4. 刷新缓存
-        if type_ == 'lorebook' and not target_id.startswith('embedded'):
+        if type_ == 'preset':
+            schedule_reload(reason="restore_backup")
+        elif type_ == 'lorebook' and not target_id.startswith('embedded'):
             invalidate_wi_list_cache()
         else:
             real_id = target_id.replace('embedded::', '') if 'embedded::' in target_id else target_id

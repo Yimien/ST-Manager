@@ -12,6 +12,8 @@
 
 @import "modules/view-chats.css";
 
+@import "modules/view-beautify.css";
+
 @import "modules/modal-detail.css";
 
 @import "modules/modal-settings.css";

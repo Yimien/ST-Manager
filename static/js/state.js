@@ -316,6 +316,19 @@ export function initState() {
 
     extensionFilterType: "all", // 'all', 'global', 'resource'
 
+    // 美化库状态
+    beautifyList: [],
+    beautifySearch: "",
+    beautifyPlatformFilter: "all",
+    beautifyInstallFilter: "all",
+    beautifySelectedPackageId: "",
+    beautifySelectedVariantId: "",
+    beautifySelectedWallpaperId: "",
+    beautifyPreviewDevice: "pc",
+    beautifyActiveDetail: null,
+    beautifyActiveVariant: null,
+    beautifyActiveWallpaper: null,
+
     // 预设筛选状态
     presetFilterType: "all", // 'all', 'global', 'resource'
     presetFilterCategory: "",
@@ -333,6 +346,7 @@ export function initState() {
       chats_dir: "data/library/chats",
       presets_dir: "data/library/presets",
       quick_replies_dir: "data/library/extensions/quick-replies",
+      beautify_dir: "data/library/beautify",
       default_sort: "date_desc",
       show_header_sort: true,
       st_url: "http://127.0.0.1:8000",

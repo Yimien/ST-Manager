@@ -18,6 +18,19 @@ from core.data.ui_store import (
     save_ui_data,
     set_resource_item_categories,
 )
+from core.services.preset_defaults import load_default_preset_content
+from core.services.preset_model import build_preset_detail
+from core.services.preset_model import detect_preset_kind, merge_preset_content
+from core.services.preset_storage import (
+    PresetConflictError,
+    build_renamed_path,
+    build_save_as_path,
+    ensure_unique_path,
+    load_preset_json,
+    require_matching_revision,
+    write_preset_json,
+)
+from core.services.scan_service import suppress_fs_events
 from core.utils.filesystem import sanitize_filename
 from core.utils.regex import extract_regex_from_preset_data
 
@@ -323,6 +336,136 @@ def _get_presets_path():
             logger.error(f"Failed to create presets directory: {e}")
     
     return presets_root
+
+
+def _resolve_global_save_dir(preset_kind: str) -> str:
+    presets_root = _get_presets_path()
+    return presets_root
+
+
+def _build_saved_preset_response(file_path: str, preset_type: str, source_folder, presets_root: str):
+    raw_data = load_preset_json(file_path)
+    return build_preset_detail(
+        preset_id=_build_canonical_preset_id(file_path, preset_type, source_folder, presets_root),
+        file_path=file_path,
+        filename=os.path.basename(file_path),
+        source_type=preset_type,
+        source_folder=source_folder,
+        raw_data=raw_data,
+        base_dir=BASE_DIR,
+    )
+
+
+def _save_preset_legacy(data):
+    preset_id = data.get('id')
+    content = data.get('content')
+
+    if preset_id is None or content is None:
+        return jsonify({"success": False, "msg": "缺少必要参数"})
+
+    content_to_write = content
+    if isinstance(content, str):
+        try:
+            content_to_write = json.loads(content)
+        except json.JSONDecodeError:
+            return jsonify({"success": False, "msg": "JSON格式无效"}), 400
+
+    presets_root = _get_presets_path()
+    file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
+
+    if not file_path:
+        return jsonify({"success": False, "msg": "Invalid preset ID"}), 400
+
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    write_preset_json(file_path, content_to_write)
+    return jsonify({"success": True, "msg": "预设已保存"})
+
+
+def _handle_preset_overwrite(data):
+    preset_id = str(data.get('preset_id') or '').strip()
+    content = data.get('content')
+    preset_kind = str(data.get('preset_kind') or '').strip()
+    presets_root = _get_presets_path()
+    file_path, preset_type, source_folder = _resolve_preset_file_path(preset_id, presets_root)
+
+    if not file_path:
+        return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
+    if not os.path.exists(file_path):
+        return jsonify({'success': False, 'msg': '预设文件不存在'}), 404
+
+    require_matching_revision(file_path, str(data.get('source_revision') or '').strip())
+    raw_data = load_preset_json(file_path)
+    if not preset_kind:
+        preset_kind = detect_preset_kind(raw_data, source_folder=source_folder, file_path=file_path)
+
+    merged = merge_preset_content(raw_data, preset_kind, content)
+    suppress_fs_events(2.5)
+    new_revision = write_preset_json(file_path, merged)
+    detail = _build_saved_preset_response(file_path, preset_type, source_folder, presets_root)
+    return jsonify({'success': True, 'source_revision': new_revision, 'preset': detail})
+
+
+def _handle_preset_save_as(data):
+    content = data.get('content')
+    name = str(data.get('name') or (content or {}).get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'msg': '名称不能为空'}), 400
+
+    preset_kind = str(data.get('preset_kind') or '').strip() or detect_preset_kind(content or {})
+    target_dir = _resolve_global_save_dir(preset_kind)
+    file_path = ensure_unique_path(build_save_as_path(target_dir, name))
+
+    final_content = dict(content or {})
+    if isinstance(final_content, dict) and 'name' in final_content:
+        final_content['name'] = name
+
+    suppress_fs_events(2.5)
+    new_revision = write_preset_json(file_path, final_content)
+    detail = _build_saved_preset_response(file_path, 'global', None, _get_presets_path())
+    return jsonify({'success': True, 'source_revision': new_revision, 'preset': detail, 'preset_id': detail['id']})
+
+
+def _handle_preset_rename(data):
+    preset_id = str(data.get('preset_id') or '').strip()
+    new_name = str(data.get('new_name') or '').strip()
+    if not new_name:
+        return jsonify({'success': False, 'msg': '名称不能为空'}), 400
+
+    presets_root = _get_presets_path()
+    file_path, preset_type, source_folder = _resolve_preset_file_path(preset_id, presets_root)
+    if not file_path:
+        return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
+    if not os.path.exists(file_path):
+        return jsonify({'success': False, 'msg': '预设文件不存在'}), 404
+
+    require_matching_revision(file_path, str(data.get('source_revision') or '').strip())
+    target_path = build_renamed_path(file_path, new_name)
+    if os.path.normcase(os.path.normpath(target_path)) != os.path.normcase(os.path.normpath(file_path)) and os.path.exists(target_path):
+        return jsonify({'success': False, 'msg': '目标位置已存在同名文件'}), 400
+
+    raw_data = load_preset_json(file_path)
+    if isinstance(raw_data, dict) and ('name' in raw_data or preset_type == 'global'):
+        raw_data['name'] = new_name
+    suppress_fs_events(2.5)
+    write_preset_json(file_path, raw_data)
+    os.rename(file_path, target_path)
+    detail = _build_saved_preset_response(target_path, preset_type, source_folder, presets_root)
+    return jsonify({'success': True, 'source_revision': detail['source_revision'], 'preset': detail, 'preset_id': detail['id']})
+
+
+def _handle_preset_delete_via_save(data):
+    preset_id = str(data.get('preset_id') or '').strip()
+    presets_root = _get_presets_path()
+    file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
+    if not file_path:
+        return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
+    if not os.path.exists(file_path):
+        return jsonify({'success': False, 'msg': '预设文件不存在'}), 404
+
+    require_matching_revision(file_path, str(data.get('source_revision') or '').strip())
+    suppress_fs_events(2.5)
+    os.remove(file_path)
+    return jsonify({'success': True, 'msg': '预设已删除'})
 
 
 def _extract_regex_from_preset(data):
@@ -654,14 +797,28 @@ def get_preset_detail(preset_id):
         if not os.path.exists(file_path):
             return jsonify({"success": False, "msg": "Preset not found"}), 404
         
+        try:
+            with open(file_path, 'r', encoding='utf-8') as handle:
+                raw_data = json.load(handle)
+        except Exception as exc:
+            logger.error(f"Failed to read preset detail: {exc}")
+            return jsonify({"success": False, "msg": "Failed to parse preset"}), 500
+
         parsed = _parse_preset_file(file_path, os.path.basename(file_path))
         if not parsed:
             return jsonify({"success": False, "msg": "Failed to parse preset"}), 500
-        
+
         details = parsed['details']
-        details['id'] = _build_canonical_preset_id(file_path, preset_type, source_folder, presets_root)
-        details['type'] = preset_type
-        details['source_folder'] = source_folder
+        detail_payload = build_preset_detail(
+            preset_id=_build_canonical_preset_id(file_path, preset_type, source_folder, presets_root),
+            file_path=file_path,
+            filename=os.path.basename(file_path),
+            source_type=preset_type,
+            source_folder=source_folder,
+            raw_data=raw_data,
+            base_dir=BASE_DIR,
+        )
+        details.update(detail_payload)
         
         return jsonify({
             "success": True,
@@ -912,6 +1069,29 @@ def delete_preset():
         return jsonify({"success": False, "msg": str(e)}), 500
 
 
+@bp.route('/api/presets/default-preview', methods=['POST'])
+def preset_default_preview():
+    try:
+        data = request.get_json(silent=True) or {}
+        preset_id = str(data.get('preset_id') or '').strip()
+        preset_kind = str(data.get('preset_kind') or '').strip()
+        presets_root = _get_presets_path()
+        file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
+
+        if not file_path:
+            return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'msg': '预设文件不存在'}), 404
+
+        default_content, default_path = load_default_preset_content(preset_kind, os.path.basename(file_path))
+        return jsonify({'success': True, 'default_content': default_content, 'default_path': default_path})
+    except FileNotFoundError as exc:
+        return jsonify({'success': False, 'msg': str(exc)}), 404
+    except Exception as e:
+        logger.error(f"Error loading preset default: {e}")
+        return jsonify({'success': False, 'msg': str(e)}), 500
+
+
 @bp.route('/api/presets/export', methods=['POST'])
 def export_preset():
     try:
@@ -949,37 +1129,31 @@ def save_preset():
     保存/更新预设文件
     """
     try:
-        data = request.json
+        data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"success": False, "msg": "缺少必要参数"})
 
-        preset_id = data.get('id')
-        content = data.get('content')
-        
-        if preset_id is None or content is None:
-            return jsonify({"success": False, "msg": "缺少必要参数"})
-
-        content_to_write = content
-        if isinstance(content, str):
+        save_mode = str(data.get('save_mode') or '').strip()
+        if save_mode:
             try:
-                content_to_write = json.loads(content)
-            except json.JSONDecodeError:
-                return jsonify({"success": False, "msg": "JSON格式无效"}), 400
-        
-        presets_root = _get_presets_path()
-        file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
+                if save_mode == 'overwrite':
+                    return _handle_preset_overwrite(data)
+                if save_mode == 'save_as':
+                    return _handle_preset_save_as(data)
+                if save_mode == 'rename':
+                    return _handle_preset_rename(data)
+                if save_mode == 'delete':
+                    return _handle_preset_delete_via_save(data)
+                return jsonify({"success": False, "msg": "不支持的保存模式"}), 400
+            except PresetConflictError as exc:
+                current_revision = str(exc) if str(exc) else ''
+                return jsonify({
+                    'success': False,
+                    'msg': 'source_revision mismatch' if current_revision else 'source_revision required for overwrite',
+                    'current_source_revision': current_revision,
+                }), 409
 
-        if not file_path:
-            return jsonify({"success": False, "msg": "Invalid preset ID"}), 400
-        
-        # 确保目录存在
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        # 写入文件
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(content_to_write, f, ensure_ascii=False, indent=2)
-        
-        return jsonify({"success": True, "msg": "预设已保存"})
+        return _save_preset_legacy(data)
         
     except Exception as e:
         logger.error(f"Error saving preset: {e}")

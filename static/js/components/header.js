@@ -15,6 +15,7 @@ const MOBILE_HEADER_UPLOAD_MODES = [
   "regex",
   "scripts",
   "quick_replies",
+  "beautify",
 ];
 
 export default function header() {
@@ -54,6 +55,13 @@ export default function header() {
     },
     set extensionSearch(val) {
       this.$store.global.extensionSearch = val;
+    },
+
+    get beautifySearch() {
+      return this.$store.global.beautifySearch;
+    },
+    set beautifySearch(val) {
+      this.$store.global.beautifySearch = val;
     },
 
     get searchType() {
@@ -664,6 +672,7 @@ export default function header() {
       }
       if (this.currentMode === "chats") {
         this.randomChat();
+        return;
       }
     },
 

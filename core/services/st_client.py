@@ -342,6 +342,58 @@ class STClient:
 
         return self._first_existing_path(candidates, want_dir=True)
 
+    def get_themes_dir(self, custom_path: Optional[str] = None) -> Optional[str]:
+        """获取 SillyTavern 主题目录路径。"""
+        if custom_path and os.path.exists(custom_path):
+            return custom_path
+
+        candidates = []
+        for user_dir in self._candidate_user_dirs():
+            candidates.append(os.path.join(user_dir, 'themes'))
+
+        for root in self._candidate_roots():
+            candidates.extend([
+                os.path.join(root, 'themes'),
+                os.path.join(root, 'public', 'themes'),
+            ])
+
+        resolved = self._first_existing_path(candidates, want_dir=True)
+        if resolved:
+            return resolved
+
+        user_dirs = self._candidate_user_dirs()
+        if user_dirs:
+            target = os.path.join(user_dirs[0], 'themes')
+            os.makedirs(target, exist_ok=True)
+            return target
+        return None
+
+    def get_backgrounds_dir(self, custom_path: Optional[str] = None) -> Optional[str]:
+        """获取 SillyTavern 背景目录路径。"""
+        if custom_path and os.path.exists(custom_path):
+            return custom_path
+
+        candidates = []
+        for user_dir in self._candidate_user_dirs():
+            candidates.append(os.path.join(user_dir, 'backgrounds'))
+
+        for root in self._candidate_roots():
+            candidates.extend([
+                os.path.join(root, 'backgrounds'),
+                os.path.join(root, 'public', 'backgrounds'),
+            ])
+
+        resolved = self._first_existing_path(candidates, want_dir=True)
+        if resolved:
+            return resolved
+
+        user_dirs = self._candidate_user_dirs()
+        if user_dirs:
+            target = os.path.join(user_dirs[0], 'backgrounds')
+            os.makedirs(target, exist_ok=True)
+            return target
+        return None
+
     def get_regex_dir(self, custom_path: Optional[str] = None) -> Optional[str]:
         """获取 SillyTavern 正则脚本目录路径"""
         if custom_path and os.path.exists(custom_path):
@@ -358,6 +410,40 @@ class STClient:
             ])
 
         return self._first_existing_path(candidates, want_dir=True)
+
+    def read_settings(self, custom_path: Optional[str] = None) -> Dict[str, Any]:
+        settings_path = self.get_settings_path(custom_path)
+        if not settings_path or not os.path.exists(settings_path):
+            return {}
+
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning(f'读取 ST settings.json 失败: {e}')
+            return {}
+
+        return data if isinstance(data, dict) else {}
+
+    def write_settings(self, payload: Dict[str, Any], custom_path: Optional[str] = None) -> bool:
+        settings_path = custom_path or self.get_settings_path()
+        if not settings_path:
+            user_dirs = self._candidate_user_dirs()
+            if not user_dirs:
+                return False
+            os.makedirs(user_dirs[0], exist_ok=True)
+            settings_path = os.path.join(user_dirs[0], 'settings.json')
+
+        try:
+            parent = os.path.dirname(settings_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            logger.error(f'写入 ST settings.json 失败: {e}')
+            return False
     
     # ==================== 连接测试 ====================
     

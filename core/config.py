@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     "regex_dir": "data/library/extensions/regex",
     "scripts_dir": "data/library/extensions/tavern_helper",
     "quick_replies_dir": "data/library/extensions/quick-replies", 
+    "beautify_dir": "data/library/beautify",
     "default_sort": "date_desc",
     "show_header_sort": True,
     "theme_accent": "blue",
@@ -154,6 +155,7 @@ RUNTIME_DIR_DEFAULTS = {
     'regex_dir': 'data/library/extensions/regex',
     'scripts_dir': 'data/library/extensions/tavern_helper',
     'quick_replies_dir': 'data/library/extensions/quick-replies',
+    'beautify_dir': 'data/library/beautify',
     'resources_dir': 'data/assets/card_assets',
 }
 
@@ -310,6 +312,11 @@ def get_chats_folder() -> str:
     cfg = load_config()
     return _ensure_dir(_resolve_dir(cfg, 'chats_dir', RUNTIME_DIR_DEFAULTS['chats_dir']))
 
+
+def get_beautify_folder() -> str:
+    cfg = load_config()
+    return _ensure_dir(_resolve_dir(cfg, 'beautify_dir', RUNTIME_DIR_DEFAULTS['beautify_dir']))
+
 class DynamicPath:
     def __init__(self, getter):
         self._getter = getter
@@ -327,6 +334,7 @@ class DynamicPath:
 CARDS_FOLDER = DynamicPath(get_cards_folder)
 WI_FOLDER = DynamicPath(get_world_info_folder)
 CHATS_FOLDER = DynamicPath(get_chats_folder)
+BEAUTIFY_FOLDER = DynamicPath(get_beautify_folder)
 
 # 兼容旧逻辑：提供动态读取的配置访问器
 current_config = ConfigProxy()
