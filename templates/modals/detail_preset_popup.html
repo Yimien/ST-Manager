@@ -142,19 +142,19 @@
                 <div
                   class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
                 >
-                  <div class="text-[var(--text-dim)]">Prompt</div>
+                  <div class="text-[var(--text-dim)]">当前可见</div>
                   <div
                     class="mt-1 text-base font-bold text-[var(--text-main)]"
-                    x-text="readerStats.prompt_count"
+                    x-text="readerStats.visible_count"
                   ></div>
                 </div>
                 <div
                   class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
                 >
-                  <div class="text-[var(--text-dim)]">未知字段</div>
+                  <div class="text-[var(--text-dim)]">条目总数</div>
                   <div
                     class="mt-1 text-base font-bold text-[var(--text-main)]"
-                    x-text="readerStats.unknown_count"
+                    x-text="readerStats.total_count"
                   ></div>
                 </div>
               </div>
@@ -279,148 +279,35 @@
                   class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
                   :class="activeItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
                 >
-                  <template
-                    x-if="item.type === 'prompt' && isPromptMarker(item)"
-                  >
-                    <div class="flex items-center gap-3">
-                      <div
-                        class="w-8 h-8 rounded-full flex items-center justify-center bg-[var(--bg-body)] text-lg select-none"
-                        :class="isPromptEnabled(item) ? 'grayscale-0' : 'grayscale opacity-50'"
-                      >
-                        <span x-text="getPromptIcon(item)"></span>
-                      </div>
-
-                      <div class="flex-1 min-w-0">
+                  <div>
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                          <span
-                            class="text-sm font-bold text-[var(--text-main)] truncate"
-                            :class="!isPromptEnabled(item) && 'line-through opacity-50'"
-                            x-text="getPromptDisplayTitle(item)"
-                          ></span>
-                          <span
-                            class="text-[9px] px-1.5 border border-[var(--border-light)] rounded text-[var(--text-dim)] uppercase"
-                            >Marker</span
-                          >
-                          <span
-                            class="text-[10px] px-1.5 rounded bg-[var(--bg-body)] text-[var(--text-dim)] border border-[var(--border-light)]"
-                            x-text="getPromptRoleLabel(item)"
-                          ></span>
-                        </div>
-                        <div
-                          class="text-[10px] text-[var(--text-dim)] truncate mt-0.5"
-                        >
-                          系统自动注入的内容位置占位符
-                        </div>
-                      </div>
-
-                      <div class="flex items-center gap-2">
-                        <span
-                          class="text-[10px] font-bold uppercase"
-                          :class="isPromptEnabled(item) ? 'text-green-500' : 'text-gray-500'"
-                          x-text="isPromptEnabled(item) ? 'ON' : 'OFF'"
-                        ></span>
-                        <div
-                          class="w-8 h-4 rounded-full relative transition-colors"
-                          :class="isPromptEnabled(item) ? 'bg-green-500/20' : 'bg-gray-600/20'"
-                        >
                           <div
-                            class="absolute top-0.5 w-3 h-3 rounded-full shadow-sm transition-all"
-                            :class="isPromptEnabled(item) ? 'right-0.5 bg-green-500' : 'left-0.5 bg-gray-400'"
+                            class="text-sm font-bold text-[var(--text-main)] break-all"
+                            x-text="item.title"
                           ></div>
+                          <span
+                            class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                            x-text="getItemBadge(item)"
+                          ></span>
+                          <span
+                            class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                            x-text="getItemGroupLabel(item)"
+                          ></span>
                         </div>
                       </div>
-                    </div>
-                  </template>
-
-                  <template
-                    x-if="item.type === 'prompt' && !isPromptMarker(item)"
-                  >
-                    <div
-                      class="overflow-hidden group rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)]"
-                    >
                       <div
-                        class="flex items-center justify-between px-3 py-2 bg-[var(--bg-sub)] border-b border-[var(--border-light)]"
-                      >
-                        <div class="flex items-center gap-2 min-w-0">
-                          <span
-                            class="text-lg"
-                            x-text="getPromptIcon(item)"
-                          ></span>
-                          <span
-                            class="text-sm font-bold text-[var(--text-main)] truncate"
-                            x-text="getPromptDisplayTitle(item)"
-                          ></span>
-                          <span
-                            class="text-[10px] px-1.5 rounded bg-[var(--bg-body)] text-[var(--text-dim)] border border-[var(--border-light)]"
-                            x-text="getPromptRoleLabel(item)"
-                          ></span>
-                        </div>
-                        <div
-                          class="flex items-center gap-1.5"
-                          :title="isPromptEnabled(item) ? '已启用' : '已禁用'"
-                        >
-                          <span
-                            class="text-[10px] font-bold uppercase"
-                            :class="isPromptEnabled(item) ? 'text-green-500' : 'text-gray-500'"
-                            x-text="isPromptEnabled(item) ? 'ON' : 'OFF'"
-                          ></span>
-                          <div
-                            class="w-2 h-2 rounded-full"
-                            :class="isPromptEnabled(item) ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-red-500'"
-                          ></div>
-                        </div>
-                      </div>
-
-                      <div class="p-3">
-                        <div
-                          class="text-xs font-mono text-[var(--text-sub)] whitespace-pre-wrap break-words leading-relaxed opacity-90 line-clamp-3"
-                          x-text="getItemValuePreview(item)"
-                        ></div>
-                      </div>
-                    </div>
-                  </template>
-
-                  <template x-if="item.type !== 'prompt'">
-                    <div>
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-2 flex-wrap">
-                            <div
-                              class="text-sm font-bold text-[var(--text-main)] break-all"
-                              x-text="item.title"
-                            ></div>
-                            <span
-                              class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
-                              x-text="getItemBadge(item)"
-                            ></span>
-                            <span
-                              class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
-                              x-text="getItemGroupLabel(item)"
-                            ></span>
-                          </div>
-                        </div>
-                        <div
-                          class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
-                          x-text="item.summary || '-' "
-                        ></div>
-                      </div>
-
-                      <div
-                        class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
-                        x-text="getItemValuePreview(item)"
+                        class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
+                        x-text="item.summary || '-' "
                       ></div>
                     </div>
-                  </template>
 
-                  <template x-if="item.type === 'prompt_order'">
-                    <div class="mt-3 text-[11px] text-[var(--text-dim)]">
-                      顺序位置
-                      <span
-                        class="font-mono"
-                        x-text="(Number(item.payload?.index) || 0) + 1"
-                      ></span>
-                    </div>
-                  </template>
+                    <div
+                      class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
+                      x-text="getItemValuePreview(item)"
+                    ></div>
+                  </div>
 
                   <template x-if="item.type === 'extension'">
                     <div class="mt-3 text-[11px] text-[var(--text-dim)]">
@@ -445,14 +332,6 @@
                   <template x-if="item.type === 'structured'">
                     <div class="mt-3 text-[11px] text-[var(--text-dim)]">
                       结构化对象，详情面板可查看完整 payload。
-                    </div>
-                  </template>
-
-                  <template
-                    x-if="item.group === 'unknown_fields' || item.type === 'unknown_field'"
-                  >
-                    <div class="mt-3 text-[11px] text-amber-300">
-                      未知字段会尽量保留，但编辑器主界面未必提供专用控件。
                     </div>
                   </template>
                 </article>
@@ -518,16 +397,6 @@
                   ></div>
                 </div>
               </div>
-
-              <div
-                class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3 text-xs"
-              >
-                <div class="text-[var(--text-dim)]">默认恢复来源</div>
-                <div
-                  class="mt-1 break-all text-[var(--text-main)]"
-                  x-text="defaultPreviewAvailable ? defaultPreviewPath : '尚未检测到默认模板'"
-                ></div>
-              </div>
             </div>
 
             <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -546,84 +415,6 @@
 
               <template x-if="activeItem">
                 <div class="space-y-4">
-                  <template x-if="activeItem?.type === 'prompt'">
-                    <div
-                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
-                    >
-                      <div
-                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
-                      >
-                        Prompt Detail
-                      </div>
-                      <div class="grid grid-cols-2 gap-2 text-xs">
-                        <div
-                          class="rounded-xl bg-[var(--bg-body)] border border-[var(--border-light)] p-3"
-                        >
-                          <div class="text-[var(--text-dim)]">identifier</div>
-                          <div
-                            class="mt-1 font-mono text-[var(--text-main)]"
-                            x-text="activeItem?.payload?.identifier || '-' "
-                          ></div>
-                        </div>
-                        <div
-                          class="rounded-xl bg-[var(--bg-body)] border border-[var(--border-light)] p-3"
-                        >
-                          <div class="text-[var(--text-dim)]">role</div>
-                          <div
-                            class="mt-1 font-mono text-[var(--text-main)]"
-                            x-text="activeItem?.payload?.role || '-' "
-                          ></div>
-                        </div>
-                      </div>
-                      <div
-                        class="rounded-xl bg-[var(--bg-body)] border border-[var(--border-light)] p-3"
-                      >
-                        <div
-                          class="flex items-center justify-between gap-2 mb-2"
-                        >
-                          <div class="text-[var(--text-dim)] text-xs">
-                            content
-                          </div>
-                          <button
-                            @click="copyText(activeItem?.payload?.content || '', 'Prompt 内容')"
-                            class="btn-secondary px-2 py-1 text-xs"
-                          >
-                            复制
-                          </button>
-                        </div>
-                        <pre
-                          class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono"
-                          x-text="activeItem?.payload?.content || ''"
-                        ></pre>
-                      </div>
-                    </div>
-                  </template>
-
-                  <template x-if="activeItem?.type === 'prompt_order'">
-                    <div
-                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
-                    >
-                      <div
-                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
-                      >
-                        Prompt Order
-                      </div>
-                      <div class="text-sm text-[var(--text-main)]">
-                        当前 prompt 在顺序中的位置为
-                        <span
-                          class="font-mono"
-                          x-text="(Number(activeItem?.payload?.index) || 0) + 1"
-                        ></span>
-                        ，identifier 为
-                        <span
-                          class="font-mono"
-                          x-text="activeItem?.payload?.identifier || '-' "
-                        ></span>
-                        。
-                      </div>
-                    </div>
-                  </template>
-
                   <template x-if="activeItem?.type === 'extension'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
@@ -675,16 +466,6 @@
                     </div>
                   </template>
 
-                  <template
-                    x-if="activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'"
-                  >
-                    <div
-                      class="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100"
-                    >
-                      该条目属于未知字段或未知分组。阅读器会尽量展示原始值，但不保证编辑器提供等价交互。
-                    </div>
-                  </template>
-
                   <div
                     class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4"
                   >
@@ -692,10 +473,10 @@
                       <div
                         class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
                       >
-                        Payload
+                        内容
                       </div>
                       <button
-                        @click="copyText(formatItemPayload(activeItem), '条目 Payload')"
+                        @click="copyText(getItemFullDetail(activeItem), '条目内容')"
                         class="btn-secondary px-2 py-1 text-xs"
                       >
                         复制
@@ -703,37 +484,8 @@
                     </div>
                     <pre
                       class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono max-h-[28rem] overflow-auto custom-scrollbar"
-                      x-text="formatItemPayload(activeItem)"
+                      x-text="getItemFullDetail(activeItem)"
                     ></pre>
-                  </div>
-
-                  <div
-                    class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 text-xs space-y-2"
-                  >
-                    <div class="flex items-center justify-between gap-3">
-                      <span class="text-[var(--text-dim)]">Revision</span>
-                      <span
-                        class="font-mono text-[var(--text-main)] break-all text-right"
-                        x-text="activePresetDetail?.source_revision || '-' "
-                      ></span>
-                    </div>
-                    <div class="flex items-center justify-between gap-3">
-                      <span class="text-[var(--text-dim)]">保存能力</span>
-                      <span class="text-[var(--text-main)]">
-                        保存
-                        <span
-                          x-text="activePresetDetail?.capabilities?.can_save ? '是' : '否'"
-                        ></span>
-                        / 另存为
-                        <span
-                          x-text="activePresetDetail?.capabilities?.can_save_as ? '是' : '否'"
-                        ></span>
-                        / 重命名
-                        <span
-                          x-text="activePresetDetail?.capabilities?.can_rename ? '是' : '否'"
-                        ></span>
-                      </span>
-                    </div>
                   </div>
                 </div>
               </template>

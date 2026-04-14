@@ -72,7 +72,7 @@ def test_preset_save_overwrite_preserves_unknown_fields(monkeypatch, tmp_path):
     assert payload['extensions'] == {'regex_scripts': []}
 
 
-def test_preset_save_overwrite_can_remove_unknown_fields_when_requested(monkeypatch, tmp_path):
+def test_preset_save_overwrite_ignores_removed_unknown_fields_and_preserves_unedited_keys(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     preset_file = presets_dir / 'textgen.json'
     _write_json(
@@ -108,85 +108,8 @@ def test_preset_save_overwrite_can_remove_unknown_fields_when_requested(monkeypa
     payload = json.loads(preset_file.read_text(encoding='utf-8'))
     assert payload['temp'] == 1.1
     assert payload['top_p'] == 0.92
-    assert 'custom_flag' not in payload
+    assert payload['custom_flag'] == {'keep': True}
     assert payload['extensions'] == {'regex_scripts': []}
-
-
-def test_preset_save_overwrite_ignores_removed_unknown_fields_for_known_keys(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    preset_file = presets_dir / 'textgen.json'
-    _write_json(
-        preset_file,
-        {
-            'name': 'Textgen',
-            'temp': 0.7,
-            'top_p': 0.9,
-            'custom_flag': {'keep': True},
-            'extensions': {'regex_scripts': []},
-        },
-    )
-
-    _configure(monkeypatch, tmp_path, presets_dir)
-
-    client = _make_test_app().test_client()
-    detail_res = client.get('/api/presets/detail/global::textgen.json')
-    revision = detail_res.get_json()['preset']['source_revision']
-
-    save_res = client.post(
-        '/api/presets/save',
-        json={
-            'preset_id': 'global::textgen.json',
-            'preset_kind': 'textgen',
-            'save_mode': 'overwrite',
-            'source_revision': revision,
-            'removed_unknown_fields': ['name', 'extensions', 'custom_flag'],
-            'content': {'name': 'Textgen', 'temp': 1.1, 'top_p': 0.92},
-        },
-    )
-
-    assert save_res.status_code == 200
-    payload = json.loads(preset_file.read_text(encoding='utf-8'))
-    assert payload['name'] == 'Textgen'
-    assert payload['extensions'] == {'regex_scripts': []}
-    assert 'custom_flag' not in payload
-
-
-def test_preset_save_overwrite_ignores_removed_unknown_fields_for_stored_kind_keys(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    preset_file = presets_dir / 'instruct.json'
-    _write_json(
-        preset_file,
-        {
-            'name': 'Instruct',
-            'input_sequence': 'User:',
-            'output_sequence': 'Assistant:',
-            'custom_flag': {'keep': True},
-        },
-    )
-
-    _configure(monkeypatch, tmp_path, presets_dir)
-
-    client = _make_test_app().test_client()
-    detail_res = client.get('/api/presets/detail/global::instruct.json')
-    revision = detail_res.get_json()['preset']['source_revision']
-
-    save_res = client.post(
-        '/api/presets/save',
-        json={
-            'preset_id': 'global::instruct.json',
-            'preset_kind': 'textgen',
-            'save_mode': 'overwrite',
-            'source_revision': revision,
-            'removed_unknown_fields': ['input_sequence', 'custom_flag'],
-            'content': {'name': 'Instruct', 'output_sequence': 'Assistant v2'},
-        },
-    )
-
-    assert save_res.status_code == 200
-    payload = json.loads(preset_file.read_text(encoding='utf-8'))
-    assert payload['input_sequence'] == 'User:'
-    assert payload['output_sequence'] == 'Assistant v2'
-    assert 'custom_flag' not in payload
 
 
 def test_preset_save_rejects_stale_source_revision(monkeypatch, tmp_path):

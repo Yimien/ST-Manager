@@ -14,10 +14,7 @@ PRESET_KIND_LABELS = {
     'reasoning': '思维链模板',
 }
 
-READER_FAMILY_LABELS = {
-    'openai_chat': 'OpenAI Chat',
-    'generic': '通用预设',
-}
+GENERIC_READER_FAMILY_LABEL = '通用预设'
 
 LONG_TEXT_EDITOR_KEYS = {
     'content',
@@ -65,26 +62,11 @@ READER_COMMON_FIELD_DEFS = [
     {'key': 'note', 'label': '备注'},
 ]
 
-READER_OPENAI_CHAT_FIELD_DEFS = [
-    {'key': 'prompts', 'label': '消息模板'},
-    {'key': 'prompt_order', 'label': '消息顺序'},
-    {'key': 'extensions', 'label': '扩展设置'},
-]
-
 GENERIC_READER_GROUP_LABELS = {
     'scalar_fields': '基础字段',
     'structured_objects': '结构化对象',
+    'prompts': '消息模板',
     'extensions': '扩展设置',
-    'unknown_fields': '未知字段',
-}
-
-OPENAI_CHAT_GROUP_LABELS = {
-    'meta': '基础信息',
-    'prompt_items': '消息模板',
-    'prompt_order': '消息顺序',
-    'structured_objects': '结构化对象',
-    'extensions': '扩展设置',
-    'unknown_fields': '未知字段',
 }
 
 
@@ -285,46 +267,6 @@ def build_sections(raw_data, preset_kind):
     return sections, unknown_fields
 
 
-def build_capabilities(source_type, preset_kind):
-    return {
-        'can_save': True,
-        'can_save_as': True,
-        'can_rename': True,
-        'can_delete': True,
-        'can_restore_default': source_type == 'global' and preset_kind in PRESET_KIND_LABELS,
-    }
-
-
-def detect_reader_family(raw_data, preset_kind, source_folder='', file_path=''):
-    data = raw_data or {}
-    if preset_kind != 'textgen':
-        return 'generic'
-
-    prompts = data.get('prompts')
-    prompt_order = data.get('prompt_order')
-    has_prompts_list = isinstance(prompts, list)
-    has_prompt_order_list = isinstance(prompt_order, list)
-    has_prompt_dicts = has_prompts_list and bool(prompts) and all(isinstance(prompt, dict) for prompt in prompts)
-    has_prompt_order_entries = has_prompt_order_list and len(prompt_order) > 0
-    has_malformed_openai_shape = (
-        ('prompts' in data and not has_prompts_list) or ('prompt_order' in data and not has_prompt_order_list)
-    )
-    has_chat_vendor_hint = any(key in data for key in ('openai_model', 'chat_completion_source'))
-    location_hint = f'{source_folder or ""} {file_path or ""}'.replace('\\', '/').lower()
-    has_openai_path_hint = 'openai' in location_hint
-
-    if has_malformed_openai_shape:
-        return 'generic'
-
-    if has_prompt_dicts or has_prompt_order_entries:
-        return 'openai_chat'
-
-    if (has_chat_vendor_hint or has_openai_path_hint) and (has_prompts_list or has_prompt_order_list):
-        return 'openai_chat'
-
-    return 'generic'
-
-
 def _build_reader_item(*, item_id, item_type, group, title, payload, summary=''):
     return {
         'id': item_id,
@@ -417,26 +359,7 @@ def _build_structured_reader_item(group, key, value, title=''):
     )
 
 
-def _build_unknown_reader_item(key, value, title=''):
-    value_type = type(value).__name__ if isinstance(value, (dict, list)) else str(value)
-    return _with_editor_fields(
-        _build_reader_item(
-            item_id=f'unknown_fields:{key}',
-            item_type='unknown',
-            group='unknown_fields',
-            title=title or key,
-            summary=value_type,
-            payload={'key': key, 'value': copy.deepcopy(value)},
-        ),
-        editable=False,
-        source_key=key,
-        value_path=key,
-        unknown=True,
-        editor=_build_editor_meta('raw-json', label=title or key, raw_fallback=True),
-    )
-
-
-def _build_openai_chat_prompt_items(data):
+def _build_prompt_reader_items(data):
     items = []
     for index, prompt in enumerate(data.get('prompts') or []):
         if not isinstance(prompt, dict):
@@ -454,44 +377,19 @@ def _build_openai_chat_prompt_items(data):
                 _build_reader_item(
                     item_id=f'prompt:{identifier}',
                     item_type='prompt',
-                    group='prompt_items',
+                    group='prompts',
                     title=title,
                     summary=summary,
                     payload=copy.deepcopy(prompt),
                 ),
-                editable=True,
+                editable=False,
                 source_key='prompts',
                 value_path=f'prompts[{index}]',
                 unknown=False,
-                editor=_build_editor_meta('prompt-item', label='消息模板', raw_fallback=True),
+                editor=_build_editor_meta('raw-json', label='消息模板', raw_fallback=True),
             )
         )
     return items
-
-
-def _build_openai_chat_prompt_order_items(data):
-    items = []
-    for index, prompt_id in enumerate(data.get('prompt_order') or []):
-        identifier = str(prompt_id)
-        items.append(
-            _with_editor_fields(
-                _build_reader_item(
-                    item_id=f'prompt_order:{index}',
-                    item_type='prompt_order',
-                    group='prompt_order',
-                    title=identifier,
-                    summary=f'#{index + 1}',
-                    payload={'index': index, 'identifier': identifier},
-                ),
-                editable=True,
-                source_key='prompt_order',
-                value_path='prompt_order',
-                unknown=False,
-                editor=_build_editor_meta('sortable-string-list', label='消息顺序', raw_fallback=True),
-            )
-        )
-    return items
-
 
 def _build_extension_items(data):
     extensions = data.get('extensions')
@@ -536,7 +434,7 @@ def _build_group_defs(group_labels, items):
     return groups
 
 
-def _build_generic_reader_items(data, unknown_fields):
+def _build_generic_reader_items(data):
     items = []
     for field_def in READER_COMMON_FIELD_DEFS:
         key = field_def['key']
@@ -549,84 +447,42 @@ def _build_generic_reader_items(data, unknown_fields):
             continue
         if key == 'extensions':
             continue
-        if key in unknown_fields:
-            items.append(_build_unknown_reader_item(key, value, key))
+        if key == 'prompts' and isinstance(value, list):
+            continue
+        if key == 'prompt_order' and isinstance(value, list):
             continue
         if isinstance(value, (dict, list)):
             items.append(_build_structured_reader_item('structured_objects', key, value, key))
         else:
             items.append(_build_scalar_reader_item('scalar_fields', key, value, key))
 
+    items.extend(_build_prompt_reader_items(data))
     items.extend(_build_extension_items(data))
     return items
 
 
-def _build_openai_chat_reader_items(data, unknown_fields=None):
-    items = []
-    unknown_fields = list(unknown_fields or [])
-    for field_def in READER_COMMON_FIELD_DEFS:
-        key = field_def['key']
-        if key not in data:
-            continue
-        items.append(_build_scalar_reader_item('meta', key, data.get(key), field_def['label']))
-
-    items.extend(_build_openai_chat_prompt_items(data))
-    items.extend(_build_openai_chat_prompt_order_items(data))
-
-    for key, value in data.items():
-        if key in {'name', 'title', 'description', 'note', 'prompts', 'prompt_order', 'extensions'}:
-            continue
-        if key in unknown_fields:
-            continue
-        if isinstance(value, (dict, list)):
-            items.append(_build_structured_reader_item('structured_objects', key, value, key))
-        else:
-            items.append(_build_scalar_reader_item('meta', key, value, key))
-
-    items.extend(_build_extension_items(data))
-    for key in unknown_fields:
-        if key not in data:
-            continue
-        items.append(_build_unknown_reader_item(key, data.get(key), key))
-    return items
-
-
-def build_reader_view(raw_data, preset_kind, unknown_fields=None, source_folder='', file_path=''):
+def build_reader_view(raw_data):
     data = raw_data or {}
-    family = detect_reader_family(data, preset_kind, source_folder=source_folder, file_path=file_path)
-    unknown_fields = list(unknown_fields or [])
-
-    if family == 'openai_chat':
-        items = _build_openai_chat_reader_items(data, unknown_fields)
-        groups = _build_group_defs(OPENAI_CHAT_GROUP_LABELS, items)
-        prompt_count = len([item for item in items if item['type'] == 'prompt'])
-    else:
-        items = _build_generic_reader_items(data, unknown_fields)
-        groups = _build_group_defs(GENERIC_READER_GROUP_LABELS, items)
-        prompt_count = 0
+    items = _build_generic_reader_items(data)
+    groups = _build_group_defs(GENERIC_READER_GROUP_LABELS, items)
+    prompt_count = len([item for item in items if item['type'] == 'prompt'])
 
     return {
-        'family': family,
-        'family_label': READER_FAMILY_LABELS.get(family, family),
+        'family': 'generic',
+        'family_label': GENERIC_READER_FAMILY_LABEL,
         'groups': groups,
         'items': items,
         'stats': {
             'prompt_count': prompt_count,
-            'unknown_count': len(unknown_fields),
+            'unknown_count': 0,
         },
     }
 
 
 def build_preset_detail(*, preset_id, file_path, filename, source_type, source_folder, raw_data, base_dir):
     preset_kind = detect_preset_kind(raw_data, source_folder=source_folder, file_path=file_path)
-    sections, unknown_fields = build_sections(raw_data, preset_kind)
-    reader_view = build_reader_view(
-        raw_data,
-        preset_kind,
-        unknown_fields,
-        source_folder=source_folder,
-        file_path=file_path,
-    )
+    sections, _unknown_fields = build_sections(raw_data, preset_kind)
+    reader_view = build_reader_view(raw_data)
 
     try:
         mtime = os.path.getmtime(file_path)
@@ -655,11 +511,8 @@ def build_preset_detail(*, preset_id, file_path, filename, source_type, source_f
         'type': source_type,
         'preset_kind': preset_kind,
         'preset_kind_label': PRESET_KIND_LABELS[preset_kind],
-        'capabilities': build_capabilities(source_type, preset_kind),
         'source_revision': build_file_source_revision(file_path),
         'is_default_candidate': source_type == 'global',
-        'has_unknown_fields': bool(unknown_fields),
-        'unknown_fields': unknown_fields,
         'raw_data': copy.deepcopy(raw_data or {}),
         'sections': sections,
         'reader_view': reader_view,

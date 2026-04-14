@@ -11,7 +11,6 @@ if str(ROOT) not in sys.path:
 
 
 from core.api.v1 import presets as presets_api
-from core.services import preset_model
 
 
 def _make_test_app():
@@ -25,7 +24,7 @@ def _write_json(path: Path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-def test_preset_detail_identifies_textgen_and_returns_sections(monkeypatch, tmp_path):
+def test_preset_detail_returns_source_revision_but_not_display_only_metadata(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'textgen-main.json',
@@ -57,8 +56,9 @@ def test_preset_detail_identifies_textgen_and_returns_sections(monkeypatch, tmp_
     assert payload['preset']['preset_kind'] == 'textgen'
     assert payload['preset']['source_revision']
     assert payload['preset']['sections']['sampling'][0]['key'] == 'temp'
-    assert payload['preset']['has_unknown_fields'] is True
-    assert 'custom_flag' in payload['preset']['unknown_fields']
+    assert 'capabilities' not in payload['preset']
+    assert 'has_unknown_fields' not in payload['preset']
+    assert 'unknown_fields' not in payload['preset']
 
 
 def test_preset_detail_identifies_sysprompt_by_shape_when_folder_missing(monkeypatch, tmp_path):
@@ -139,7 +139,9 @@ def test_preset_detail_identifies_instruct_context_and_reasoning(monkeypatch, tm
     assert 'template' in reasoning['sections']
 
 
-def test_preset_detail_builds_reader_view_for_openai_chat_shape(monkeypatch, tmp_path):
+def test_preset_detail_reader_view_uses_generic_groups_without_prompt_order_or_unknown_groups(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'openai-chat.json',
@@ -175,89 +177,31 @@ def test_preset_detail_builds_reader_view_for_openai_chat_shape(monkeypatch, tmp
     preset = payload['preset']
     assert preset['preset_kind'] == 'textgen'
     reader_view = preset['reader_view']
-    assert reader_view['family'] == 'openai_chat'
-    assert reader_view['family_label'] == 'OpenAI Chat'
+    assert reader_view['family'] == 'generic'
     assert 'groups' in reader_view
     assert 'items' in reader_view
-    assert 'stats' in reader_view
 
     group_ids = [group['id'] for group in reader_view['groups']]
-    assert 'prompt_items' in group_ids
-    assert 'prompt_order' in group_ids
     assert 'extensions' in group_ids
+    assert 'prompt_order' not in group_ids
+    assert 'unknown_fields' not in group_ids
 
     prompt_items = [item for item in reader_view['items'] if item['type'] == 'prompt']
-    prompt_order_items = [item for item in reader_view['items'] if item['type'] == 'prompt_order']
     extension_items = [item for item in reader_view['items'] if item['group'] == 'extensions']
+    item_types = [item['type'] for item in reader_view['items']]
 
     assert len(prompt_items) == 2
-    assert len(prompt_order_items) == 2
     assert extension_items
-    assert reader_view['stats']['prompt_count'] == 2
-    assert reader_view['stats']['unknown_count'] == 1
+    assert 'prompt_order' not in item_types
+    assert 'unknown' not in item_types
 
     first_prompt = prompt_items[0]
     assert first_prompt['id']
     assert first_prompt['title'] == 'Main Prompt'
     assert isinstance(first_prompt['summary'], str)
     assert first_prompt['payload']['identifier'] == 'main'
-
-    first_order = prompt_order_items[0]
-    assert first_order['payload']['identifier'] == 'main'
-
-    assert 'prompts' not in preset['unknown_fields']
-    assert 'prompt_order' not in preset['unknown_fields']
-    assert 'extensions' not in preset['unknown_fields']
-    assert 'custom_flag' in preset['unknown_fields']
-
-
-def test_preset_detail_openai_chat_reader_view_includes_groups_for_structured_and_unknown_items(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    _write_json(
-        presets_dir / 'openai-chat-groups.json',
-        {
-            'name': 'OpenAI Chat Groups',
-            'prompts': [
-                {
-                    'identifier': 'main',
-                    'name': 'Main Prompt',
-                    'role': 'system',
-                    'content': '你是助手',
-                    'enabled': True,
-                },
-            ],
-            'prompt_order': ['main'],
-            'logit_bias': [
-                {'text': 'forbidden', 'value': -10},
-            ],
-            'custom_flag': True,
-        },
-    )
-
-    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
-    monkeypatch.setattr(
-        presets_api,
-        'load_config',
-        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
-    )
-
-    client = _make_test_app().test_client()
-    res = client.get('/api/presets/detail/global::openai-chat-groups.json')
-
-    assert res.status_code == 200
-    payload = res.get_json()
-    assert payload['success'] is True
-
-    preset = payload['preset']
-    assert preset['reader_view']['family'] == 'openai_chat'
-
-    reader_view = preset['reader_view']
-    group_ids = [group['id'] for group in reader_view['groups']]
-
-    assert any(item['group'] == 'structured_objects' for item in reader_view['items'])
-    assert any(item['group'] == 'unknown_fields' for item in reader_view['items'])
-    assert 'structured_objects' in group_ids
-    assert 'unknown_fields' in group_ids
+    assert first_prompt['editable'] is False
+    assert first_prompt['editor']['kind'] == 'raw-json'
 
 
 def test_preset_detail_reader_view_has_generic_fallback(monkeypatch, tmp_path):
@@ -293,100 +237,13 @@ def test_preset_detail_reader_view_has_generic_fallback(monkeypatch, tmp_path):
     assert reader_view['family_label'] == '通用预设'
     assert reader_view['groups']
     assert reader_view['stats']['prompt_count'] == 0
-    assert reader_view['stats']['unknown_count'] == 1
 
     group_ids = [group['id'] for group in reader_view['groups']]
     assert 'structured_objects' in group_ids
     assert 'scalar_fields' in group_ids
-    assert 'unknown_fields' in group_ids
+    assert 'unknown_fields' not in group_ids
 
     assert all('id' in item and 'title' in item and 'payload' in item for item in reader_view['items'])
-
-
-def test_detect_reader_family_recognizes_openai_chat_variants():
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': [{'identifier': 'main', 'role': 'system', 'content': 'x'}]},
-            'textgen',
-        )
-        == 'openai_chat'
-    )
-    assert preset_model.detect_reader_family({'prompt_order': ['main']}, 'textgen') == 'openai_chat'
-    assert (
-        preset_model.detect_reader_family(
-            {'openai_model': 'gpt-4o-mini', 'prompts': [{'identifier': 'main'}]},
-            'textgen',
-        )
-        == 'openai_chat'
-    )
-    assert (
-        preset_model.detect_reader_family(
-            {'chat_completion_source': 'openai', 'prompt_order': ['main']},
-            'textgen',
-        )
-        == 'openai_chat'
-    )
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': [{'identifier': 'main'}]},
-            'textgen',
-            source_folder='presets/openai',
-        )
-        == 'openai_chat'
-    )
-    assert (
-        preset_model.detect_reader_family(
-            {'prompt_order': ['main']},
-            'textgen',
-            file_path='D:/data/textgen/openai-chat.json',
-        )
-        == 'openai_chat'
-    )
-
-
-def test_detect_reader_family_keeps_generic_for_malformed_textgen_data():
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': {'main': 'bad-shape'}, 'prompt_order': 'not-a-list'},
-            'textgen',
-        )
-        == 'generic'
-    )
-    assert preset_model.detect_reader_family({'prompts': {'main': 'bad-shape'}}, 'textgen') == 'generic'
-    assert preset_model.detect_reader_family({'prompt_order': 'not-a-list'}, 'textgen') == 'generic'
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': [{'identifier': 'main'}], 'prompt_order': 'not-a-list'},
-            'textgen',
-        )
-        == 'generic'
-    )
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': {'main': 'bad-shape'}, 'prompt_order': ['main']},
-            'textgen',
-        )
-        == 'generic'
-    )
-    assert (
-        preset_model.detect_reader_family(
-            {'prompts': ['bad-shape', {'identifier': 'main'}]},
-            'textgen',
-        )
-        == 'generic'
-    )
-
-
-def test_detect_reader_family_does_not_upgrade_plain_textgen_from_path_or_vendor_field_only():
-    assert preset_model.detect_reader_family({'openai_model': 'gpt-4o-mini', 'temp': 0.8}, 'textgen') == 'generic'
-    assert (
-        preset_model.detect_reader_family({'temp': 0.8}, 'textgen', source_folder='presets/openai')
-        == 'generic'
-    )
-    assert (
-        preset_model.detect_reader_family({'temp': 0.8}, 'textgen', file_path='D:/data/openai/textgen.json')
-        == 'generic'
-    )
 
 
 def test_preset_detail_reader_items_expose_scalar_editor_metadata(monkeypatch, tmp_path):
@@ -446,117 +303,6 @@ def test_preset_detail_reader_items_expose_scalar_editor_metadata(monkeypatch, t
     assert negative_prompt_item['editor']['kind'] == 'textarea'
 
 
-def test_preset_detail_reader_items_expose_prompt_and_order_editor_metadata(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    _write_json(
-        presets_dir / 'openai-chat.json',
-        {
-            'name': 'OpenAI Chat',
-            'prompts': [
-                {
-                    'identifier': 'main',
-                    'name': 'Main Prompt',
-                    'role': 'system',
-                    'content': '你是助手',
-                    'enabled': True,
-                },
-            ],
-            'prompt_order': ['main'],
-        },
-    )
-
-    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
-    monkeypatch.setattr(
-        presets_api,
-        'load_config',
-        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
-    )
-
-    client = _make_test_app().test_client()
-    res = client.get('/api/presets/detail/global::openai-chat.json')
-
-    assert res.status_code == 200
-    payload = res.get_json()
-    assert payload['success'] is True
-
-    preset = payload['preset']
-    items = preset['reader_view']['items']
-
-    prompt_items = [item for item in items if item['type'] == 'prompt' and item['payload']['identifier'] == 'main']
-    order_items = [item for item in items if item['type'] == 'prompt_order']
-
-    assert len(prompt_items) == 1
-    assert len(order_items) == 1
-
-    prompt_item = prompt_items[0]
-    order_item = order_items[0]
-
-    assert prompt_item['editable'] is True
-    assert prompt_item['source_key'] == 'prompts'
-    assert prompt_item['value_path'] == 'prompts[0]'
-    assert prompt_item['editor']['kind'] == 'prompt-item'
-
-    assert order_item['group'] == 'prompt_order'
-    assert order_item['payload']['index'] == 0
-    assert order_item['payload']['identifier'] == 'main'
-    assert order_item['editable'] is True
-    assert order_item['source_key'] == 'prompt_order'
-    assert order_item['value_path'] == 'prompt_order'
-    assert order_item['editor']['kind'] == 'sortable-string-list'
-
-
-def test_preset_detail_openai_chat_reader_items_include_known_structured_fields(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    _write_json(
-        presets_dir / 'openai-chat-bias.json',
-        {
-            'name': 'OpenAI Chat Bias',
-            'prompts': [
-                {
-                    'identifier': 'main',
-                    'name': 'Main Prompt',
-                    'role': 'system',
-                    'content': '你是助手',
-                    'enabled': True,
-                },
-            ],
-            'prompt_order': ['main'],
-            'logit_bias': [
-                {'text': 'forbidden', 'value': -10},
-            ],
-        },
-    )
-
-    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
-    monkeypatch.setattr(
-        presets_api,
-        'load_config',
-        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
-    )
-
-    client = _make_test_app().test_client()
-    res = client.get('/api/presets/detail/global::openai-chat-bias.json')
-
-    assert res.status_code == 200
-    payload = res.get_json()
-    assert payload['success'] is True
-
-    preset = payload['preset']
-    assert preset['reader_view']['family'] == 'openai_chat'
-
-    items = preset['reader_view']['items']
-    bias_items = [item for item in items if item['payload'].get('key') == 'logit_bias']
-
-    assert len(bias_items) == 1
-
-    bias_item = bias_items[0]
-
-    assert bias_item['editable'] is True
-    assert bias_item['source_key'] == 'logit_bias'
-    assert bias_item['value_path'] == 'logit_bias'
-    assert bias_item['editor']['kind'] == 'key-value-list'
-
-
 def test_preset_detail_reader_items_expose_logit_bias_editor_metadata(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(
@@ -599,45 +345,3 @@ def test_preset_detail_reader_items_expose_logit_bias_editor_metadata(monkeypatc
     assert bias_item['source_key'] == 'logit_bias'
     assert bias_item['value_path'] == 'logit_bias'
     assert bias_item['editor']['kind'] == 'key-value-list'
-
-
-def test_preset_detail_reader_items_mark_unknown_fields_for_raw_fallback(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    _write_json(
-        presets_dir / 'unknowns.json',
-        {
-            'name': 'Unknowns',
-            'temp': 0.7,
-            'custom_payload': {'keep': True},
-        },
-    )
-
-    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
-    monkeypatch.setattr(
-        presets_api,
-        'load_config',
-        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
-    )
-
-    client = _make_test_app().test_client()
-    res = client.get('/api/presets/detail/global::unknowns.json')
-
-    assert res.status_code == 200
-    payload = res.get_json()
-    assert payload['success'] is True
-
-    preset = payload['preset']
-    items = preset['reader_view']['items']
-
-    unknown_items = [
-        item for item in items if item['group'] == 'unknown_fields' and item['payload']['key'] == 'custom_payload'
-    ]
-
-    assert len(unknown_items) == 1
-
-    unknown_item = unknown_items[0]
-
-    assert unknown_item['unknown'] is True
-    assert unknown_item['editable'] is False
-    assert unknown_item['editor']['kind'] == 'raw-json'
-    assert unknown_item['source_key'] == 'custom_payload'

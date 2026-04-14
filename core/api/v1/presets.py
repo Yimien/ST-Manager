@@ -19,7 +19,7 @@ from core.data.ui_store import (
     set_resource_item_categories,
 )
 from core.services.preset_model import build_preset_detail
-from core.services.preset_model import build_sections, detect_preset_kind, merge_preset_content
+from core.services.preset_model import detect_preset_kind, merge_preset_content
 from core.services.preset_storage import (
     PresetConflictError,
     build_renamed_path,
@@ -399,14 +399,6 @@ def _handle_preset_overwrite(data):
         preset_kind = stored_preset_kind
 
     merged = merge_preset_content(raw_data, preset_kind, content)
-    _sections, unknown_fields = build_sections(raw_data, stored_preset_kind)
-    removable_unknown_fields = set(unknown_fields)
-    removed_unknown_fields = [
-        str(key).strip() for key in (data.get('removed_unknown_fields') or []) if str(key).strip()
-    ]
-    for key in removed_unknown_fields:
-        if key in removable_unknown_fields:
-            merged.pop(key, None)
     suppress_fs_events(2.5)
     new_revision = write_preset_json(file_path, merged)
     detail = _build_saved_preset_response(file_path, preset_type, source_folder, presets_root)

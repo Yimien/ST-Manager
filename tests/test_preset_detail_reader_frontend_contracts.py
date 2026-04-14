@@ -30,8 +30,15 @@ def test_preset_detail_reader_js_exposes_reader_view_state_and_helpers_contracts
     assert 'selectGroup(groupId) {' in source
     assert 'selectItem(itemId) {' in source
     assert 'getItemValuePreview(item) {' in source
+    assert 'getItemFullDetail(item) {' in source
     assert 'getItemBadge(item) {' in source
-    assert 'formatItemPayload(item) {' in source
+    assert 'formatItemPayload(item) {' not in source
+
+
+def test_preset_detail_reader_js_search_haystack_includes_prompt_identifier():
+    source = read_project_file('static/js/components/presetDetailReader.js')
+
+    assert 'item.payload?.identifier' in source
 
 
 def test_preset_detail_reader_template_uses_reader_view_three_column_layout_contracts():
@@ -43,51 +50,40 @@ def test_preset_detail_reader_template_uses_reader_view_three_column_layout_cont
     assert '@click="selectItem(item.id)"' in source
     assert 'x-show="showRightPanel || $store.global.deviceType !== ' in source
     assert 'x-text="activeItem?.title ||' in source
-    assert 'readerStats.prompt_count' in source
-    assert 'readerStats.unknown_count' in source
+    assert 'readerStats.prompt_count' not in source
+    assert 'readerStats.unknown_count' not in source
 
 
-def test_preset_detail_reader_prompt_cards_follow_legacy_reader_conventions():
+def test_preset_detail_reader_template_removes_prompt_order_unknown_and_metadata_sections():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
-    assert "x-text=\"getPromptDisplayTitle(item)\"" in source
-    assert 'x-text="item.id"' not in source
-    assert "x-text=\"getPromptIcon(item)\"" in source
-    assert "x-text=\"getPromptRoleLabel(item)\"" in source
-    assert "x-text=\"isPromptEnabled(item) ? 'ON' : 'OFF'\"" in source
-    assert '系统自动注入的内容位置占位符' in source
-
-
-def test_preset_detail_reader_js_exposes_legacy_prompt_display_helpers():
-    source = read_project_file('static/js/components/presetDetailReader.js')
-
-    assert 'getPromptDisplayTitle(item) {' in source
-    assert 'isPromptEnabled(item) {' in source
-    assert 'isPromptMarker(item) {' in source
-    assert 'getPromptIcon(item) {' in source
-    assert 'getPromptRoleLabel(item) {' in source
+    assert 'Payload' not in source
+    assert 'Revision' not in source
+    assert '保存能力' not in source
+    assert 'x-if="activeItem?.type === \'prompt_order\'"' not in source
+    assert "x-if=\"activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'\"" not in source
 
 
 def test_preset_detail_reader_flow_keeps_full_content_in_right_panel_only():
+    js_source = read_project_file('static/js/components/presetDetailReader.js')
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
     assert 'line-clamp-3' in source or 'line-clamp-4' in source
+    assert 'getItemDetailContent(' not in js_source
+    assert 'getItemFullDetail(item) {' in js_source
+    assert 'x-text="getItemFullDetail(activeItem)"' in source
     assert 'Summary' not in source
-    assert 'Prompt Detail' in source
+    assert 'Prompt Detail' not in source
 
 
 def test_preset_detail_reader_template_guards_active_item_accesses():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
-    assert 'x-text="activeItem?.payload?.content || \'\'"' in source
-    assert 'x-text="activeItem?.payload?.identifier || \'-\' "' in source
-    assert 'x-text="activeItem?.payload?.role || \'-\' "' in source
-    assert 'x-if="activeItem?.type === \'prompt\'"' in source
-    assert 'x-if="activeItem?.type === \'prompt_order\'"' in source
+    assert 'x-if="activeItem?.type === \'prompt_order\'"' not in source
     assert 'x-if="activeItem?.type === \'extension\'"' in source
     assert 'x-if="activeItem?.type === \'field\'"' in source
     assert 'x-if="activeItem?.type === \'structured\'"' in source
-    assert "x-if=\"activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'\"" in source
+    assert "x-if=\"activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'\"" not in source
 
 
 def test_preset_detail_reader_template_removes_invalid_raw_json_and_restore_default_actions():

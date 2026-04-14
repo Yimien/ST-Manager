@@ -86,16 +86,11 @@ export default function presetEditor() {
     uiFilter: "all",
     showMobileSidebar: false,
     showRightPanel: true,
-    showRawEditor: false,
-    rawUnknownDraft: "",
-    removedUnknownFields: [],
     dirtyPaths: {},
     editingPresetFile: null,
     editingData: null,
     baseDataJson: "",
     draftState: { savedAt: "", restored: false },
-    leftNavOpen: true,
-    rightPanelOpen: true,
     sectionLabels: SECTION_LABELS,
     formatDate,
     estimateTokens,
@@ -181,18 +176,14 @@ export default function presetEditor() {
         if (this.uiFilter === "changed" && !this.isItemDirty(item)) {
           return false;
         }
-        if (this.uiFilter === "unknown" && !item.unknown) return false;
         if (this.uiFilter === "longtext" && item.editor?.kind !== "textarea") {
           return false;
         }
         if (
           this.uiFilter === "collections" &&
-          ![
-            "prompt-item",
-            "sortable-string-list",
-            "string-list",
-            "key-value-list",
-          ].includes(item.editor?.kind)
+          !["sortable-string-list", "string-list", "key-value-list"].includes(
+            item.editor?.kind,
+          )
         ) {
           return false;
         }
@@ -238,10 +229,6 @@ export default function presetEditor() {
       }
     },
 
-    get unknownFieldList() {
-      return this.editingPresetFile?.unknown_fields || [];
-    },
-
     get extensionSummary() {
       const extensions = this.editingData?.extensions || {};
       const regexCount = Array.isArray(extensions.regex_scripts)
@@ -263,9 +250,6 @@ export default function presetEditor() {
         saved_at: new Date().toISOString(),
         source_revision: this.editingPresetFile.source_revision || "",
         content: this.editingData,
-        removed_unknown_fields: Array.isArray(this.removedUnknownFields)
-          ? [...this.removedUnknownFields]
-          : [],
       };
       localStorage.setItem(this.buildDraftKey(), JSON.stringify(payload));
       this.draftState.savedAt = payload.saved_at;
@@ -279,11 +263,6 @@ export default function presetEditor() {
         const payload = JSON.parse(raw);
         if (payload?.content && confirm("检测到本地草稿，是否恢复到编辑器？")) {
           this.editingData = payload.content;
-          this.removedUnknownFields = Array.isArray(
-            payload.removed_unknown_fields,
-          )
-            ? [...payload.removed_unknown_fields]
-            : [];
           this.dirtyPaths = {};
           this.markAllReaderItemsDirty();
           this.draftState.savedAt = payload.saved_at || "";
@@ -390,103 +369,6 @@ export default function presetEditor() {
       }
       this.editingData[item.key] = value;
       this.dirtyPaths[item.key || item.id] = true;
-    },
-
-    updatePromptItem(index, key, value) {
-      const prompts = Array.isArray(this.getByPath("prompts"))
-        ? [...this.getByPath("prompts")]
-        : [];
-      const previousIdentifier = prompts[index]?.identifier;
-      if (key === "identifier") {
-        const nextIdentifier = String(value || "").trim();
-        if (!nextIdentifier && previousIdentifier) {
-          return;
-        }
-        const order = Array.isArray(this.getByPath("prompt_order"))
-          ? [...this.getByPath("prompt_order")]
-          : [];
-        const reservedIdentifiers = new Set(
-          [...prompts.map((prompt) => prompt?.identifier), ...order]
-            .map((identifier) => String(identifier || "").trim())
-            .filter(Boolean),
-        );
-        if (previousIdentifier) {
-          reservedIdentifiers.delete(String(previousIdentifier).trim());
-        }
-        if (nextIdentifier && reservedIdentifiers.has(nextIdentifier)) {
-          return;
-        }
-        value = nextIdentifier;
-      }
-      if (!prompts[index] || typeof prompts[index] !== "object") {
-        prompts[index] = {};
-      }
-      prompts[index] = { ...prompts[index], [key]: value };
-      this.setByPath("prompts", prompts);
-      if (key === "identifier") {
-        const order = Array.isArray(this.getByPath("prompt_order"))
-          ? [...this.getByPath("prompt_order")]
-          : [];
-        this.setByPath(
-          "prompt_order",
-          previousIdentifier
-            ? order.map((entry) =>
-                entry === previousIdentifier ? value : entry,
-              )
-            : value
-              ? [...order, value]
-              : order,
-        );
-      }
-    },
-
-    addPromptItem() {
-      const prompts = Array.isArray(this.getByPath("prompts"))
-        ? [...this.getByPath("prompts")]
-        : [];
-      const order = Array.isArray(this.getByPath("prompt_order"))
-        ? [...this.getByPath("prompt_order")]
-        : [];
-      const existingIdentifiers = new Set(
-        [...prompts.map((prompt) => prompt?.identifier), ...order]
-          .map((identifier) => String(identifier || "").trim())
-          .filter(Boolean),
-      );
-      let nextIndex = prompts.length + 1;
-      let nextIdentifier = `prompt_${nextIndex}`;
-      while (existingIdentifiers.has(nextIdentifier)) {
-        nextIndex += 1;
-        nextIdentifier = `prompt_${nextIndex}`;
-      }
-      const nextPrompt = {
-        identifier: nextIdentifier,
-        name: "",
-        role: "system",
-        content: "",
-        enabled: true,
-        marker: false,
-      };
-      prompts.push(nextPrompt);
-      this.setByPath("prompts", prompts);
-      this.setByPath("prompt_order", [...order, nextPrompt.identifier]);
-    },
-
-    removePromptItem(index) {
-      const prompts = Array.isArray(this.getByPath("prompts"))
-        ? [...this.getByPath("prompts")]
-        : [];
-      if (index < 0 || index >= prompts.length) return;
-      const [removed] = prompts.splice(index, 1);
-      this.setByPath("prompts", prompts);
-      const order = Array.isArray(this.getByPath("prompt_order"))
-        ? this.getByPath("prompt_order")
-        : [];
-      if (removed?.identifier) {
-        this.setByPath(
-          "prompt_order",
-          order.filter((value) => value !== removed.identifier),
-        );
-      }
     },
 
     moveListItem(path, fromIndex, toIndex) {
@@ -635,14 +517,9 @@ export default function presetEditor() {
         this.activeItemId = "";
         this.showMobileSidebar = false;
         this.showRightPanel = true;
-        this.showRawEditor = false;
-        this.rawUnknownDraft = "";
-        this.removedUnknownFields = [];
         this.dirtyPaths = {};
         this.selectGroup("all");
         this.showPresetEditor = true;
-        this.leftNavOpen = this.$store.global.deviceType !== "mobile";
-        this.rightPanelOpen = this.$store.global.deviceType !== "mobile";
         this.draftState = { savedAt: "", restored: false };
         this.hasConflict = false;
         this.conflictRevision = "";
@@ -705,7 +582,6 @@ export default function presetEditor() {
           preset_kind: this.editingPresetFile.preset_kind,
           save_mode: "overwrite",
           source_revision: this.editingPresetFile.source_revision,
-          removed_unknown_fields: this.removedUnknownFields,
           content: this.editingData,
         });
 
@@ -730,7 +606,6 @@ export default function presetEditor() {
           this.editingPresetFile.raw_data || this.editingData,
         );
         this.baseDataJson = JSON.stringify(this.editingData);
-        this.removedUnknownFields = [];
         this.dirtyPaths = {};
         autoSaver.initBaseline(this.editingData);
         this.clearLocalDraft();
@@ -926,45 +801,6 @@ export default function presetEditor() {
           },
         }),
       );
-    },
-
-    get rawUnknownJsonText() {
-      if (!this.unknownFieldList.length || !this.editingData) return "{}";
-      const payload = Object.create(null);
-      this.unknownFieldList.forEach((key) => {
-        payload[key] = this.editingData?.[key];
-      });
-      return JSON.stringify(payload, null, 2);
-    },
-
-    applyRawUnknownJson(text) {
-      try {
-        const parsed = JSON.parse(text || "{}");
-        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-          throw new Error("Raw unknown JSON must be an object");
-        }
-        this.unknownFieldList.forEach((key) => {
-          if (Object.prototype.hasOwnProperty.call(parsed, key)) {
-            Object.defineProperty(this.editingData, key, {
-              value: parsed[key],
-              enumerable: true,
-              writable: true,
-              configurable: true,
-            });
-          } else {
-            delete this.editingData[key];
-          }
-          this.dirtyPaths[key] = true;
-        });
-        this.removedUnknownFields = this.unknownFieldList.filter(
-          (key) => !Object.prototype.hasOwnProperty.call(parsed, key),
-        );
-        this.rawUnknownDraft = this.rawUnknownJsonText;
-        this.showRawEditor = false;
-        this.$store.global.showToast("高级原始编辑区已应用");
-      } catch (error) {
-        this.$store.global.showToast("原始 JSON 格式无效", "error");
-      }
     },
   };
 }

@@ -16,28 +16,20 @@ import { formatDate } from "../utils/format.js";
 
 const UI_FILTERS = [
   { id: "all", label: "全部" },
-  { id: "prompt", label: "Prompt" },
   { id: "structured", label: "结构化" },
   { id: "extension", label: "扩展" },
-  { id: "unknown", label: "未知" },
 ];
 
 const TYPE_LABELS = {
-  prompt: "Prompt",
-  prompt_order: "顺序",
   extension: "扩展",
   field: "字段",
   structured: "结构化",
 };
 
 const GROUP_FALLBACK_LABELS = {
-  meta: "元信息",
-  prompt_items: "Prompts",
-  prompt_order: "Prompt 顺序",
   extensions: "扩展",
   scalar_fields: "基础字段",
   structured_objects: "结构化对象",
-  unknown_fields: "未知字段",
 };
 
 function normalizeText(value) {
@@ -45,40 +37,6 @@ function normalizeText(value) {
     .trim()
     .toLowerCase();
 }
-
-function isUnknownItem(item) {
-  return item?.group === "unknown_fields" || item?.type === "unknown_field";
-}
-
-const PROMPT_MARKER_KEYS = new Set([
-  "worldInfoBefore",
-  "worldInfoAfter",
-  "charDescription",
-  "charPersonality",
-  "scenario",
-  "chatHistory",
-  "dialogueExamples",
-  "personaDescription",
-]);
-
-const PROMPT_ICON_MAP = {
-  worldInfoBefore: "🌍",
-  worldInfoAfter: "🌍",
-  charDescription: "👤",
-  charPersonality: "🧠",
-  personaDescription: "🎭",
-  scenario: "🏰",
-  chatHistory: "🕒",
-  dialogueExamples: "💬",
-  main: "📜",
-  jailbreak: "🔓",
-};
-
-const PROMPT_ROLE_LABELS = {
-  system: "系统提示词",
-  user: "用户提示词",
-  assistant: "助手提示词",
-};
 
 export default function presetDetailReader() {
   return {
@@ -110,10 +68,7 @@ export default function presetDetailReader() {
         groups: [],
         items: [],
         stats: {
-          prompt_count: 0,
-          unknown_count: Array.isArray(this.activePresetDetail?.unknown_fields)
-            ? this.activePresetDetail.unknown_fields.length
-            : 0,
+          total_count: 0,
         },
       };
     },
@@ -139,20 +94,10 @@ export default function presetDetailReader() {
           return false;
         }
 
-        if (
-          this.uiFilter === "prompt" &&
-          item.type !== "prompt" &&
-          item.type !== "prompt_order"
-        ) {
-          return false;
-        }
         if (this.uiFilter === "structured" && item.type !== "structured") {
           return false;
         }
         if (this.uiFilter === "extension" && item.type !== "extension") {
-          return false;
-        }
-        if (this.uiFilter === "unknown" && !isUnknownItem(item)) {
           return false;
         }
 
@@ -167,7 +112,6 @@ export default function presetDetailReader() {
           item.group,
           item.payload?.key,
           item.payload?.identifier,
-          item.payload?.role,
           this.getItemValuePreview(item),
         ]
           .map(normalizeText)
@@ -197,9 +141,7 @@ export default function presetDetailReader() {
     get readerStats() {
       const stats = this.readerView.stats || {};
       return {
-        prompt_count: Number(stats.prompt_count) || 0,
-        unknown_count: Number(stats.unknown_count) || 0,
-        total_count: this.readerItems.length,
+        total_count: Number(stats.total_count) || this.readerItems.length,
         visible_count: this.filteredItems.length,
       };
     },
@@ -304,18 +246,10 @@ export default function presetDetailReader() {
       if (!item) return "-";
 
       const payload = item.payload || {};
-      if (item.type === "prompt") {
-        return this.isPromptMarker(item)
-          ? "系统自动注入的内容位置占位符"
-          : String(payload.content || "").trim() || "(无内容)";
-      }
-      if (item.type === "prompt_order") {
-        return `第 ${(Number(payload.index) || 0) + 1} 位: ${payload.identifier || "-"}`;
-      }
       if (item.type === "extension") {
         return this.formatValue(payload.value);
       }
-      if (item.type === "field" || item.type === "unknown_field") {
+      if (item.type === "field") {
         return this.formatValue(payload.value);
       }
       if (item.type === "structured") {
@@ -331,81 +265,24 @@ export default function presetDetailReader() {
       return item.summary || this.formatValue(payload.value ?? payload);
     },
 
-    getItemBadge(item) {
-      if (!item) return TYPE_LABELS.field;
-      if (isUnknownItem(item)) return "未知";
-      return TYPE_LABELS[item.type] || "条目";
-    },
-
-    getPromptDisplayTitle(item) {
-      if (!item || item.type !== "prompt") return item?.title || "-";
-      return (
-        item.payload?.name || item.title || item.payload?.identifier || "-"
-      );
-    },
-
-    isPromptEnabled(item) {
-      if (!item || item.type !== "prompt") return false;
-      return item.payload?.enabled !== false;
-    },
-
-    isPromptMarker(item) {
-      if (!item || item.type !== "prompt") return false;
-      const identifier = String(item.payload?.identifier || "").trim();
-      return (
-        Boolean(item.payload?.marker) || PROMPT_MARKER_KEYS.has(identifier)
-      );
-    },
-
-    getPromptIcon(item) {
-      const identifier = String(item?.payload?.identifier || "").trim();
-      return PROMPT_ICON_MAP[identifier] || "📝";
-    },
-
-    getPromptRoleLabel(item) {
-      const role = String(item?.payload?.role || "")
-        .trim()
-        .toLowerCase();
-      return PROMPT_ROLE_LABELS[role] || role || "系统提示词";
-    },
-
-    formatItemPayload(item) {
+    getItemFullDetail(item) {
       if (!item) return "-";
+
       const payload = item.payload || {};
-
-      if (item.type === "prompt") {
-        return JSON.stringify(
-          {
-            identifier: payload.identifier || "",
-            role: payload.role || "",
-            content: payload.content || "",
-          },
-          null,
-          2,
-        );
-      }
-
-      if (item.type === "prompt_order") {
-        return JSON.stringify(
-          {
-            index: payload.index,
-            identifier: payload.identifier,
-          },
-          null,
-          2,
-        );
-      }
-
       if (
-        item.type === "field" ||
-        item.type === "unknown_field" ||
         item.type === "extension" ||
+        item.type === "field" ||
         item.type === "structured"
       ) {
-        return JSON.stringify(payload, null, 2);
+        return this.formatFullValue(payload.value);
       }
 
-      return JSON.stringify(item, null, 2);
+      return this.formatFullValue(payload.value ?? payload);
+    },
+
+    getItemBadge(item) {
+      if (!item) return TYPE_LABELS.field;
+      return TYPE_LABELS[item.type] || "条目";
     },
 
     openFullscreenEditor(options = {}) {
@@ -503,6 +380,24 @@ export default function presetDetailReader() {
       }
       const text = String(value);
       return text.length > 240 ? `${text.slice(0, 240)}...` : text;
+    },
+
+    formatFullValue(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "boolean") return value ? "是" : "否";
+      if (typeof value === "number") {
+        return Number.isInteger(value)
+          ? String(value)
+          : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+      }
+      if (typeof value === "object") {
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (error) {
+          return String(value);
+        }
+      }
+      return String(value);
     },
 
     formatDate(ts) {

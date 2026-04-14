@@ -293,11 +293,6 @@
                         class="px-2 py-0.5 rounded-full border border-[var(--border-light)]"
                         x-text="item.group || 'ungrouped'"
                       ></span>
-                      <span
-                        x-show="item.unknown"
-                        class="px-2 py-0.5 rounded-full border border-red-500/30 bg-red-500/10 text-red-300"
-                        >未知字段</span
-                      >
                     </div>
                   </button>
                 </template>
@@ -323,7 +318,7 @@
                 </div>
                 <button
                   @click="showRightPanel = !showRightPanel"
-                  class="btn-secondary px-3 py-1.5 text-xs rounded"
+                  class="btn-secondary px-3 py-1.5 text-xs rounded md:hidden"
                 >
                   右侧信息
                 </button>
@@ -352,126 +347,6 @@
                         x-text="activeItem?.summary || '当前字段由 reader_view 驱动渲染。' "
                       ></div>
                     </div>
-
-                    <template x-if="activeItem?.editor?.kind === 'prompt-item'">
-                      <div
-                        class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-4"
-                      >
-                        <div class="flex items-center justify-between gap-3">
-                          <div>
-                            <div
-                              class="text-base font-bold text-[var(--text-main)]"
-                            >
-                              Prompt Items
-                            </div>
-                            <div class="text-[11px] text-[var(--text-dim)]">
-                              支持 identifier、角色、内容和排序关联编辑。
-                            </div>
-                          </div>
-                          <button
-                            @click="addPromptItem()"
-                            class="btn-secondary px-3 py-1.5 text-xs rounded"
-                          >
-                            添加 Prompt
-                          </button>
-                        </div>
-                        <div class="space-y-3">
-                          <template
-                            x-for="(prompt, index) in (Array.isArray(getByPath('prompts')) ? getByPath('prompts') : [])"
-                            :key="prompt.identifier || index"
-                          >
-                            <div
-                              class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
-                            >
-                              <div
-                                class="grid grid-cols-1 md:grid-cols-2 gap-3"
-                              >
-                                <label class="block">
-                                  <div
-                                    class="text-xs text-[var(--text-dim)] mb-1"
-                                  >
-                                    Identifier
-                                  </div>
-                                  <input
-                                    class="form-input"
-                                    :value="prompt.identifier || ''"
-                                    @input="updatePromptItem(index, 'identifier', $event.target.value)"
-                                  />
-                                </label>
-                                <label class="block">
-                                  <div
-                                    class="text-xs text-[var(--text-dim)] mb-1"
-                                  >
-                                    名称
-                                  </div>
-                                  <input
-                                    class="form-input"
-                                    :value="prompt.name || ''"
-                                    @input="updatePromptItem(index, 'name', $event.target.value)"
-                                  />
-                                </label>
-                                <label class="block">
-                                  <div
-                                    class="text-xs text-[var(--text-dim)] mb-1"
-                                  >
-                                    角色
-                                  </div>
-                                  <input
-                                    class="form-input"
-                                    :value="prompt.role || ''"
-                                    @input="updatePromptItem(index, 'role', $event.target.value)"
-                                  />
-                                </label>
-                                <div class="flex items-center gap-4 pt-6">
-                                  <label
-                                    class="flex items-center gap-2 text-sm text-[var(--text-main)]"
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      class="rounded"
-                                      :checked="Boolean(prompt.enabled)"
-                                      @change="updatePromptItem(index, 'enabled', $event.target.checked)"
-                                    />
-                                    <span>启用</span>
-                                  </label>
-                                  <label
-                                    class="flex items-center gap-2 text-sm text-[var(--text-main)]"
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      class="rounded"
-                                      :checked="Boolean(prompt.marker)"
-                                      @change="updatePromptItem(index, 'marker', $event.target.checked)"
-                                    />
-                                    <span>Marker</span>
-                                  </label>
-                                </div>
-                              </div>
-                              <label class="block">
-                                <div
-                                  class="text-xs text-[var(--text-dim)] mb-1"
-                                >
-                                  内容
-                                </div>
-                                <textarea
-                                  class="form-textarea min-h-[160px] custom-scrollbar"
-                                  :value="prompt.content || ''"
-                                  @input="updatePromptItem(index, 'content', $event.target.value)"
-                                ></textarea>
-                              </label>
-                              <div class="flex justify-end">
-                                <button
-                                  @click="removePromptItem(index)"
-                                  class="btn-secondary px-3 py-1.5 text-xs rounded hover:text-red-300"
-                                >
-                                  删除条目
-                                </button>
-                              </div>
-                            </div>
-                          </template>
-                        </div>
-                      </div>
-                    </template>
 
                     <template
                       x-if="activeItem?.editor?.kind === 'sortable-string-list'"
@@ -645,15 +520,15 @@
                       >
                         <textarea
                           class="form-textarea min-h-[280px] custom-scrollbar"
-                          :value="getByPath(activeItem.value_path) || ''"
-                          @input="setByPath(activeItem.value_path, $event.target.value)"
+                          :value="getFieldValue(activeItem) || ''"
+                          @input="setFieldValue(activeItem, $event.target.value)"
                         ></textarea>
                         <div
                           class="flex items-center justify-between gap-3 text-[11px] text-[var(--text-dim)]"
                         >
                           <span>保留换行，适合长提示词、说明和模板段落。</span>
                           <span
-                            x-text="`约 ${estimateTokens(String(getByPath(activeItem.value_path) || ''))} tokens`"
+                            x-text="`约 ${estimateTokens(String(getFieldValue(activeItem) || ''))} tokens`"
                           ></span>
                         </div>
                       </div>
@@ -666,11 +541,11 @@
                         <input
                           type="checkbox"
                           class="rounded"
-                          :checked="Boolean(getByPath(activeItem.value_path))"
-                          @change="setByPath(activeItem.value_path, $event.target.checked)"
+                          :checked="Boolean(getFieldValue(activeItem))"
+                          @change="setFieldValue(activeItem, $event.target.checked)"
                         />
                         <span
-                          x-text="Boolean(getByPath(activeItem.value_path)) ? '当前为启用状态' : '当前为关闭状态'"
+                          x-text="Boolean(getFieldValue(activeItem)) ? '当前为启用状态' : '当前为关闭状态'"
                         ></span>
                       </label>
                     </template>
@@ -683,8 +558,8 @@
                           type="number"
                           step="0.01"
                           class="form-input"
-                          :value="getByPath(activeItem.value_path) ?? 0"
-                          @input="setByPath(activeItem.value_path, Number($event.target.value))"
+                          :value="getFieldValue(activeItem) ?? 0"
+                          @input="setFieldValue(activeItem, Number($event.target.value))"
                         />
                       </div>
                     </template>
@@ -696,8 +571,8 @@
                         <input
                           type="text"
                           class="form-input"
-                          :value="getByPath(activeItem.value_path) || ''"
-                          @input="setByPath(activeItem.value_path, $event.target.value)"
+                          :value="getFieldValue(activeItem) || ''"
+                          @input="setFieldValue(activeItem, $event.target.value)"
                         />
                       </div>
                     </template>
@@ -709,14 +584,14 @@
                         <input
                           type="text"
                           class="form-input"
-                          :value="getByPath(activeItem.value_path) || ''"
-                          @input="setByPath(activeItem.value_path, $event.target.value)"
+                          :value="getFieldValue(activeItem) || ''"
+                          @input="setFieldValue(activeItem, $event.target.value)"
                         />
                       </div>
                     </template>
 
                     <template
-                      x-if="activeItem?.editor?.kind === 'raw-json' || !['prompt-item', 'sortable-string-list', 'string-list', 'key-value-list', 'textarea', 'boolean', 'number', 'select', 'text'].includes(activeItem?.editor?.kind)"
+                      x-if="activeItem?.editor?.kind === 'raw-json' || !['sortable-string-list', 'string-list', 'key-value-list', 'textarea', 'boolean', 'number', 'select', 'text'].includes(activeItem?.editor?.kind)"
                     >
                       <div
                         class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-3"
@@ -726,7 +601,7 @@
                         </div>
                         <pre
                           class="text-xs font-mono whitespace-pre-wrap break-words rounded-xl border border-[var(--border-light)] bg-black/20 p-4 text-[var(--text-sub)] max-h-[18rem] overflow-auto custom-scrollbar"
-                          x-text="formatValue(getByPath(activeItem?.value_path))"
+                          x-text="formatValue(getFieldValue(activeItem))"
                         ></pre>
                       </div>
                     </template>
@@ -836,77 +711,6 @@
               class="text-xs text-[var(--text-main)]"
               x-text="draftState.restored ? '已恢复本地草稿' : (draftState.savedAt ? '已自动保存草稿' : '暂无本地草稿')"
             ></div>
-            <div class="text-xs text-[var(--text-dim)]">未知字段编辑</div>
-            <div class="text-xs text-[var(--text-main)]">
-              高级原始编辑区仅用于未知字段，不提供整份预设的原始 JSON 入口。
-            </div>
-          </div>
-
-          <div
-            class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
-          >
-            <div class="text-sm font-bold text-[var(--text-main)]">
-              未知字段检查器
-            </div>
-            <template x-if="unknownFieldList.length === 0">
-              <div class="text-xs text-[var(--text-dim)]">
-                未检测到未结构化字段。
-              </div>
-            </template>
-            <template x-if="unknownFieldList.length > 0">
-              <div class="space-y-2">
-                <div class="text-xs text-[var(--text-dim)]">
-                  这些字段会在保存时保留：
-                </div>
-                <template x-for="field in unknownFieldList" :key="field">
-                  <div
-                    class="text-xs font-mono rounded border border-[var(--border-light)] bg-[var(--bg-body)] px-2 py-1 text-[var(--text-main)]"
-                    x-text="field"
-                  ></div>
-                </template>
-              </div>
-            </template>
-          </div>
-
-          <div
-            class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
-          >
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm font-bold text-[var(--text-main)]">
-                高级原始编辑区
-              </div>
-              <button
-                @click="showRawEditor = !showRawEditor"
-                class="btn-secondary px-3 py-1.5 text-xs rounded"
-              >
-                <span x-text="showRawEditor ? '隐藏' : '展开'"></span>
-              </button>
-            </div>
-            <div class="text-xs text-[var(--text-dim)]">
-              仅用于编辑未知字段的原始 JSON 子集。
-            </div>
-            <div
-              x-show="showRawEditor"
-              x-effect="if (showRawEditor && rawUnknownDraft !== rawUnknownJsonText) rawUnknownDraft = rawUnknownJsonText"
-              class="space-y-3"
-            >
-              <textarea
-                x-model="rawUnknownDraft"
-                class="form-input min-h-[16rem] font-mono text-xs"
-                spellcheck="false"
-              ></textarea>
-              <div class="flex items-center justify-between gap-3">
-                <div class="text-[11px] text-[var(--text-dim)]">
-                  仅会应用当前识别到的未知字段键。
-                </div>
-                <button
-                  @click="applyRawUnknownJson(rawUnknownDraft)"
-                  class="btn-secondary px-3 py-1.5 text-xs rounded"
-                >
-                  应用未知字段 JSON
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </aside>
