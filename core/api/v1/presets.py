@@ -18,7 +18,6 @@ from core.data.ui_store import (
     save_ui_data,
     set_resource_item_categories,
 )
-from core.services.preset_defaults import load_default_preset_content
 from core.services.preset_model import build_preset_detail
 from core.services.preset_model import build_sections, detect_preset_kind, merge_preset_content
 from core.services.preset_storage import (
@@ -1076,29 +1075,6 @@ def delete_preset():
     except Exception as e:
         logger.error(f"Error deleting preset: {e}")
         return jsonify({"success": False, "msg": str(e)}), 500
-
-
-@bp.route('/api/presets/default-preview', methods=['POST'])
-def preset_default_preview():
-    try:
-        data = request.get_json(silent=True) or {}
-        preset_id = str(data.get('preset_id') or '').strip()
-        preset_kind = str(data.get('preset_kind') or '').strip()
-        presets_root = _get_presets_path()
-        file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
-
-        if not file_path:
-            return jsonify({'success': False, 'msg': 'Invalid preset ID'}), 400
-        if not os.path.exists(file_path):
-            return jsonify({'success': False, 'msg': '预设文件不存在'}), 404
-
-        default_content, default_path = load_default_preset_content(preset_kind, os.path.basename(file_path))
-        return jsonify({'success': True, 'default_content': default_content, 'default_path': default_path})
-    except FileNotFoundError as exc:
-        return jsonify({'success': False, 'msg': str(exc)}), 404
-    except Exception as e:
-        logger.error(f"Error loading preset default: {e}")
-        return jsonify({'success': False, 'msg': str(e)}), 500
 
 
 @bp.route('/api/presets/export', methods=['POST'])

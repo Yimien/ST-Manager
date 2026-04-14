@@ -72,12 +72,6 @@
           删除
         </button>
         <button
-          @click="previewRestoreDefault()"
-          class="btn-secondary px-3 py-1.5 text-xs rounded"
-        >
-          恢复默认
-        </button>
-        <button
           @click="createSnapshot()"
           class="btn-secondary px-3 py-1.5 text-xs rounded"
         >
@@ -88,12 +82,6 @@
           class="btn-secondary px-3 py-1.5 text-xs rounded"
         >
           回滚
-        </button>
-        <button
-          @click="openRawEditor()"
-          class="btn-secondary px-3 py-1.5 text-xs rounded"
-        >
-          查看原始 JSON
         </button>
         <button
           @click="openAdvancedExtensions()"
@@ -734,19 +722,12 @@
                         class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-3"
                       >
                         <div class="text-sm text-[var(--text-dim)]">
-                          当前字段适合通过原始 JSON
-                          视图确认结构，必要时可以打开完整原始编辑器。
+                          当前字段适合通过原始 JSON 视图确认结构。
                         </div>
                         <pre
                           class="text-xs font-mono whitespace-pre-wrap break-words rounded-xl border border-[var(--border-light)] bg-black/20 p-4 text-[var(--text-sub)] max-h-[18rem] overflow-auto custom-scrollbar"
                           x-text="formatValue(getByPath(activeItem?.value_path))"
                         ></pre>
-                        <button
-                          @click="openRawEditor()"
-                          class="btn-secondary px-3 py-1.5 text-xs rounded"
-                        >
-                          打开完整原始编辑器
-                        </button>
                       </div>
                     </template>
                   </div>
@@ -855,11 +836,10 @@
               class="text-xs text-[var(--text-main)]"
               x-text="draftState.restored ? '已恢复本地草稿' : (draftState.savedAt ? '已自动保存草稿' : '暂无本地草稿')"
             ></div>
-            <div class="text-xs text-[var(--text-dim)]">默认恢复来源</div>
-            <div
-              class="text-xs break-all text-[var(--text-main)]"
-              x-text="restorePreview?.default_path || '尚未读取默认模板' "
-            ></div>
+            <div class="text-xs text-[var(--text-dim)]">未知字段编辑</div>
+            <div class="text-xs text-[var(--text-main)]">
+              高级原始编辑区仅用于未知字段，不提供整份预设的原始 JSON 入口。
+            </div>
           </div>
 
           <div
@@ -903,19 +883,29 @@
               </button>
             </div>
             <div class="text-xs text-[var(--text-dim)]">
-              用于快速预览当前原始 JSON，并可跳转到完整原始编辑器。
+              仅用于编辑未知字段的原始 JSON 子集。
             </div>
-            <div x-show="showRawEditor" class="space-y-3">
-              <pre
-                class="text-xs font-mono whitespace-pre-wrap break-words rounded-xl border border-[var(--border-light)] bg-black/20 p-4 text-[var(--text-sub)] max-h-[18rem] overflow-auto custom-scrollbar"
-                x-text="rawJsonText"
-              ></pre>
-              <button
-                @click="openRawEditor()"
-                class="btn-secondary px-3 py-1.5 text-xs rounded"
-              >
-                打开原始 JSON 编辑器
-              </button>
+            <div
+              x-show="showRawEditor"
+              x-effect="if (showRawEditor && rawUnknownDraft !== rawUnknownJsonText) rawUnknownDraft = rawUnknownJsonText"
+              class="space-y-3"
+            >
+              <textarea
+                x-model="rawUnknownDraft"
+                class="form-input min-h-[16rem] font-mono text-xs"
+                spellcheck="false"
+              ></textarea>
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-[11px] text-[var(--text-dim)]">
+                  仅会应用当前识别到的未知字段键。
+                </div>
+                <button
+                  @click="applyRawUnknownJson(rawUnknownDraft)"
+                  class="btn-secondary px-3 py-1.5 text-xs rounded"
+                >
+                  应用未知字段 JSON
+                </button>
+              </div>
             </div>
           </div>
         </div>

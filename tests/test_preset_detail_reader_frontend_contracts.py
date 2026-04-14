@@ -1,3 +1,5 @@
+import re
+
 from pathlib import Path
 
 
@@ -72,4 +74,24 @@ def test_preset_detail_reader_flow_keeps_full_content_in_right_panel_only():
     assert 'line-clamp-3' in source or 'line-clamp-4' in source
     assert 'Summary' not in source
     assert 'Prompt Detail' in source
-    assert 'x-text="activeItem.payload?.content || \'\'"' in source
+
+
+def test_preset_detail_reader_template_guards_active_item_accesses():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'x-text="activeItem?.payload?.content || \'\'"' in source
+    assert 'x-text="activeItem?.payload?.identifier || \'-\' "' in source
+    assert 'x-text="activeItem?.payload?.role || \'-\' "' in source
+    assert 'x-if="activeItem?.type === \'prompt\'"' in source
+    assert 'x-if="activeItem?.type === \'prompt_order\'"' in source
+    assert 'x-if="activeItem?.type === \'extension\'"' in source
+    assert 'x-if="activeItem?.type === \'field\'"' in source
+    assert 'x-if="activeItem?.type === \'structured\'"' in source
+    assert "x-if=\"activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'\"" in source
+
+
+def test_preset_detail_reader_template_removes_invalid_raw_json_and_restore_default_actions():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert not re.search(r'<button\s+@click="openRawViewer\(\)"[\s\S]*?>[\s\S]*?查看原始 JSON[\s\S]*?</button>', source)
+    assert not re.search(r'<button\s+@click="previewRestoreDefault\(\)"[\s\S]*?>[\s\S]*?恢复默认[\s\S]*?</button>', source)

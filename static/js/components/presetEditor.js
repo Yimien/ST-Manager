@@ -7,7 +7,6 @@ import { createAutoSaver } from "../utils/autoSave.js";
 import { createSnapshot as apiCreateSnapshot } from "../api/system.js";
 import {
   getPresetDetail,
-  getPresetDefaultPreview,
   savePreset,
   savePresetExtensions as apiSavePresetExtensions,
 } from "../api/presets.js";
@@ -88,13 +87,13 @@ export default function presetEditor() {
     showMobileSidebar: false,
     showRightPanel: true,
     showRawEditor: false,
+    rawUnknownDraft: "",
     removedUnknownFields: [],
     dirtyPaths: {},
     editingPresetFile: null,
     editingData: null,
     baseDataJson: "",
     draftState: { savedAt: "", restored: false },
-    restorePreview: null,
     leftNavOpen: true,
     rightPanelOpen: true,
     sectionLabels: SECTION_LABELS,
@@ -138,7 +137,6 @@ export default function presetEditor() {
       this.$watch("showPresetEditor", (visible) => {
         if (!visible) {
           autoSaver.stop();
-          this.restorePreview = null;
           this.hasConflict = false;
           this.conflictRevision = "";
           clearActiveRuntimeContext("preset");
@@ -617,11 +615,7 @@ export default function presetEditor() {
       );
     },
 
-    async openPresetEditor({
-      presetId,
-      activeNav = "basic",
-      restoreDefault = false,
-    } = {}) {
+    async openPresetEditor({ presetId, activeNav = "basic" } = {}) {
       if (!presetId) return;
       this.isLoading = true;
       try {
@@ -642,6 +636,7 @@ export default function presetEditor() {
         this.showMobileSidebar = false;
         this.showRightPanel = true;
         this.showRawEditor = false;
+        this.rawUnknownDraft = "";
         this.removedUnknownFields = [];
         this.dirtyPaths = {};
         this.selectGroup("all");
@@ -649,7 +644,6 @@ export default function presetEditor() {
         this.leftNavOpen = this.$store.global.deviceType !== "mobile";
         this.rightPanelOpen = this.$store.global.deviceType !== "mobile";
         this.draftState = { savedAt: "", restored: false };
-        this.restorePreview = null;
         this.hasConflict = false;
         this.conflictRevision = "";
 
@@ -672,9 +666,6 @@ export default function presetEditor() {
               this.persistLocalDraft();
             },
           );
-          if (restoreDefault) {
-            this.previewRestoreDefault();
-          }
         });
       } catch (error) {
         console.error(error);
@@ -859,41 +850,6 @@ export default function presetEditor() {
       }
     },
 
-    async previewRestoreDefault() {
-      if (!this.editingPresetFile?.capabilities?.can_restore_default) {
-        this.$store.global.showToast("当前预设不支持恢复默认", "error");
-        return;
-      }
-      try {
-        const res = await getPresetDefaultPreview({
-          preset_id: this.editingPresetFile.id,
-          preset_kind: this.editingPresetFile.preset_kind,
-        });
-        if (!res.success) {
-          this.$store.global.showToast(res.msg || "默认模板不存在", "error");
-          return;
-        }
-        this.restorePreview = res;
-        if (
-          !confirm(
-            `已找到默认模板：${res.default_path}\n是否载入到当前编辑器？`,
-          )
-        ) {
-          return;
-        }
-        this.editingData = deepClone(res.default_content || {});
-        this.removedUnknownFields = [];
-        this.dirtyPaths = {};
-        this.markAllReaderItemsDirty();
-        this.$store.global.showToast(
-          "已载入默认模板，点击保存后才会覆盖磁盘文件",
-        );
-      } catch (error) {
-        console.error(error);
-        this.$store.global.showToast("恢复默认失败", "error");
-      }
-    },
-
     openAdvancedExtensions() {
       if (!this.editingData) return;
       const editingData = {
@@ -972,12 +928,6 @@ export default function presetEditor() {
       );
     },
 
-    openRawEditor() {
-      this.showRawEditor = true;
-      this.showRightPanel = true;
-      this.activeNav = "raw";
-    },
-
     get rawUnknownJsonText() {
       if (!this.unknownFieldList.length || !this.editingData) return "{}";
       const payload = Object.create(null);
@@ -1009,6 +959,7 @@ export default function presetEditor() {
         this.removedUnknownFields = this.unknownFieldList.filter(
           (key) => !Object.prototype.hasOwnProperty.call(parsed, key),
         );
+        this.rawUnknownDraft = this.rawUnknownJsonText;
         this.showRawEditor = false;
         this.$store.global.showToast("高级原始编辑区已应用");
       } catch (error) {

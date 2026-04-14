@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -26,7 +27,6 @@ def run_preset_editor_runtime_check(script_body):
         const createAutoSaver = () => ({{ stop() {{}}, initBaseline() {{}}, start() {{}} }});
         const apiCreateSnapshot = async () => ({{ success: true }});
         const getPresetDetail = async () => ({{ success: true, preset: {{}} }});
-        const getPresetDefaultPreview = async () => ({{ success: true }});
         const savePreset = async () => ({{ success: true }});
         const apiSavePresetExtensions = async () => ({{ success: true }});
         const estimateTokens = () => 0;
@@ -80,7 +80,25 @@ def test_preset_editor_js_exposes_complex_editor_handlers():
     assert 'updateStringListItem(path, index, value) {' in source
     assert 'removeStringListItem(path, index) {' in source
     assert 'updateBiasEntry(index, key, value) {' in source
-    assert 'openRawEditor() {' in source
+    assert 'openAdvancedExtensions() {' in source
+    assert 'deletePreset() {' in source
+    assert 'previewRestoreDefault() {' not in source
+
+
+def test_preset_editor_template_removes_top_level_raw_json_and_restore_default_actions_but_keeps_unknown_field_raw_editor():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+    js_source = read_project_file('static/js/components/presetEditor.js')
+
+    assert not re.search(r'<button\s+@click="openRawEditor\(\)"[\s\S]*?>[\s\S]*?查看原始 JSON[\s\S]*?</button>', source)
+    assert not re.search(r'<button\s+@click="previewRestoreDefault\(\)"[\s\S]*?>[\s\S]*?恢复默认[\s\S]*?</button>', source)
+    assert 'openRawEditor() {' not in js_source
+    assert '高级原始编辑区' in source
+    assert '@click="showRawEditor = !showRawEditor"' in source
+    assert 'x-show="showRawEditor"' in source
+    assert 'x-model="rawUnknownDraft"' in source
+    assert '@click="applyRawUnknownJson(rawUnknownDraft)"' in source
+    assert 'rawUnknownJsonText' in js_source
+    assert 'applyRawUnknownJson(text) {' in js_source
 
 
 def test_preset_editor_js_collection_handlers_follow_task_5_contracts():

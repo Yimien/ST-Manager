@@ -59,24 +59,10 @@
           导出
         </button>
         <button
-          @click="openRawViewer()"
-          class="btn-secondary py-1.5 px-3 text-xs"
-        >
-          查看原始 JSON
-        </button>
-        <button
           @click="openAdvancedExtensions()"
           class="btn-secondary py-1.5 px-3 text-xs"
         >
           编辑扩展
-        </button>
-        <button
-          @click="previewRestoreDefault()"
-          class="btn-secondary py-1.5 px-3 text-xs"
-          :disabled="!activePresetDetail?.capabilities?.can_restore_default"
-          :class="!activePresetDetail?.capabilities?.can_restore_default ? 'opacity-50 cursor-not-allowed' : ''"
-        >
-          恢复默认
         </button>
         <button
           @click="openFullscreenEditor()"
@@ -560,7 +546,7 @@
 
               <template x-if="activeItem">
                 <div class="space-y-4">
-                  <template x-if="activeItem.type === 'prompt'">
+                  <template x-if="activeItem?.type === 'prompt'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
                     >
@@ -576,7 +562,7 @@
                           <div class="text-[var(--text-dim)]">identifier</div>
                           <div
                             class="mt-1 font-mono text-[var(--text-main)]"
-                            x-text="activeItem.payload?.identifier || '-' "
+                            x-text="activeItem?.payload?.identifier || '-' "
                           ></div>
                         </div>
                         <div
@@ -585,7 +571,7 @@
                           <div class="text-[var(--text-dim)]">role</div>
                           <div
                             class="mt-1 font-mono text-[var(--text-main)]"
-                            x-text="activeItem.payload?.role || '-' "
+                            x-text="activeItem?.payload?.role || '-' "
                           ></div>
                         </div>
                       </div>
@@ -599,7 +585,7 @@
                             content
                           </div>
                           <button
-                            @click="copyText(activeItem.payload?.content || '', 'Prompt 内容')"
+                            @click="copyText(activeItem?.payload?.content || '', 'Prompt 内容')"
                             class="btn-secondary px-2 py-1 text-xs"
                           >
                             复制
@@ -607,13 +593,13 @@
                         </div>
                         <pre
                           class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono"
-                          x-text="activeItem.payload?.content || ''"
+                          x-text="activeItem?.payload?.content || ''"
                         ></pre>
                       </div>
                     </div>
                   </template>
 
-                  <template x-if="activeItem.type === 'prompt_order'">
+                  <template x-if="activeItem?.type === 'prompt_order'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
                     >
@@ -626,19 +612,19 @@
                         当前 prompt 在顺序中的位置为
                         <span
                           class="font-mono"
-                          x-text="(Number(activeItem.payload?.index) || 0) + 1"
+                          x-text="(Number(activeItem?.payload?.index) || 0) + 1"
                         ></span>
                         ，identifier 为
                         <span
                           class="font-mono"
-                          x-text="activeItem.payload?.identifier || '-' "
+                          x-text="activeItem?.payload?.identifier || '-' "
                         ></span>
                         。
                       </div>
                     </div>
                   </template>
 
-                  <template x-if="activeItem.type === 'extension'">
+                  <template x-if="activeItem?.type === 'extension'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
                     >
@@ -650,13 +636,13 @@
                       <div class="text-sm text-[var(--text-main)]">
                         扩展键名：<span
                           class="font-mono"
-                          x-text="activeItem.payload?.key || activeItem.title"
+                          x-text="activeItem?.payload?.key || activeItem?.title"
                         ></span>
                       </div>
                     </div>
                   </template>
 
-                  <template x-if="activeItem.type === 'field'">
+                  <template x-if="activeItem?.type === 'field'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
                     >
@@ -668,13 +654,13 @@
                       <div class="text-sm text-[var(--text-main)]">
                         字段键名：<span
                           class="font-mono"
-                          x-text="activeItem.payload?.key || activeItem.title"
+                          x-text="activeItem?.payload?.key || activeItem?.title"
                         ></span>
                       </div>
                     </div>
                   </template>
 
-                  <template x-if="activeItem.type === 'structured'">
+                  <template x-if="activeItem?.type === 'structured'">
                     <div
                       class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
                     >
@@ -690,7 +676,7 @@
                   </template>
 
                   <template
-                    x-if="activeItem.group === 'unknown_fields' || activeItem.type === 'unknown_field'"
+                    x-if="activeItem?.group === 'unknown_fields' || activeItem?.type === 'unknown_field'"
                   >
                     <div
                       class="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100"

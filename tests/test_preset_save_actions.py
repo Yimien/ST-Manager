@@ -307,36 +307,6 @@ def test_preset_delete_requires_revision_and_removes_file(monkeypatch, tmp_path)
     assert preset_file.exists() is False
 
 
-def test_preset_restore_default_returns_preview_payload(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    preset_file = presets_dir / 'textgen.json'
-    _write_json(preset_file, {'name': 'Local Textgen', 'temp': 0.7})
-
-    class _FakeSTClient:
-        def get_presets_dir(self, custom_path=None):
-            default_dir = tmp_path / 'SillyTavern' / 'data' / 'default-user' / 'OpenAI Settings' / 'TextGen'
-            default_dir.mkdir(parents=True, exist_ok=True)
-            _write_json(default_dir / 'textgen.json', {'name': 'Default Textgen', 'temp': 1.0})
-            return str(default_dir.parent)
-
-    _configure(monkeypatch, tmp_path, presets_dir)
-    monkeypatch.setattr('core.services.preset_defaults.STClient', _FakeSTClient)
-
-    client = _make_test_app().test_client()
-    res = client.post(
-        '/api/presets/default-preview',
-        json={
-            'preset_id': 'global::textgen.json',
-            'preset_kind': 'textgen',
-        },
-    )
-
-    assert res.status_code == 200
-    payload = res.get_json()
-    assert payload['success'] is True
-    assert payload['default_content']['name'] == 'Default Textgen'
-
-
 def test_preset_save_overwrite_persists_prompt_structures(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     preset_file = presets_dir / 'openai-chat.json'
