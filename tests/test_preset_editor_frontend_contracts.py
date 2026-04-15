@@ -33,6 +33,21 @@ def run_preset_editor_runtime_check(script_body):
         const formatDate = (value) => value;
         const clearActiveRuntimeContext = () => {{}};
         const setActiveRuntimeContext = () => {{}};
+        const PROMPT_MARKER_VISUALS = {{
+          scenario: {{ key: 'scenario', label: '场景', paths: ['M4.75 17.5 9.5 12.75 12.25 15.5 16.75 11 19.25 13.5'] }},
+          fallback: {{ key: 'marker', label: '预留字段', paths: ['M12 5v14'] }},
+        }};
+        const getPromptMarkerVisual = (identifier) => PROMPT_MARKER_VISUALS[String(identifier || '').trim()] || PROMPT_MARKER_VISUALS.fallback;
+        const resolvePromptMarkerVisual = getPromptMarkerVisual;
+        const buildPromptMarkerIcon = (visual, options = {{}}) => {{
+          const strokeWidth = options.strokeWidth || '1.5';
+          const svgAttributes = options.svgAttributes || 'aria-hidden="true" fill="none"';
+          const pathAttributes = options.pathAttributes || 'stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" fill="none"';
+          const paths = Array.isArray(visual?.paths)
+            ? visual.paths.map((path) => '<path d="' + path + '" ' + pathAttributes + ' stroke-width="' + strokeWidth + '"></path>').join('')
+            : '';
+          return '<svg viewBox="0 0 24 24" ' + svgAttributes + '>' + paths + '</svg>';
+        }};
         `;
 
         const module = await import(
@@ -140,6 +155,74 @@ def test_preset_editor_js_exposes_localized_prompt_option_metadata():
     assert 'value: 1, label: "聊天中"' in source
 
 
+def test_preset_editor_js_uses_explicit_dirty_state_and_cached_workspace_collections():
+    source = read_project_file('static/js/components/presetEditor.js')
+
+    assert 'hasUnsavedChanges:' in source
+    assert 'promptItemsCache:' in source
+    assert 'orderedPromptItemsCache:' in source
+    assert 'filteredItemsCache:' in source
+    assert 'genericWorkspaceItemsCache:' in source
+    assert 'activePromptItemCache:' in source
+    assert 'activeItemCache:' in source
+    assert 'refreshEditorCollections() {' in source
+    assert 'syncActiveEditorSelections() {' in source
+    assert 'markDirty(path = null) {' in source
+    assert 'markClean() {' in source
+    assert 'getPromptMarkerVisual(prompt) {' in source
+    assert 'getPromptMarkerIcon(prompt) {' in source
+    assert 'return JSON.stringify(this.editingData) !== this.baseDataJson;' not in source
+
+
+def test_preset_editor_js_uses_shared_prompt_marker_visual_source():
+    editor_source = read_project_file('static/js/components/presetEditor.js')
+    reader_source = read_project_file('static/js/components/presetDetailReader.js')
+    util_source = read_project_file('static/js/utils/promptMarkerVisuals.js')
+
+    assert 'from "../utils/promptMarkerVisuals.js"' in editor_source
+    assert 'from "../utils/promptMarkerVisuals.js"' in reader_source
+    assert 'const PROMPT_MARKER_VISUALS = {' not in editor_source
+    assert 'const PROMPT_MARKER_VISUALS = {' not in reader_source
+    assert 'export const PROMPT_MARKER_VISUALS = {' in util_source
+    assert 'export function getPromptMarkerVisual' in util_source
+    assert 'export function buildPromptMarkerIcon' in util_source
+    assert 'return buildPromptMarkerIcon(visual);' in editor_source
+    assert 'return buildPromptMarkerIcon(visual);' in reader_source
+    assert 'buildPromptMarkerIcon(visual, {' not in editor_source
+
+
+def test_prompt_marker_visual_util_runtime_exports_shared_visuals_and_icon_builder():
+    source_path = (PROJECT_ROOT / 'static/js/utils/promptMarkerVisuals.js').resolve()
+    node_script = textwrap.dedent(
+        f"""
+        const module = await import({json.dumps(source_path.as_uri())});
+
+        const scenario = module.getPromptMarkerVisual('scenario');
+        if (scenario.key !== 'scenario') {{
+          throw new Error(`expected scenario visual, got ${{JSON.stringify(scenario)}}`);
+        }}
+
+        const fallback = module.getPromptMarkerVisual('missing');
+        if (fallback.key !== 'marker') {{
+          throw new Error(`expected fallback visual, got ${{JSON.stringify(fallback)}}`);
+        }}
+
+        const svg = module.buildPromptMarkerIcon(scenario);
+        if (!svg.includes('<svg') || !svg.includes('aria-hidden="true"') || !svg.includes('stroke-width="1.5"')) {{
+          throw new Error(`expected shared icon builder output, got ${{svg}}`);
+        }}
+        """
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_preset_editor_template_removes_prompt_and_unknown_raw_editor_sections():
     source = read_project_file('templates/modals/detail_preset_fullscreen.html')
     js_source = read_project_file('static/js/components/presetEditor.js')
@@ -208,6 +291,433 @@ def test_preset_editor_runtime_exposes_localized_prompt_option_helpers_and_filte
         editor.updatePromptTriggers(['swipe', 'unknown', 'quiet']);
         if (JSON.stringify(editor.editingData.prompts[0].injection_trigger) !== JSON.stringify(['swipe', 'quiet'])) {
           throw new Error(`expected unknown trigger values to be ignored, got ${JSON.stringify(editor.editingData.prompts[0].injection_trigger)}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_normalizes_injection_depth_to_reader_safe_values():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingData = {
+          prompts: [
+            { identifier: 'main', role: 'system', injection_position: 1, injection_depth: 4 },
+          ],
+        };
+        editor.activePromptId = 'main';
+
+        editor.updatePromptField('injection_depth', '-1');
+        if (editor.editingData.prompts[0].injection_depth !== 4) {
+          throw new Error(`expected negative depth to fall back to 4, got ${JSON.stringify(editor.editingData.prompts[0])}`);
+        }
+
+        editor.updatePromptField('injection_depth', '2.5');
+        if (editor.editingData.prompts[0].injection_depth !== 4) {
+          throw new Error(`expected fractional depth to fall back to 4, got ${JSON.stringify(editor.editingData.prompts[0])}`);
+        }
+
+        editor.updatePromptField('injection_depth', '0');
+        if (editor.editingData.prompts[0].injection_depth !== 0) {
+          throw new Error(`expected zero depth to stay valid, got ${JSON.stringify(editor.editingData.prompts[0])}`);
+        }
+
+        const positionLabel = editor.getPromptPositionLabel(editor.activePromptItem);
+        if (positionLabel !== '聊天中 @ 0') {
+          throw new Error(`expected normalized editor position label, got ${JSON.stringify(positionLabel)}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_tracks_dirty_state_and_refreshes_cached_prompt_collections():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          id: 'preset-1',
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'scalar_fields', label: 'Fields' },
+            ],
+            items: [
+              {
+                id: 'field:temperature',
+                group: 'scalar_fields',
+                title: 'Temperature',
+                summary: 'temp',
+                source_key: 'temperature',
+                editor: { kind: 'number' },
+              },
+            ],
+          },
+        };
+        editor.editingData = {
+          temperature: 0.7,
+          prompts: [
+            { identifier: 'main', name: 'Main Prompt', role: 'system', content: 'hello world' },
+            { identifier: 'scenario', name: 'Scenario', role: 'system', marker: true },
+          ],
+          prompt_order: ['main', 'scenario'],
+        };
+        editor.activeWorkspace = 'prompts';
+        editor.activeGroup = 'all';
+        editor.activePromptId = 'main';
+        editor.markClean();
+        editor.refreshEditorCollections();
+
+        if (editor.isDirty) {
+          throw new Error('expected clean editor after markClean');
+        }
+        if (JSON.stringify(editor.orderedPromptItems.map((item) => item.__identifier)) !== JSON.stringify(['main', 'scenario'])) {
+          throw new Error(`expected cached prompt order, got ${JSON.stringify(editor.orderedPromptItems.map((item) => item.__identifier))}`);
+        }
+
+        editor.updatePromptField('name', 'Renamed Prompt');
+        if (!editor.isDirty) {
+          throw new Error('expected prompt rename to mark editor dirty');
+        }
+        if (editor.activePromptItem?.name !== 'Renamed Prompt') {
+          throw new Error(`expected active prompt cache to refresh after rename, got ${JSON.stringify(editor.activePromptItem)}`);
+        }
+        if (!editor.getPromptMarkerIcon(editor.orderedPromptItems[1]).includes('<svg')) {
+          throw new Error('expected editor marker icon helper to output svg');
+        }
+
+        editor.markClean();
+        editor.activeWorkspace = 'scalar_fields';
+        editor.activeGroup = 'all';
+        editor.searchTerm = 'temp';
+        editor.refreshEditorCollections();
+        if (editor.filteredItems.length !== 1 || editor.activeItem?.id !== 'field:temperature') {
+          throw new Error(`expected cached generic filter results, got ${JSON.stringify({ filtered: editor.filteredItems.map((item) => item.id), active: editor.activeItem?.id })}`);
+        }
+
+        editor.setByPath('temperature', 1.1);
+        if (!editor.isDirty) {
+          throw new Error('expected setByPath to mark editor dirty');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_prompt_content_edit_only_updates_dirty_state_and_active_prompt_cache():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          id: 'preset-1',
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'scalar_fields', label: 'Fields' },
+            ],
+            items: [
+              {
+                id: 'field:temperature',
+                group: 'scalar_fields',
+                title: 'Temperature',
+                summary: 'temp',
+                source_key: 'temperature',
+                editor: { kind: 'number' },
+              },
+            ],
+          },
+        };
+        editor.editingData = {
+          temperature: 0.7,
+          prompts: [
+            { identifier: 'main', name: 'Main Prompt', role: 'system', content: 'hello world' },
+            { identifier: 'marker', name: 'Marker', role: 'system', marker: true },
+          ],
+          prompt_order: ['main', 'marker'],
+        };
+        editor.activeWorkspace = 'scalar_fields';
+        editor.activeGroup = 'all';
+        editor.searchTerm = 'temp';
+        editor.refreshEditorCollections();
+        const genericCacheBefore = editor.filteredItems;
+
+        editor.activeWorkspace = 'prompts';
+        editor.activePromptId = 'main';
+        editor.syncActiveEditorSelections();
+        editor.markClean();
+        const genericWorkspaceCacheBefore = editor.genericWorkspaceItems;
+
+        const originalRefreshEditorCollections = editor.refreshEditorCollections.bind(editor);
+        let refreshCalls = 0;
+        editor.refreshEditorCollections = (...args) => {
+          refreshCalls += 1;
+          return originalRefreshEditorCollections(...args);
+        };
+
+        editor.updatePromptField('content', 'updated body');
+
+        if (!editor.isDirty) {
+          throw new Error('expected prompt content edit to mark editor dirty');
+        }
+        if (refreshCalls !== 0) {
+          throw new Error(`expected prompt content edit to avoid full collection refresh, got ${refreshCalls}`);
+        }
+        if (editor.activePromptItem?.content !== 'updated body') {
+          throw new Error(`expected active prompt cache to update in place, got ${JSON.stringify(editor.activePromptItem)}`);
+        }
+        if (editor.genericWorkspaceItems !== genericWorkspaceCacheBefore) {
+          throw new Error('expected prompt content edit to leave generic workspace cache untouched');
+        }
+        if (editor.editingData.prompts[0].content !== 'updated body') {
+          throw new Error(`expected prompt content write to persist, got ${JSON.stringify(editor.editingData.prompts[0])}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_large_editor_external_write_marks_dirty_and_refreshes_caches():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = handler;
+          },
+          removeEventListener(type, handler) {
+            if (listeners[type] === handler) {
+              delete listeners[type];
+            }
+          },
+        };
+
+        editor.editingData = {
+          stop_sequence: ['alpha'],
+        };
+        editor.editingPresetFile = {
+          reader_view: {
+            family: 'generic',
+            groups: [{ id: 'sequences', title: 'Sequences' }],
+            items: [
+              {
+                id: 'field:stop_sequence',
+                group: 'sequences',
+                title: 'Stop Sequence',
+                value_path: 'stop_sequence',
+                source_key: 'stop_sequence',
+                editable: true,
+                editor: { kind: 'string-list' },
+              },
+            ],
+          },
+        };
+        editor.markClean();
+
+        editor.openLargeEditorForItem({ key: 'stop_sequence', label: 'Stop Sequence', value_path: 'stop_sequence' });
+        if (events.length !== 1 || events[0].type !== 'open-large-editor') {
+          throw new Error(`expected large editor open event, got ${JSON.stringify(events.map((event) => event.type))}`);
+        }
+
+        events[0].detail.editingData.stop_sequence.push('beta');
+        if (editor.isDirty) {
+          throw new Error('expected dirty state to stay clean before external save callback');
+        }
+
+        if (!listeners['large-editor-save']) {
+          throw new Error('expected large editor save listener to be registered');
+        }
+        listeners['large-editor-save']();
+
+        if (!editor.isDirty) {
+          throw new Error('expected external large editor save to mark editor dirty');
+        }
+        if (JSON.stringify(editor.getByPath('stop_sequence')) !== JSON.stringify(['alpha', 'beta'])) {
+          throw new Error(`expected external large editor write to persist, got ${JSON.stringify(editor.getByPath('stop_sequence'))}`);
+        }
+        if (!editor.isItemDirty(editor.filteredItems[0])) {
+          throw new Error('expected changed-item tracking to refresh after large editor save');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_advanced_extensions_external_write_marks_dirty_after_save():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = handler;
+          },
+          removeEventListener(type, handler) {
+            if (listeners[type] === handler) {
+              delete listeners[type];
+            }
+          },
+        };
+        editor.$store = { global: { showToast() {} } };
+
+        editor.editingData = {
+          extensions: {
+            regex_scripts: [{ script: 'alpha' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+        editor.editingPresetFile = { id: 'preset-1' };
+        editor.markClean();
+
+        editor.openAdvancedExtensions();
+        if (events.length !== 1 || events[0].type !== 'open-advanced-editor') {
+          throw new Error(`expected advanced editor open event, got ${JSON.stringify(events.map((event) => event.type))}`);
+        }
+        if (events[0].detail.extensions === editor.editingData.extensions) {
+          throw new Error('expected advanced editor payload to be detached from live extensions object');
+        }
+
+        events[0].detail.extensions.regex_scripts.push({ script: 'beta' });
+        if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'alpha' }])) {
+          throw new Error(`expected live extensions state to stay unchanged before save, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+        }
+
+        if (!listeners['advanced-editor-save']) {
+          throw new Error('expected advanced editor save listener to be registered');
+        }
+        await listeners['advanced-editor-save']();
+
+        if (!editor.isDirty) {
+          throw new Error('expected advanced editor save to mark editor dirty');
+        }
+        if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'alpha' }, { script: 'beta' }])) {
+          throw new Error(`expected advanced editor save to apply detached extensions payload, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_reopening_large_editor_replaces_stale_save_listener():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+        };
+
+        editor.editingData = {
+          stop_sequence: ['base'],
+        };
+        editor.markClean();
+
+        editor.openLargeEditorForItem({ key: 'stop_sequence', label: 'Stop Sequence', value_path: 'stop_sequence' });
+        const firstPayload = events[0].detail.editingData;
+        firstPayload.stop_sequence.push('stale');
+
+        editor.openLargeEditorForItem({ key: 'stop_sequence', label: 'Stop Sequence', value_path: 'stop_sequence' });
+        const secondPayload = events[1].detail.editingData;
+        secondPayload.stop_sequence.push('fresh');
+
+        if ((listeners['large-editor-save'] || []).length !== 1) {
+          throw new Error(`expected stale large editor listener cleanup, got ${(listeners['large-editor-save'] || []).length}`);
+        }
+        listeners['large-editor-save'][0]();
+
+        if (JSON.stringify(editor.getByPath('stop_sequence')) !== JSON.stringify(['base', 'fresh'])) {
+          throw new Error(`expected reopened large editor to ignore stale snapshot, got ${JSON.stringify(editor.getByPath('stop_sequence'))}`);
+        }
+        if (JSON.stringify(firstPayload.stop_sequence) !== JSON.stringify(['base', 'stale'])) {
+          throw new Error(`expected stale payload to remain detached, got ${JSON.stringify(firstPayload.stop_sequence)}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_reopening_advanced_editor_replaces_stale_save_listener():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+        };
+        editor.$store = { global: { showToast() {} } };
+
+        editor.editingData = {
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+        editor.editingPresetFile = { id: 'preset-1' };
+        editor.markClean();
+
+        editor.openAdvancedExtensions();
+        const firstPayload = events[0].detail;
+        firstPayload.extensions.regex_scripts.push({ script: 'stale' });
+
+        editor.openAdvancedExtensions();
+        const secondPayload = events[1].detail;
+        secondPayload.extensions.regex_scripts.push({ script: 'fresh' });
+
+        if ((listeners['advanced-editor-save'] || []).length !== 1) {
+          throw new Error(`expected stale advanced editor listener cleanup, got ${(listeners['advanced-editor-save'] || []).length}`);
+        }
+        await listeners['advanced-editor-save'][0]();
+
+        if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'fresh' }])) {
+          throw new Error(`expected reopened advanced editor to ignore stale snapshot, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+        }
+        if (JSON.stringify(firstPayload.extensions.regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'stale' }])) {
+          throw new Error(`expected stale advanced payload to remain detached, got ${JSON.stringify(firstPayload.extensions.regex_scripts)}`);
         }
         """
     )
@@ -644,6 +1154,40 @@ def test_preset_editor_template_adds_prompt_helper_copy_and_removes_nested_list_
     assert '填写实际要注入的提示词正文；marker 条目无需内容。' in source
     assert 'p-3 space-y-2 overflow-y-auto custom-scrollbar max-h-[calc(100vh-12rem)] xl:max-h-none' not in source
     assert 'overflow-y-auto custom-scrollbar min-h-[22rem]' not in source
+
+
+def test_preset_editor_template_renders_marker_icons_switches_and_scroll_safe_prompt_columns():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert 'x-html="getPromptMarkerIcon(prompt)"' in source
+    assert 'xl:grid-cols-[22rem_minmax(0,1fr)]' in source
+    for token in ['gap-4', 'h-full', 'min-h-0']:
+        assert token in source
+    for token in ['flex-1', 'min-h-0', 'overflow-y-auto', 'custom-scrollbar', 'p-3', 'space-y-2']:
+        assert token in source
+    assert 'class="peer sr-only"' in source
+    assert 'min-h-9' in source
+    assert 'min-w-9' in source
+    assert 'justify-center' in source
+    assert 'peer-focus-visible:ring-2' in source
+    assert 'peer-focus-visible:ring-[var(--accent-main)]/60' in source
+    assert 'pointer-events-none absolute left-[2px] top-[2px] h-4 w-4 rounded-full transition-transform' in source
+
+
+def test_preset_editor_template_keeps_editor_panels_within_width_bounds():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    for token in ['bg-[var(--bg-panel)]', 'min-h-[22rem]', 'flex', 'flex-col', 'min-w-0', 'overflow-hidden']:
+        assert token in source
+    for token in ['flex-1', 'min-h-0', 'overflow-y-auto', 'custom-scrollbar', 'p-5', 'space-y-5']:
+        assert token in source
+    for token in ['form-textarea', 'min-h-[320px]', 'w-full', 'max-w-full']:
+        assert token in source
+    for token in ['form-textarea', 'min-h-[280px]', 'w-full', 'max-w-full', 'min-w-0', 'custom-scrollbar']:
+        assert token in source
+    assert 'xl:grid-cols-[20rem_minmax(0,1fr)]' in source
+    for token in ['gap-4', 'h-full', 'min-h-0']:
+        assert token in source
 
 
 def test_preset_editor_template_localizes_prompt_sidebar_summary_labels():

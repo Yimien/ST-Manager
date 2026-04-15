@@ -12,6 +12,10 @@ import {
 } from "../api/presets.js";
 import { estimateTokens, formatDate } from "../utils/format.js";
 import {
+  buildPromptMarkerIcon,
+  getPromptMarkerVisual as resolvePromptMarkerVisual,
+} from "../utils/promptMarkerVisuals.js";
+import {
   clearActiveRuntimeContext,
   setActiveRuntimeContext,
 } from "../runtime/runtimeContext.js";
@@ -123,10 +127,28 @@ export default function presetEditor() {
     uiFilter: "all",
     showMobileSidebar: false,
     showRightPanel: true,
+    hasUnsavedChanges: false,
     dirtyPaths: {},
     editingPresetFile: null,
     editingData: null,
     baseDataJson: "",
+    promptItemsCache: [],
+    orderedPromptItemsCache: [],
+    filteredItemsCache: [],
+    genericWorkspaceItemsCache: [],
+    activePromptItemCache: null,
+    activeItemCache: null,
+    cacheEditingDataRef: null,
+    cacheEditorViewRef: null,
+    cacheSearchTerm: "",
+    cacheUiFilter: "all",
+    cacheActiveGroup: "all",
+    cacheActiveWorkspace: "all",
+    cacheActivePromptId: "",
+    cacheActiveItemId: "",
+    cacheActiveGenericItemId: "",
+    pendingLargeEditorSaveHandler: null,
+    pendingAdvancedEditorSaveHandler: null,
     draftState: { savedAt: "", restored: false },
     sectionLabels: SECTION_LABELS,
     promptRoleOptions: PROMPT_ROLE_OPTIONS,
@@ -177,11 +199,13 @@ export default function presetEditor() {
           clearActiveRuntimeContext("preset");
         }
       });
+
+      this.$watch("searchTerm", () => this.refreshEditorCollections());
+      this.$watch("uiFilter", () => this.refreshEditorCollections());
     },
 
     get isDirty() {
-      if (!this.editingData) return false;
-      return JSON.stringify(this.editingData) !== this.baseDataJson;
+      return Boolean(this.editingData && this.hasUnsavedChanges);
     },
 
     get presetTitle() {
@@ -211,18 +235,8 @@ export default function presetEditor() {
     },
 
     get promptItems() {
-      if (!Array.isArray(this.editingData?.prompts)) return [];
-      return this.editingData.prompts
-        .map((prompt, index) => {
-          if (!prompt || typeof prompt !== "object") {
-            return null;
-          }
-          return {
-            ...prompt,
-            __prompt_index: index,
-          };
-        })
-        .filter(Boolean);
+      this.ensureEditorCollections();
+      return this.promptItemsCache;
     },
 
     normalizePromptOrder() {
@@ -285,54 +299,13 @@ export default function presetEditor() {
     },
 
     get orderedPromptItems() {
-      const prompts = this.promptItems.map((prompt, index) => ({
-        ...prompt,
-        __prompt_index: Number(prompt.__prompt_index ?? index),
-        __raw_identifier: String(prompt.identifier || "").trim(),
-        __identifier:
-          String(prompt.identifier || `prompt_${index + 1}`).trim() ||
-          `prompt_${index + 1}`,
-      }));
-      const promptMap = new Map(
-        prompts.map((prompt) => [prompt.__identifier, prompt]),
-      );
-      const orderEntries = this.normalizePromptOrder();
-
-      const ordered = orderEntries
-        .map((entry) => {
-          const prompt = promptMap.get(entry.identifier);
-          if (!prompt) return null;
-          promptMap.delete(entry.identifier);
-          return {
-            ...prompt,
-            __enabled:
-              typeof entry.enabled === "boolean"
-                ? entry.enabled
-                : prompt.enabled !== false,
-            __order_index: entry.order_index,
-            __is_orphan: false,
-          };
-        })
-        .filter(Boolean);
-
-      const orphaned = [...promptMap.values()].map((prompt, index) => ({
-        ...prompt,
-        __enabled: prompt.enabled !== false,
-        __order_index: ordered.length + index,
-        __is_orphan: true,
-      }));
-
-      return [...ordered, ...orphaned];
+      this.ensureEditorCollections();
+      return this.orderedPromptItemsCache;
     },
 
     get activePromptItem() {
-      return (
-        this.orderedPromptItems.find(
-          (prompt) => prompt.__identifier === this.activePromptId,
-        ) ||
-        this.orderedPromptItems[0] ||
-        null
-      );
+      this.ensureEditorCollections();
+      return this.activePromptItemCache;
     },
 
     getPromptRoleValue(prompt) {
@@ -348,6 +321,11 @@ export default function presetEditor() {
       return Number(value) === 1 ? 1 : 0;
     },
 
+    normalizePromptDepth(value) {
+      const depth = Number(value);
+      return Number.isInteger(depth) && depth >= 0 ? depth : 4;
+    },
+
     isChatInjectionPosition(prompt) {
       return this.normalizePromptPosition(prompt?.injection_position) === 1;
     },
@@ -357,74 +335,25 @@ export default function presetEditor() {
         return PROMPT_POSITION_LABELS[0] || "相对";
       }
 
-      const depth = Number(prompt?.injection_depth);
-      const normalizedDepth = Number.isFinite(depth) ? depth : 4;
+      const normalizedDepth = this.normalizePromptDepth(
+        prompt?.injection_depth,
+      );
       return `${PROMPT_POSITION_LABELS[1] || "聊天中"} @ ${normalizedDepth}`;
     },
 
     get genericWorkspaceItems() {
-      if (!this.isPromptWorkspaceEditor) {
-        return this.filteredItems;
-      }
-
-      const workspace = this.activeWorkspace;
-      if (!workspace || workspace === "prompts") {
-        return [];
-      }
-
-      return (this.editorView.items || []).filter(
-        (item) => item.group === workspace,
-      );
+      this.ensureEditorCollections();
+      return this.genericWorkspaceItemsCache;
     },
 
     get filteredItems() {
-      const term = String(this.searchTerm || "")
-        .trim()
-        .toLowerCase();
-      return (this.editorView.items || []).filter((item) => {
-        if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
-          return false;
-        }
-        if (this.uiFilter === "editable" && !item.editable) return false;
-        if (this.uiFilter === "changed" && !this.isItemDirty(item)) {
-          return false;
-        }
-        if (this.uiFilter === "longtext" && item.editor?.kind !== "textarea") {
-          return false;
-        }
-        if (
-          this.uiFilter === "collections" &&
-          !["sortable-string-list", "string-list", "key-value-list"].includes(
-            item.editor?.kind,
-          )
-        ) {
-          return false;
-        }
-        if (!term) return true;
-
-        const haystack = [
-          item.title,
-          item.summary,
-          item.source_key,
-          item.value_path,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(term);
-      });
+      this.ensureEditorCollections();
+      return this.filteredItemsCache;
     },
 
     get activeItem() {
-      const activeItemId =
-        this.isPromptWorkspaceEditor && this.activeWorkspace !== "prompts"
-          ? this.activeGenericItemId || this.activeItemId
-          : this.activeItemId;
-      return (
-        this.filteredItems.find((item) => item.id === activeItemId) ||
-        this.filteredItems[0] ||
-        null
-      );
+      this.ensureEditorCollections();
+      return this.activeItemCache;
     },
 
     get navSections() {
@@ -484,6 +413,7 @@ export default function presetEditor() {
           this.markAllReaderItemsDirty();
           this.draftState.savedAt = payload.saved_at || "";
           this.draftState.restored = true;
+          this.refreshEditorCollections();
           return true;
         }
       } catch (error) {
@@ -505,6 +435,52 @@ export default function presetEditor() {
       );
     },
 
+    markDirty(path = null) {
+      if (path) {
+        this.dirtyPaths[path] = true;
+      }
+      this.hasUnsavedChanges = true;
+      this.refreshEditorCollections();
+    },
+
+    markDirtyWithoutRefresh(path = null) {
+      if (path) {
+        this.dirtyPaths[path] = true;
+      }
+      this.hasUnsavedChanges = true;
+    },
+
+    markClean() {
+      this.baseDataJson = this.editingData
+        ? JSON.stringify(this.editingData)
+        : "";
+      this.hasUnsavedChanges = false;
+      this.dirtyPaths = {};
+      this.refreshEditorCollections();
+    },
+
+    ensureEditorCollections() {
+      const needsRefresh =
+        this.cacheEditingDataRef !== this.editingData ||
+        this.cacheEditorViewRef !== this.editorView ||
+        this.cacheSearchTerm !== this.searchTerm ||
+        this.cacheUiFilter !== this.uiFilter ||
+        this.cacheActiveGroup !== this.activeGroup ||
+        this.cacheActiveWorkspace !== this.activeWorkspace;
+      if (needsRefresh) {
+        this.refreshEditorCollections();
+        return;
+      }
+
+      if (
+        this.cacheActivePromptId !== this.activePromptId ||
+        this.cacheActiveItemId !== this.activeItemId ||
+        this.cacheActiveGenericItemId !== this.activeGenericItemId
+      ) {
+        this.syncActiveEditorSelections();
+      }
+    },
+
     markAllReaderItemsDirty() {
       (this.editorView.items || []).forEach((item) => {
         [item.value_path, item.source_key, item.key, item.id].forEach(
@@ -515,6 +491,202 @@ export default function presetEditor() {
           },
         );
       });
+      this.hasUnsavedChanges = true;
+      this.refreshEditorCollections();
+    },
+
+    refreshEditorCollections() {
+      this.promptItemsCache = Array.isArray(this.editingData?.prompts)
+        ? this.editingData.prompts
+            .map((prompt, index) => {
+              if (!prompt || typeof prompt !== "object") {
+                return null;
+              }
+              return {
+                ...prompt,
+                __prompt_index: index,
+              };
+            })
+            .filter(Boolean)
+        : [];
+
+      const promptEntries = this.promptItemsCache.map((prompt, index) => ({
+        ...prompt,
+        __prompt_index: Number(prompt.__prompt_index ?? index),
+        __raw_identifier: String(prompt.identifier || "").trim(),
+        __identifier:
+          String(prompt.identifier || `prompt_${index + 1}`).trim() ||
+          `prompt_${index + 1}`,
+      }));
+      const promptMap = new Map(
+        promptEntries.map((prompt) => [prompt.__identifier, prompt]),
+      );
+      const ordered = this.normalizePromptOrder()
+        .map((entry) => {
+          const prompt = promptMap.get(entry.identifier);
+          if (!prompt) return null;
+          promptMap.delete(entry.identifier);
+          return {
+            ...prompt,
+            __enabled:
+              typeof entry.enabled === "boolean"
+                ? entry.enabled
+                : prompt.enabled !== false,
+            __order_index: entry.order_index,
+            __is_orphan: false,
+          };
+        })
+        .filter(Boolean);
+      const orphaned = [...promptMap.values()].map((prompt, index) => ({
+        ...prompt,
+        __enabled: prompt.enabled !== false,
+        __order_index: ordered.length + index,
+        __is_orphan: true,
+      }));
+      this.orderedPromptItemsCache = [...ordered, ...orphaned];
+
+      const term = String(this.searchTerm || "")
+        .trim()
+        .toLowerCase();
+      this.filteredItemsCache = (this.editorView.items || []).filter((item) => {
+        if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
+          return false;
+        }
+        if (this.uiFilter === "editable" && !item.editable) return false;
+        if (this.uiFilter === "changed" && !this.isItemDirty(item)) {
+          return false;
+        }
+        if (this.uiFilter === "longtext" && item.editor?.kind !== "textarea") {
+          return false;
+        }
+        if (
+          this.uiFilter === "collections" &&
+          !["sortable-string-list", "string-list", "key-value-list"].includes(
+            item.editor?.kind,
+          )
+        ) {
+          return false;
+        }
+        if (!term) return true;
+
+        const haystack = [
+          item.title,
+          item.summary,
+          item.source_key,
+          item.value_path,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(term);
+      });
+
+      if (!this.isPromptWorkspaceEditor) {
+        this.genericWorkspaceItemsCache = this.filteredItemsCache;
+      } else if (!this.activeWorkspace || this.activeWorkspace === "prompts") {
+        this.genericWorkspaceItemsCache = [];
+      } else {
+        this.genericWorkspaceItemsCache = (this.editorView.items || []).filter(
+          (item) => item.group === this.activeWorkspace,
+        );
+      }
+
+      this.cacheEditingDataRef = this.editingData;
+      this.cacheEditorViewRef = this.editorView;
+      this.cacheSearchTerm = this.searchTerm;
+      this.cacheUiFilter = this.uiFilter;
+      this.cacheActiveGroup = this.activeGroup;
+      this.cacheActiveWorkspace = this.activeWorkspace;
+
+      this.syncActiveEditorSelections();
+    },
+
+    syncActiveEditorSelections() {
+      const nextPrompt =
+        this.orderedPromptItemsCache.find(
+          (prompt) => prompt.__identifier === this.activePromptId,
+        ) ||
+        this.orderedPromptItemsCache[0] ||
+        null;
+      this.activePromptItemCache = nextPrompt;
+      this.activePromptId = nextPrompt?.__identifier || "";
+
+      const activeItemId =
+        this.isPromptWorkspaceEditor && this.activeWorkspace !== "prompts"
+          ? this.activeGenericItemId || this.activeItemId
+          : this.activeItemId;
+      const nextItem =
+        this.filteredItemsCache.find((item) => item.id === activeItemId) ||
+        this.filteredItemsCache[0] ||
+        null;
+      this.activeItemCache = nextItem;
+      this.activeItemId = nextItem?.id || "";
+      if (this.isPromptWorkspaceEditor && this.activeWorkspace !== "prompts") {
+        this.activeGenericItemId = nextItem?.id || "";
+      }
+      this.cacheActivePromptId = this.activePromptId;
+      this.cacheActiveItemId = this.activeItemId;
+      this.cacheActiveGenericItemId = this.activeGenericItemId;
+    },
+
+    getPromptMarkerVisual(prompt) {
+      const identifier = String(
+        prompt?.identifier || prompt?.__identifier || "",
+      ).trim();
+      return resolvePromptMarkerVisual(identifier);
+    },
+
+    getPromptMarkerIcon(prompt) {
+      const visual = this.getPromptMarkerVisual(prompt);
+      return buildPromptMarkerIcon(visual);
+    },
+
+    syncCachedPromptUpdate(previousIdentifier, nextPrompt, promptIndex) {
+      const currentIdentifier = String(nextPrompt?.identifier || "").trim();
+      const nextIdentifier = currentIdentifier || previousIdentifier;
+
+      this.promptItemsCache = this.promptItemsCache.map((prompt) =>
+        Number(prompt?.__prompt_index) === promptIndex
+          ? {
+              ...prompt,
+              ...nextPrompt,
+              __prompt_index: promptIndex,
+            }
+          : prompt,
+      );
+
+      this.orderedPromptItemsCache = this.orderedPromptItemsCache.map(
+        (prompt) => {
+          if (Number(prompt?.__prompt_index) !== promptIndex) {
+            return prompt;
+          }
+          return {
+            ...prompt,
+            ...nextPrompt,
+            __prompt_index: promptIndex,
+            __raw_identifier: currentIdentifier,
+            __identifier: nextIdentifier,
+          };
+        },
+      );
+
+      if (Number(this.activePromptItemCache?.__prompt_index) === promptIndex) {
+        this.activePromptItemCache = {
+          ...this.activePromptItemCache,
+          ...nextPrompt,
+          __prompt_index: promptIndex,
+          __raw_identifier: currentIdentifier,
+          __identifier: nextIdentifier,
+        };
+      }
+
+      if (
+        this.activePromptId === previousIdentifier ||
+        this.activePromptId === currentIdentifier
+      ) {
+        this.activePromptId = nextIdentifier;
+      }
+      this.cacheActivePromptId = this.activePromptId;
     },
 
     getByPath(path) {
@@ -546,7 +718,7 @@ export default function presetEditor() {
       }
 
       target[parts[parts.length - 1]] = value;
-      this.dirtyPaths[path] = true;
+      this.markDirty(path);
     },
 
     syncPromptOrder(nextOrderedPrompts = null) {
@@ -568,7 +740,7 @@ export default function presetEditor() {
           Object.prototype.hasOwnProperty.call(this.editingData, "prompt_order")
         ) {
           delete this.editingData.prompt_order;
-          this.dirtyPaths.prompt_order = true;
+          this.markDirty("prompt_order");
         }
         return;
       }
@@ -786,7 +958,10 @@ export default function presetEditor() {
       if (key === "injection_position") {
         nextPrompt[key] = this.normalizePromptPosition(value);
       }
-      if (key === "injection_depth" || key === "injection_order") {
+      if (key === "injection_depth") {
+        nextPrompt[key] = this.normalizePromptDepth(value);
+      }
+      if (key === "injection_order") {
         nextPrompt[key] = Number(value);
       }
       if (key === "role") {
@@ -794,6 +969,18 @@ export default function presetEditor() {
       }
 
       prompts[promptIndex] = nextPrompt;
+
+      if (key === "content") {
+        this.editingData.prompts = prompts;
+        this.syncCachedPromptUpdate(
+          previousIdentifier,
+          nextPrompt,
+          promptIndex,
+        );
+        this.markDirtyWithoutRefresh(`prompts.${promptIndex}.content`);
+        return;
+      }
+
       this.setByPath("prompts", prompts);
 
       if (key === "identifier") {
@@ -874,12 +1061,14 @@ export default function presetEditor() {
     selectGroup(groupId) {
       const previousItemId = this.activeItemId;
       this.activeGroup = groupId || "all";
+      this.refreshEditorCollections();
       const matchingItem = this.filteredItems.find(
         (item) => item.id === previousItemId,
       );
       if (matchingItem) {
         this.activeItemId = matchingItem.id;
         this.activeGenericItemId = matchingItem.id;
+        this.syncActiveEditorSelections();
         return;
       }
 
@@ -888,6 +1077,7 @@ export default function presetEditor() {
         this.activeItemId = first.id;
         this.activeGenericItemId = first.id;
       }
+      this.syncActiveEditorSelections();
     },
 
     selectWorkspace(workspaceId) {
@@ -899,27 +1089,24 @@ export default function presetEditor() {
       }
 
       if (this.activeWorkspace === "prompts") {
-        this.activePromptId =
-          this.activePromptItem?.__identifier ||
-          this.orderedPromptItems[0]?.__identifier ||
-          "";
+        this.refreshEditorCollections();
         return;
       }
 
       this.activeGroup = this.activeWorkspace;
-      const firstItem = this.genericWorkspaceItems[0] || null;
-      this.activeGenericItemId = firstItem?.id || "";
-      this.activeItemId = firstItem?.id || "";
+      this.refreshEditorCollections();
     },
 
     selectItem(itemId) {
       this.activeItemId = itemId || "";
       this.activeGenericItemId = itemId || "";
+      this.syncActiveEditorSelections();
     },
 
     selectPrompt(promptId) {
       this.activeWorkspace = "prompts";
       this.activePromptId = String(promptId || "");
+      this.refreshEditorCollections();
     },
 
     getFieldValue(item) {
@@ -937,7 +1124,7 @@ export default function presetEditor() {
         return;
       }
       this.editingData[item.key] = value;
-      this.dirtyPaths[item.key || item.id] = true;
+      this.markDirty(item.key || item.id);
     },
 
     resolveSelectOptionValue(item, rawValue) {
@@ -1078,6 +1265,14 @@ export default function presetEditor() {
 
     openLargeEditorForItem(item) {
       if (!item || !this.editingData) return;
+      if (this.pendingLargeEditorSaveHandler) {
+        window.removeEventListener(
+          "large-editor-save",
+          this.pendingLargeEditorSaveHandler,
+        );
+        this.pendingLargeEditorSaveHandler = null;
+      }
+      const editingData = deepClone(this.editingData);
       window.dispatchEvent(
         new CustomEvent("open-large-editor", {
           detail: {
@@ -1085,10 +1280,19 @@ export default function presetEditor() {
             title: item.label,
             isArray: false,
             index: 0,
-            editingData: this.editingData,
+            valuePath: item.value_path || item.key || "",
+            editingData,
           },
         }),
       );
+      const saveHandler = () => {
+        window.removeEventListener("large-editor-save", saveHandler);
+        this.pendingLargeEditorSaveHandler = null;
+        this.editingData = editingData;
+        this.markDirty(item.value_path || item.key || item.id || null);
+      };
+      this.pendingLargeEditorSaveHandler = saveHandler;
+      window.addEventListener("large-editor-save", saveHandler);
     },
 
     async openPresetEditor({ presetId, activeNav = "basic" } = {}) {
@@ -1103,18 +1307,17 @@ export default function presetEditor() {
 
         this.editingPresetFile = deepClone(res.preset);
         this.editingData = deepClone(res.preset.raw_data || {});
-        this.baseDataJson = JSON.stringify(this.editingData);
         this.activeNav = activeNav || this.navSections[0] || "basic";
         this.activeWorkspace = this.isPromptWorkspaceEditor ? "prompts" : "all";
         this.searchTerm = "";
         this.uiFilter = "all";
         this.activeGroup = "all";
-        this.activePromptId = this.orderedPromptItems[0]?.__identifier || "";
+        this.activePromptId = "";
         this.activeGenericItemId = "";
         this.activeItemId = "";
         this.showMobileSidebar = false;
         this.showRightPanel = true;
-        this.dirtyPaths = {};
+        this.markClean();
         this.selectGroup("all");
         this.showPresetEditor = true;
         this.draftState = { savedAt: "", restored: false };
@@ -1166,8 +1369,16 @@ export default function presetEditor() {
         this.persistLocalDraft();
       }
       this.activeWorkspace = "all";
+      this.activeGroup = "all";
       this.activePromptId = "";
       this.activeGenericItemId = "";
+      this.activeItemId = "";
+      this.promptItemsCache = [];
+      this.orderedPromptItemsCache = [];
+      this.filteredItemsCache = [];
+      this.genericWorkspaceItemsCache = [];
+      this.activePromptItemCache = null;
+      this.activeItemCache = null;
       this.showPresetEditor = false;
     },
 
@@ -1205,8 +1416,7 @@ export default function presetEditor() {
         this.editingData = deepClone(
           this.editingPresetFile.raw_data || this.editingData,
         );
-        this.baseDataJson = JSON.stringify(this.editingData);
-        this.dirtyPaths = {};
+        this.markClean();
         autoSaver.initBaseline(this.editingData);
         this.clearLocalDraft();
         setActiveRuntimeContext({
@@ -1316,7 +1526,7 @@ export default function presetEditor() {
         }
         this.$store.global.showToast("预设已删除");
         window.dispatchEvent(new CustomEvent("refresh-preset-list"));
-        this.showPresetEditor = false;
+        this.closeEditor();
       } catch (error) {
         console.error(error);
         this.$store.global.showToast("删除失败", "error");
@@ -1327,11 +1537,20 @@ export default function presetEditor() {
 
     openAdvancedExtensions() {
       if (!this.editingData) return;
+      if (this.pendingAdvancedEditorSaveHandler) {
+        window.removeEventListener(
+          "advanced-editor-save",
+          this.pendingAdvancedEditorSaveHandler,
+        );
+        this.pendingAdvancedEditorSaveHandler = null;
+      }
       const editingData = {
-        extensions: this.editingData.extensions || {
-          regex_scripts: [],
-          tavern_helper: { scripts: [] },
-        },
+        extensions: deepClone(
+          this.editingData.extensions || {
+            regex_scripts: [],
+            tavern_helper: { scripts: [] },
+          },
+        ),
       };
       window.dispatchEvent(
         new CustomEvent("open-advanced-editor", {
@@ -1340,8 +1559,19 @@ export default function presetEditor() {
       );
       const saveHandler = async () => {
         window.removeEventListener("advanced-editor-save", saveHandler);
+        this.pendingAdvancedEditorSaveHandler = null;
+        this.setByPath(
+          "extensions",
+          deepClone(
+            editingData.extensions || {
+              regex_scripts: [],
+              tavern_helper: { scripts: [] },
+            },
+          ),
+        );
         await this.saveExtensions();
       };
+      this.pendingAdvancedEditorSaveHandler = saveHandler;
       window.addEventListener("advanced-editor-save", saveHandler);
     },
 

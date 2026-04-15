@@ -13,6 +13,10 @@ import {
 } from "../runtime/runtimeContext.js";
 import { downloadFileFromApi } from "../utils/download.js";
 import { formatDate } from "../utils/format.js";
+import {
+  buildPromptMarkerIcon,
+  getPromptMarkerVisual as resolvePromptMarkerVisual,
+} from "../utils/promptMarkerVisuals.js";
 
 const UI_FILTERS = [
   { id: "all", label: "全部" },
@@ -66,14 +70,57 @@ export default function presetDetailReader() {
     activeItemId: "",
     searchTerm: "",
     uiFilter: "all",
+    _searchTermValue: "",
+    _uiFilterValue: "all",
+    readerControlBindingsReady: false,
     showRightPanel: true,
     showMobileSidebar: false,
+    promptItemsCache: [],
+    orderedPromptItemsCache: [],
+    promptFilteredItemsCache: [],
+    filteredItemsCache: [],
+    activePromptItemCache: null,
+    activeItemCache: null,
+    activeContextItemCache: null,
+    readerStatsCache: { total_count: 0, visible_count: 0 },
 
     init() {
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
+      this.bindReaderControlCaches();
       window.addEventListener("open-preset-reader", (e) => {
         this.openPreset(e.detail || {});
       });
+    },
+
+    bindReaderControlCaches() {
+      if (this.readerControlBindingsReady) {
+        return;
+      }
+
+      this._searchTermValue = this.searchTerm || "";
+      this._uiFilterValue = this.uiFilter || "all";
+
+      Object.defineProperty(this, "searchTerm", {
+        configurable: true,
+        enumerable: true,
+        get: () => this._searchTermValue,
+        set: (value) => {
+          this._searchTermValue = value || "";
+          this.refreshReaderCollections();
+        },
+      });
+
+      Object.defineProperty(this, "uiFilter", {
+        configurable: true,
+        enumerable: true,
+        get: () => this._uiFilterValue,
+        set: (value) => {
+          this._uiFilterValue = value || "all";
+          this.refreshReaderCollections();
+        },
+      });
+
+      this.readerControlBindingsReady = true;
     },
 
     get readerView() {
@@ -117,144 +164,35 @@ export default function presetDetailReader() {
     },
 
     get promptItems() {
-      return this.readerItems.filter((item) => item.type === "prompt");
+      return this.promptItemsCache;
     },
 
     get orderedPromptItems() {
-      return [...this.promptItems].sort((left, right) => {
-        const leftIndex = Number(
-          left.prompt_meta?.order_index ?? Number.MAX_SAFE_INTEGER,
-        );
-        const rightIndex = Number(
-          right.prompt_meta?.order_index ?? Number.MAX_SAFE_INTEGER,
-        );
-        if (leftIndex !== rightIndex) {
-          return leftIndex - rightIndex;
-        }
-        return String(left.title || "").localeCompare(
-          String(right.title || ""),
-        );
-      });
+      return this.orderedPromptItemsCache;
     },
 
     get promptFilteredItems() {
-      const query = normalizeText(this.searchTerm);
-      return this.orderedPromptItems.filter((item) => {
-        if (
-          this.uiFilter === "enabled" &&
-          item.prompt_meta?.is_enabled === false
-        ) {
-          return false;
-        }
-        if (
-          this.uiFilter === "disabled" &&
-          item.prompt_meta?.is_enabled !== false
-        ) {
-          return false;
-        }
-        if (this.uiFilter === "marker" && !item.prompt_meta?.is_marker) {
-          return false;
-        }
-
-        if (!query) {
-          return true;
-        }
-
-        const haystack = [
-          item.title,
-          item.summary,
-          item.payload?.identifier,
-          this.getPromptPreview(item),
-          this.getPromptPositionLabel(item),
-        ]
-          .map(normalizeText)
-          .filter(Boolean)
-          .join(" ");
-        return haystack.includes(query);
-      });
+      return this.promptFilteredItemsCache;
     },
 
     get filteredItems() {
-      const query = normalizeText(this.searchTerm);
-      return this.readerItems.filter((item) => {
-        if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
-          return false;
-        }
-
-        if (this.uiFilter === "structured" && item.type !== "structured") {
-          return false;
-        }
-        if (this.uiFilter === "extension" && item.type !== "extension") {
-          return false;
-        }
-
-        if (!query) {
-          return true;
-        }
-
-        const haystack = [
-          item.title,
-          item.summary,
-          item.type,
-          item.group,
-          item.payload?.key,
-          item.payload?.identifier,
-          this.getItemValuePreview(item),
-        ]
-          .map(normalizeText)
-          .filter(Boolean)
-          .join(" ");
-        return haystack.includes(query);
-      });
+      return this.filteredItemsCache;
     },
 
     get activeItem() {
-      const items = this.filteredItems;
-      const current = items.find((item) => item.id === this.activeItemId);
-      if (current) {
-        return current;
-      }
-
-      if (this.activeGroup !== "all" && !items.length && !this.activeItemId) {
-        return null;
-      }
-
-      const anyCurrent = this.readerItems.find(
-        (item) => item.id === this.activeItemId,
-      );
-      if (anyCurrent && !items.length) {
-        return anyCurrent;
-      }
-
-      return items[0] || this.readerItems[0] || null;
+      return this.activeItemCache;
     },
 
     get activePromptItem() {
-      return (
-        this.promptFilteredItems.find(
-          (item) => item.id === this.activePromptId,
-        ) ||
-        this.promptFilteredItems[0] ||
-        null
-      );
+      return this.activePromptItemCache;
     },
 
     get activeContextItem() {
-      if (this.isPromptWorkspaceReader && this.activeWorkspace === "prompts") {
-        return this.activePromptItem;
-      }
-      return this.activeItem;
+      return this.activeContextItemCache;
     },
 
     get readerStats() {
-      const stats = this.readerView.stats || {};
-      return {
-        total_count: Number(stats.total_count) || this.readerItems.length,
-        visible_count:
-          this.isPromptWorkspaceReader && this.activeWorkspace === "prompts"
-            ? this.promptFilteredItems.length
-            : this.filteredItems.length,
-      };
+      return this.readerStatsCache;
     },
 
     get uiFilters() {
@@ -276,6 +214,7 @@ export default function presetDetailReader() {
       this.activeGroup = "all";
       this.activePromptId = "";
       this.activeItemId = "";
+      this.refreshReaderCollections();
 
       try {
         const res = await getPresetDetail(item.id);
@@ -305,14 +244,15 @@ export default function presetDetailReader() {
     },
 
     initializeReaderState() {
+      this.bindReaderControlCaches();
       if (this.isPromptWorkspaceReader) {
         this.activeWorkspace =
           this.readerGroups.find((group) => group.id === "prompts")?.id ||
           this.readerGroups[0]?.id ||
           "prompts";
-        this.activePromptId = this.promptFilteredItems[0]?.id || "";
         this.activeGroup = "all";
         this.activeItemId = "";
+        this.refreshReaderCollections();
         if (this.$store?.global?.deviceType !== "mobile") {
           this.showRightPanel = true;
         }
@@ -321,8 +261,10 @@ export default function presetDetailReader() {
 
       const firstGroup = this.readerGroups[0]?.id || "all";
       this.activeGroup = firstGroup;
-      const firstItem = this.filteredItems[0] || this.readerItems[0] || null;
-      this.activeItemId = firstItem?.id || "";
+      this.activeWorkspace = "all";
+      this.activePromptId = "";
+      this.activeItemId = "";
+      this.refreshReaderCollections();
       if (this.$store?.global?.deviceType !== "mobile") {
         this.showRightPanel = true;
       }
@@ -339,13 +281,14 @@ export default function presetDetailReader() {
       this.uiFilter = "all";
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
       this.showMobileSidebar = false;
+      this.refreshReaderCollections();
       clearActiveRuntimeContext("preset");
     },
 
     selectGroup(groupId) {
       this.activeGroup = groupId || "all";
-      const nextItem = this.filteredItems[0] || this.readerItems[0] || null;
-      this.activeItemId = nextItem?.id || "";
+      this.activeItemId = "";
+      this.refreshReaderCollections();
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
@@ -363,8 +306,9 @@ export default function presetDetailReader() {
           this.uiFilter = "all";
         }
         this.activeGroup = this.activeWorkspace;
-        this.activeItemId = this.filteredItems[0]?.id || "";
+        this.activeItemId = "";
       }
+      this.refreshReaderCollections();
       this.showRightPanel = true;
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
@@ -373,6 +317,7 @@ export default function presetDetailReader() {
 
     selectItem(itemId) {
       this.activeItemId = itemId || "";
+      this.syncActiveReaderSelections();
       this.showRightPanel = true;
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
@@ -382,10 +327,140 @@ export default function presetDetailReader() {
     selectPrompt(itemId) {
       this.activeWorkspace = "prompts";
       this.activePromptId = itemId || "";
+      this.refreshReaderCollections();
       this.showRightPanel = true;
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
+    },
+
+    refreshReaderCollections() {
+      const query = normalizeText(this.searchTerm);
+      this.promptItemsCache = this.readerItems.filter(
+        (item) => item.type === "prompt",
+      );
+      this.orderedPromptItemsCache = [...this.promptItemsCache].sort(
+        (left, right) => {
+          const leftIndex = Number(
+            left.prompt_meta?.order_index ?? Number.MAX_SAFE_INTEGER,
+          );
+          const rightIndex = Number(
+            right.prompt_meta?.order_index ?? Number.MAX_SAFE_INTEGER,
+          );
+          if (leftIndex !== rightIndex) {
+            return leftIndex - rightIndex;
+          }
+          return String(left.title || "").localeCompare(
+            String(right.title || ""),
+          );
+        },
+      );
+
+      this.promptFilteredItemsCache = this.orderedPromptItemsCache.filter(
+        (item) => {
+          if (
+            this.uiFilter === "enabled" &&
+            item.prompt_meta?.is_enabled === false
+          ) {
+            return false;
+          }
+          if (
+            this.uiFilter === "disabled" &&
+            item.prompt_meta?.is_enabled !== false
+          ) {
+            return false;
+          }
+          if (this.uiFilter === "marker" && !item.prompt_meta?.is_marker) {
+            return false;
+          }
+
+          if (!query) {
+            return true;
+          }
+
+          const haystack = [
+            item.title,
+            item.summary,
+            item.payload?.identifier,
+            this.getPromptPreview(item),
+            this.getPromptPositionLabel(item),
+          ]
+            .map(normalizeText)
+            .filter(Boolean)
+            .join(" ");
+          return haystack.includes(query);
+        },
+      );
+
+      this.filteredItemsCache = this.readerItems.filter((item) => {
+        if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
+          return false;
+        }
+
+        if (this.uiFilter === "structured" && item.type !== "structured") {
+          return false;
+        }
+        if (this.uiFilter === "extension" && item.type !== "extension") {
+          return false;
+        }
+
+        if (!query) {
+          return true;
+        }
+
+        const haystack = [
+          item.title,
+          item.summary,
+          item.type,
+          item.group,
+          item.payload?.key,
+          item.payload?.identifier,
+          this.getItemValuePreview(item),
+        ]
+          .map(normalizeText)
+          .filter(Boolean)
+          .join(" ");
+        return haystack.includes(query);
+      });
+
+      this.syncActiveReaderSelections();
+    },
+
+    syncActiveReaderSelections() {
+      const visibleActiveItem = this.filteredItemsCache.find(
+        (item) => item.id === this.activeItemId,
+      );
+      if (visibleActiveItem) {
+        this.activeItemCache = visibleActiveItem;
+      } else if (!this.filteredItemsCache.length) {
+        this.activeItemCache = null;
+      } else {
+        this.activeItemCache =
+          this.filteredItemsCache[0] || this.readerItems[0] || null;
+      }
+      this.activeItemId = this.activeItemCache?.id || "";
+
+      this.activePromptItemCache =
+        this.promptFilteredItemsCache.find(
+          (item) => item.id === this.activePromptId,
+        ) ||
+        this.promptFilteredItemsCache[0] ||
+        null;
+      this.activePromptId = this.activePromptItemCache?.id || "";
+
+      this.activeContextItemCache =
+        this.isPromptWorkspaceReader && this.activeWorkspace === "prompts"
+          ? this.activePromptItemCache
+          : this.activeItemCache;
+
+      const stats = this.readerView.stats || {};
+      this.readerStatsCache = {
+        total_count: Number(stats.total_count) || this.readerItems.length,
+        visible_count:
+          this.isPromptWorkspaceReader && this.activeWorkspace === "prompts"
+            ? this.promptFilteredItemsCache.length
+            : this.filteredItemsCache.length,
+      };
     },
 
     getSourceLabel() {
@@ -472,6 +547,16 @@ export default function presetDetailReader() {
         return `聊天中 @ ${depth}`;
       }
       return PROMPT_POSITION_LABELS[position] || "相对";
+    },
+
+    getPromptMarkerVisual(item) {
+      const identifier = String(item?.payload?.identifier || "");
+      return resolvePromptMarkerVisual(identifier);
+    },
+
+    getPromptMarkerIcon(item) {
+      const visual = this.getPromptMarkerVisual(item);
+      return buildPromptMarkerIcon(visual);
     },
 
     openFullscreenEditor(options = {}) {

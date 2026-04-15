@@ -31,6 +31,21 @@ def run_preset_detail_reader_runtime_check(script_body):
         const setActiveRuntimeContext = () => {{}};
         const downloadFileFromApi = async () => {{}};
         const formatDate = (value) => value;
+        const PROMPT_MARKER_VISUALS = {{
+          scenario: {{ key: 'scenario', label: '场景', paths: ['M4.75 17.5 9.5 12.75 12.25 15.5 16.75 11 19.25 13.5'] }},
+          fallback: {{ key: 'marker', label: '预留字段', paths: ['M12 5v14'] }},
+        }};
+        const getPromptMarkerVisual = (identifier) => PROMPT_MARKER_VISUALS[String(identifier || '').trim()] || PROMPT_MARKER_VISUALS.fallback;
+        const resolvePromptMarkerVisual = getPromptMarkerVisual;
+        const buildPromptMarkerIcon = (visual, options = {{}}) => {{
+          const strokeWidth = options.strokeWidth || '1.5';
+          const svgAttributes = options.svgAttributes || 'aria-hidden="true" fill="none"';
+          const pathAttributes = options.pathAttributes || 'stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" fill="none"';
+          const paths = Array.isArray(visual?.paths)
+            ? visual.paths.map((path) => '<path d="' + path + '" ' + pathAttributes + ' stroke-width="' + strokeWidth + '"></path>').join('')
+            : '';
+          return '<svg viewBox="0 0 24 24" ' + svgAttributes + '>' + paths + '</svg>';
+        }};
         globalThis.window = {{
           addEventListener() {{}},
           removeEventListener() {{}},
@@ -583,6 +598,157 @@ def test_preset_detail_reader_runtime_normalizes_filters_when_switching_workspac
     )
 
 
+def test_preset_detail_reader_js_caches_prompt_collections_and_exposes_marker_icon_helpers():
+    source = read_project_file('static/js/components/presetDetailReader.js')
+
+    assert 'promptItemsCache:' in source
+    assert 'orderedPromptItemsCache:' in source
+    assert 'promptFilteredItemsCache:' in source
+    assert 'filteredItemsCache:' in source
+    assert 'activePromptItemCache:' in source
+    assert 'activeItemCache:' in source
+    assert 'activeContextItemCache:' in source
+    assert 'readerStatsCache:' in source
+    assert 'refreshReaderCollections() {' in source
+    assert 'syncActiveReaderSelections() {' in source
+    assert 'getPromptMarkerVisual(item) {' in source
+    assert 'getPromptMarkerIcon(item) {' in source
+    assert 'return this.orderedPromptItemsCache;' in source
+    assert 'return this.promptFilteredItemsCache;' in source
+    assert 'return this.filteredItemsCache;' in source
+
+
+def test_preset_detail_reader_js_uses_single_control_sync_path_for_reader_caches():
+    source = read_project_file('static/js/components/presetDetailReader.js')
+
+    assert 'bindReaderControlCaches() {' in source
+    assert '$watch("searchTerm", () => this.refreshReaderCollections())' not in source
+    assert '$watch("uiFilter", () => this.refreshReaderCollections())' not in source
+
+
+def test_preset_detail_reader_runtime_clears_hidden_generic_selection_when_filtered_workspace_is_empty():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'extensions', label: 'Extensions' },
+            ],
+            items: [
+              {
+                id: 'prompt:main',
+                type: 'prompt',
+                group: 'prompts',
+                title: 'Main Prompt',
+                payload: { identifier: 'main', content: 'hello world' },
+                prompt_meta: { order_index: 0 },
+              },
+              {
+                id: 'ext:memory',
+                type: 'extension',
+                group: 'extensions',
+                title: 'Memory',
+                payload: { value: { enabled: true } },
+              },
+            ],
+            stats: { total_count: 2 },
+          },
+        };
+
+        reader.initializeReaderState();
+        reader.selectWorkspace('extensions');
+        if (reader.activeContextItem?.id !== 'ext:memory') {
+          throw new Error(`expected extensions workspace to select ext:memory, got ${reader.activeContextItem?.id}`);
+        }
+
+        reader.searchTerm = 'missing';
+        if (reader.filteredItems.length !== 0) {
+          throw new Error(`expected empty filtered generic workspace, got ${reader.filteredItems.length}`);
+        }
+        if (reader.activeItemId !== '') {
+          throw new Error(`expected cleared activeItemId for hidden generic item, got ${reader.activeItemId}`);
+        }
+        if (reader.activeItem !== null) {
+          throw new Error(`expected activeItem to clear instead of keeping hidden generic item, got ${reader.activeItem?.id}`);
+        }
+        if (reader.activeContextItem !== null) {
+          throw new Error(`expected activeContextItem to clear for empty filtered generic workspace, got ${reader.activeContextItem?.id}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_refreshes_cached_prompt_collections_and_marker_icons():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'extensions', label: 'Extensions' },
+            ],
+            items: [
+              {
+                id: 'prompt:main',
+                type: 'prompt',
+                group: 'prompts',
+                title: 'Main Prompt',
+                payload: { identifier: 'main', content: 'hello world', injection_position: 0 },
+                prompt_meta: { order_index: 1, is_enabled: true },
+              },
+              {
+                id: 'prompt:scenario',
+                type: 'prompt',
+                group: 'prompts',
+                title: 'Scenario Anchor',
+                payload: { identifier: 'scenario', injection_position: 1, injection_depth: 6 },
+                prompt_meta: { order_index: 0, is_marker: true, is_enabled: false },
+              },
+              {
+                id: 'ext:memory',
+                type: 'extension',
+                group: 'extensions',
+                title: 'Memory',
+                payload: { value: { enabled: true } },
+              },
+            ],
+            stats: { total_count: 3 },
+          },
+        };
+
+        reader.initializeReaderState();
+        if (JSON.stringify(reader.orderedPromptItems.map((item) => item.id)) !== JSON.stringify(['prompt:scenario', 'prompt:main'])) {
+          throw new Error(`expected ordered prompt cache, got ${JSON.stringify(reader.orderedPromptItems.map((item) => item.id))}`);
+        }
+        if (reader.activeContextItem?.id !== 'prompt:scenario') {
+          throw new Error(`expected prompt selection cache to use first ordered prompt, got ${reader.activeContextItem?.id}`);
+        }
+
+        reader.uiFilter = 'marker';
+        reader.refreshReaderCollections();
+        if (JSON.stringify(reader.promptFilteredItems.map((item) => item.id)) !== JSON.stringify(['prompt:scenario'])) {
+          throw new Error(`expected marker filter cache to keep only scenario marker, got ${JSON.stringify(reader.promptFilteredItems.map((item) => item.id))}`);
+        }
+
+        const visual = reader.getPromptMarkerVisual(reader.promptFilteredItems[0]);
+        if (visual.key !== 'scenario') {
+          throw new Error(`expected scenario marker visual, got ${JSON.stringify(visual)}`);
+        }
+        if (!reader.getPromptMarkerIcon(reader.promptFilteredItems[0]).includes('<svg')) {
+          throw new Error('expected inline svg marker icon output');
+        }
+
+        reader.selectWorkspace('extensions');
+        if (reader.filteredItems.length !== 1 || reader.activeContextItem?.id !== 'ext:memory') {
+          throw new Error(`expected generic workspace cache after workspace switch, got ${JSON.stringify({ filtered: reader.filteredItems.map((item) => item.id), active: reader.activeContextItem?.id })}`);
+        }
+        """
+    )
+
+
 def test_preset_detail_reader_template_uses_reader_view_three_column_layout_contracts():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
@@ -651,6 +817,27 @@ def test_preset_detail_reader_template_keeps_generic_items_available_for_non_pro
     assert 'x-text="getItemValuePreview(activeContextItem)"' in source
     assert 'x-text="getItemFullDetail(activeContextItem)"' in source
     assert "x-if=\"activeContextItem?.group !== 'prompts'\"" in source
+
+
+def test_preset_detail_reader_template_renders_marker_icons_switches_and_inner_scroll_regions():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'x-html="getPromptMarkerIcon(item)"' in source
+    assert 'x-html="getPromptMarkerIcon(activeContextItem)"' in source
+    assert 'class="flex-1 min-h-0"' in source
+    assert 'class="flex-1 min-h-0 p-4"' not in source
+    assert 'class="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-3"' in source
+    assert 'class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-500/10 text-sky-200"' in source
+    assert 'class="relative h-5 w-9 rounded-full transition-colors"' in source
+    assert source.count('aria-hidden="true"') >= 4
+
+
+def test_preset_detail_reader_template_keeps_right_panel_scroll_and_prompt_state_within_bounds():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'class="w-full lg:w-[340px] xl:w-[380px] flex-shrink-0 bg-[var(--bg-sub)] border-l border-[var(--border-light)] flex flex-col min-h-0"' in source
+    assert 'class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4"' in source
+    assert 'class="min-w-0 flex flex-1 items-start gap-3"' in source
 
 
 def test_preset_detail_reader_template_prevents_blank_prompt_content_cards_and_shows_prompt_empty_state():
