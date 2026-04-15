@@ -112,6 +112,7 @@ def test_preset_detail_reader_js_exposes_prompt_workspace_helpers():
     assert 'selectWorkspace(workspaceId) {' in source
     assert 'selectPrompt(itemId) {' in source
     assert 'getPromptPreview(item) {' in source
+    assert 'getPromptFullDetail(item) {' in source
     assert 'getPromptPositionLabel(item) {' in source
 
 
@@ -312,8 +313,153 @@ def test_preset_detail_reader_runtime_falls_back_to_default_prompt_depth_for_inv
 
         reader.initializeReaderState();
         const label = reader.getPromptPositionLabel(reader.activePromptItem);
-        if (label !== 'In-Chat @ 4') {
+        if (label !== '聊天中 @ 4') {
           throw new Error(`expected invalid prompt depth to fall back to 4, got ${label}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_localizes_prompt_labels_and_hides_marker_placeholder_preview():
+    run_preset_detail_reader_runtime_check(
+        """
+        const relativePrompt = {
+          id: 'prompt:relative',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Relative Prompt',
+          payload: {
+            identifier: 'relative',
+            content: 'relative content',
+            injection_position: 0,
+          },
+          prompt_meta: { order_index: 0, is_enabled: true, is_marker: false },
+        };
+        const markerPrompt = {
+          id: 'prompt:marker',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Marker Prompt',
+          payload: {
+            identifier: 'marker',
+            marker: true,
+            injection_position: 1,
+            injection_depth: 'bad-depth',
+          },
+          prompt_meta: { order_index: 1, is_enabled: false, is_marker: true },
+        };
+
+        const relativeLabel = reader.getPromptPositionLabel(relativePrompt);
+        if (relativeLabel !== '相对') {
+          throw new Error(`expected relative prompt label to be localized, got ${relativeLabel}`);
+        }
+
+        const markerPreview = reader.getPromptPreview(markerPrompt);
+        if (markerPreview !== '') {
+          throw new Error(`expected marker preview to be empty, got ${JSON.stringify(markerPreview)}`);
+        }
+
+        const inChatLabel = reader.getPromptPositionLabel(markerPrompt);
+        if (inChatLabel !== '聊天中 @ 4') {
+          throw new Error(`expected invalid in-chat depth to fall back to 4, got ${inChatLabel}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_exposes_full_prompt_detail_without_preview_truncation():
+    run_preset_detail_reader_runtime_check(
+        """
+        const longContent = 'A'.repeat(300);
+        const promptItem = {
+          id: 'prompt:long',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Long Prompt',
+          payload: {
+            identifier: 'long',
+            content: longContent,
+          },
+          prompt_meta: { order_index: 0, is_marker: false },
+        };
+        const markerPrompt = {
+          id: 'prompt:marker',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Marker Prompt',
+          payload: {
+            identifier: 'marker',
+            marker: true,
+            content: longContent,
+          },
+          prompt_meta: { order_index: 1, is_marker: true },
+        };
+
+        const preview = reader.getPromptPreview(promptItem);
+        const fullDetail = reader.getPromptFullDetail(promptItem);
+        const markerFullDetail = reader.getPromptFullDetail(markerPrompt);
+
+        if (preview.length >= longContent.length) {
+          throw new Error(`expected preview to remain truncated, got length ${preview.length}`);
+        }
+        if (fullDetail !== longContent) {
+          throw new Error(`expected full prompt detail to keep complete content, got length ${fullDetail.length}`);
+        }
+        if (markerFullDetail !== '') {
+          throw new Error(`expected marker prompt full detail to stay empty, got ${JSON.stringify(markerFullDetail)}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_accepts_zero_depth_and_rejects_negative_or_fractional_depths():
+    run_preset_detail_reader_runtime_check(
+        """
+        const zeroDepthPrompt = {
+          id: 'prompt:zero',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Zero Depth Prompt',
+          payload: {
+            identifier: 'zero',
+            injection_position: 1,
+            injection_depth: 0,
+          },
+          prompt_meta: { order_index: 0, is_marker: false },
+        };
+        const negativeDepthPrompt = {
+          id: 'prompt:negative',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Negative Depth Prompt',
+          payload: {
+            identifier: 'negative',
+            injection_position: 1,
+            injection_depth: -1,
+          },
+          prompt_meta: { order_index: 1, is_marker: false },
+        };
+        const fractionalDepthPrompt = {
+          id: 'prompt:fractional',
+          type: 'prompt',
+          group: 'prompts',
+          title: 'Fractional Depth Prompt',
+          payload: {
+            identifier: 'fractional',
+            injection_position: 1,
+            injection_depth: 2.5,
+          },
+          prompt_meta: { order_index: 2, is_marker: false },
+        };
+
+        if (reader.getPromptPositionLabel(zeroDepthPrompt) !== '聊天中 @ 0') {
+          throw new Error(`expected zero depth to stay valid, got ${reader.getPromptPositionLabel(zeroDepthPrompt)}`);
+        }
+        if (reader.getPromptPositionLabel(negativeDepthPrompt) !== '聊天中 @ 4') {
+          throw new Error(`expected negative depth to fall back to 4, got ${reader.getPromptPositionLabel(negativeDepthPrompt)}`);
+        }
+        if (reader.getPromptPositionLabel(fractionalDepthPrompt) !== '聊天中 @ 4') {
+          throw new Error(`expected fractional depth to fall back to 4, got ${reader.getPromptPositionLabel(fractionalDepthPrompt)}`);
         }
         """
     )
@@ -388,6 +534,55 @@ def test_preset_detail_reader_runtime_filters_prompt_workspace_items_and_visible
     )
 
 
+def test_preset_detail_reader_runtime_normalizes_filters_when_switching_workspaces():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'extensions', label: 'Extensions' },
+            ],
+            items: [
+              {
+                id: 'prompt:main',
+                type: 'prompt',
+                group: 'prompts',
+                title: 'Main Prompt',
+                payload: { identifier: 'main', content: 'hello' },
+                prompt_meta: { order_index: 0, is_enabled: true, is_marker: false },
+              },
+              {
+                id: 'ext:memory',
+                type: 'extension',
+                group: 'extensions',
+                title: 'Memory',
+                payload: { value: { enabled: true } },
+              },
+            ],
+            stats: {},
+          },
+        };
+
+        reader.initializeReaderState();
+        reader.uiFilter = 'marker';
+        reader.selectWorkspace('extensions');
+
+        if (reader.uiFilter !== 'all') {
+          throw new Error(`expected prompt-only filter to reset for generic workspace, got ${reader.uiFilter}`);
+        }
+
+        reader.uiFilter = 'structured';
+        reader.selectWorkspace('prompts');
+
+        if (reader.uiFilter !== 'all') {
+          throw new Error(`expected generic-only filter to reset for prompts workspace, got ${reader.uiFilter}`);
+        }
+        """
+    )
+
+
 def test_preset_detail_reader_template_uses_reader_view_three_column_layout_contracts():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
@@ -434,11 +629,19 @@ def test_preset_detail_reader_template_adds_prompt_workspace_branch_contracts():
     assert 'x-text="getPromptPreview(item)"' in source
     assert 'x-text="getPromptPositionLabel(item)"' in source
     assert 'x-text="activeContextItem?.title ||' in source
-    assert 'x-text="getPromptPreview(activeContextItem)"' in source
-    assert '占位用预留字段，不承载提示词内容' in source
+    assert 'x-text="getPromptFullDetail(activeContextItem)"' in source
+    assert "activeWorkspace === 'prompts' && orderedPromptItems.length > 0 && promptFilteredItems.length === 0" in source
+    assert '`${promptFilteredItems.length} / ${orderedPromptItems.length}`' in source or '`${promptFilteredItems.length}/${orderedPromptItems.length}`' in source
+    assert '`${orderedPromptItems.length} / ${readerStats.total_count}`' not in source
     assert '启用' in source
     assert '禁用' in source
     assert '预留字段' in source
+
+
+def test_preset_detail_reader_template_removes_marker_placeholder_copy():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert '占位用预留字段，不承载提示词内容' not in source
 
 
 def test_preset_detail_reader_template_keeps_generic_items_available_for_non_prompt_workspaces():
@@ -447,6 +650,25 @@ def test_preset_detail_reader_template_keeps_generic_items_available_for_non_pro
     assert 'x-show="activeWorkspace !== \"prompts\""' in source or "x-show=\"activeWorkspace !== 'prompts'\"" in source
     assert 'x-text="getItemValuePreview(activeContextItem)"' in source
     assert 'x-text="getItemFullDetail(activeContextItem)"' in source
+    assert "x-if=\"activeContextItem?.group !== 'prompts'\"" in source
+
+
+def test_preset_detail_reader_template_prevents_blank_prompt_content_cards_and_shows_prompt_empty_state():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert "activeWorkspace === 'prompts' && orderedPromptItems.length > 0 && promptFilteredItems.length === 0" in source
+    assert '没有匹配的 Prompt' in source
+    assert "x-if=\"activeContextItem?.group !== 'prompts'\"" in source
+    assert "activeContextItem?.group === 'prompts' ? getPromptPreview(activeContextItem) : getItemFullDetail(activeContextItem)" not in source
+
+
+def test_preset_detail_reader_template_restores_prompt_copy_action_without_reopening_generic_content_card():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert "x-if=\"activeContextItem?.group === 'prompts' && getPromptFullDetail(activeContextItem)\"" in source
+    assert '@click="copyText(getPromptFullDetail(activeContextItem), \"条目内容\")"' in source or "@click=\"copyText(getPromptFullDetail(activeContextItem), '条目内容')\"" in source
+    assert "x-if=\"activeContextItem?.group !== 'prompts'\"" in source
+    assert '@click="copyText(getItemFullDetail(activeContextItem), \"条目内容\")"' in source or "@click=\"copyText(getItemFullDetail(activeContextItem), '条目内容')\"" in source
 
 
 def test_preset_detail_reader_template_guards_active_item_accesses():

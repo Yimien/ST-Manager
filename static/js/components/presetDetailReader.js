@@ -40,9 +40,14 @@ const GROUP_FALLBACK_LABELS = {
 };
 
 const PROMPT_POSITION_LABELS = {
-  0: "相对位置",
-  1: "In-Chat 注入",
+  0: "相对",
+  1: "聊天中",
 };
+
+const UI_FILTER_IDS = new Set(UI_FILTERS.map((filter) => filter.id));
+const PROMPT_UI_FILTER_IDS = new Set(
+  PROMPT_UI_FILTERS.map((filter) => filter.id),
+);
 
 function normalizeText(value) {
   return String(value ?? "")
@@ -349,8 +354,14 @@ export default function presetDetailReader() {
     selectWorkspace(workspaceId) {
       this.activeWorkspace = workspaceId || "prompts";
       if (this.activeWorkspace === "prompts") {
+        if (!PROMPT_UI_FILTER_IDS.has(this.uiFilter)) {
+          this.uiFilter = "all";
+        }
         this.activePromptId = this.promptFilteredItems[0]?.id || "";
       } else {
+        if (!UI_FILTER_IDS.has(this.uiFilter)) {
+          this.uiFilter = "all";
+        }
         this.activeGroup = this.activeWorkspace;
         this.activeItemId = this.filteredItems[0]?.id || "";
       }
@@ -438,20 +449,29 @@ export default function presetDetailReader() {
     getPromptPreview(item) {
       if (!item) return "-";
       if (item.prompt_meta?.is_marker) {
-        return "占位用预留字段，不承载提示词内容";
+        return "";
       }
       const content = String(item.payload?.content || "").trim();
       return content ? this.formatValue(content) : "暂无提示词内容";
+    },
+
+    getPromptFullDetail(item) {
+      if (!item) return "";
+      if (item.prompt_meta?.is_marker) {
+        return "";
+      }
+      return String(item.payload?.content || "").trim();
     },
 
     getPromptPositionLabel(item) {
       const position = Number(item?.payload?.injection_position ?? 0);
       if (position === 1) {
         const rawDepth = Number(item?.payload?.injection_depth ?? 4);
-        const depth = Number.isFinite(rawDepth) ? rawDepth : 4;
-        return `In-Chat @ ${depth}`;
+        const depth =
+          Number.isInteger(rawDepth) && rawDepth >= 0 ? rawDepth : 4;
+        return `聊天中 @ ${depth}`;
       }
-      return PROMPT_POSITION_LABELS[position] || "相对位置";
+      return PROMPT_POSITION_LABELS[position] || "相对";
     },
 
     openFullscreenEditor(options = {}) {

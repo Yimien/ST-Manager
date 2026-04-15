@@ -311,7 +311,7 @@
                   ></span>
                   ·
                   <span
-                    x-text="isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${orderedPromptItems.length} / ${readerStats.total_count}` : `${filteredItems.length} / ${readerStats.total_count}`"
+                    x-text="isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${promptFilteredItems.length} / ${orderedPromptItems.length}` : `${filteredItems.length} / ${readerStats.total_count}`"
                   ></span>
                 </div>
               </div>
@@ -443,6 +443,23 @@
                   <template x-if="activeWorkspace === 'prompts'">
                     <div class="space-y-3">
                       <template
+                        x-if="activeWorkspace === 'prompts' && orderedPromptItems.length > 0 && promptFilteredItems.length === 0"
+                      >
+                        <div
+                          class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                        >
+                          <div
+                            class="text-base font-semibold text-[var(--text-main)]"
+                          >
+                            没有匹配的 Prompt
+                          </div>
+                          <div class="mt-2 text-sm text-[var(--text-dim)]">
+                            可以尝试清空搜索词或更换 quick filter。
+                          </div>
+                        </div>
+                      </template>
+
+                      <template
                         x-for="item in promptFilteredItems"
                         :key="item.id"
                       >
@@ -482,6 +499,7 @@
                           </div>
 
                           <div
+                            x-show="getPromptPreview(item)"
                             class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
                             x-text="getPromptPreview(item)"
                           ></div>
@@ -646,30 +664,40 @@
                       </div>
                       <div class="flex flex-wrap gap-2 text-xs">
                         <span
-                          class="px-2 py-1 rounded-full border"
+                          class="px-2 py-0.5 rounded-full border text-[10px]"
                           :class="activeContextItem?.prompt_meta?.is_enabled ? 'text-emerald-300 border-emerald-400/40 bg-emerald-500/10' : 'text-amber-300 border-amber-400/40 bg-amber-500/10'"
                           x-text="activeContextItem?.prompt_meta?.is_enabled ? '启用' : '禁用'"
                         ></span>
                         <span
                           x-show="activeContextItem?.prompt_meta?.is_marker"
-                          class="px-2 py-1 rounded-full border border-sky-400/40 bg-sky-500/10 text-sky-300"
+                          class="px-2 py-0.5 rounded-full border border-sky-400/40 bg-sky-500/10 text-[10px] text-sky-300"
                         >
                           预留字段
                         </span>
                         <span
-                          class="px-2 py-1 rounded-full border border-[var(--border-light)] text-[var(--text-dim)]"
+                          class="px-2 py-0.5 rounded-full border border-[var(--border-light)] text-[10px] text-[var(--text-dim)]"
                           x-text="getPromptPositionLabel(activeContextItem)"
                         ></span>
                       </div>
+                      <template
+                        x-if="activeContextItem?.group === 'prompts' && getPromptFullDetail(activeContextItem)"
+                      >
+                        <div class="flex justify-end">
+                          <button
+                            @click="copyText(getPromptFullDetail(activeContextItem), '条目内容')"
+                            class="btn-secondary px-2 py-1 text-xs"
+                          >
+                            复制
+                          </button>
+                        </div>
+                      </template>
                       <div
+                        x-show="getPromptFullDetail(activeContextItem)"
                         class="text-sm text-[var(--text-main)] whitespace-pre-wrap break-words"
                       >
                         <span
-                          x-text="getPromptPreview(activeContextItem)"
+                          x-text="getPromptFullDetail(activeContextItem)"
                         ></span>
-                        <span class="hidden"
-                          >占位用预留字段，不承载提示词内容</span
-                        >
                       </div>
                     </div>
                   </template>
@@ -725,27 +753,29 @@
                     </div>
                   </template>
 
-                  <div
-                    class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4"
-                  >
-                    <div class="flex items-center justify-between gap-2 mb-2">
-                      <div
-                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
-                      >
-                        内容
+                  <template x-if="activeContextItem?.group !== 'prompts'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4"
+                    >
+                      <div class="flex items-center justify-between gap-2 mb-2">
+                        <div
+                          class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                        >
+                          内容
+                        </div>
+                        <button
+                          @click="copyText(getItemFullDetail(activeContextItem), '条目内容')"
+                          class="btn-secondary px-2 py-1 text-xs"
+                        >
+                          复制
+                        </button>
                       </div>
-                      <button
-                        @click="copyText(activeContextItem?.group === 'prompts' ? getPromptPreview(activeContextItem) : getItemFullDetail(activeContextItem), '条目内容')"
-                        class="btn-secondary px-2 py-1 text-xs"
-                      >
-                        复制
-                      </button>
+                      <pre
+                        class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono max-h-[28rem] overflow-auto custom-scrollbar"
+                        x-text="getItemFullDetail(activeContextItem)"
+                      ></pre>
                     </div>
-                    <pre
-                      class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono max-h-[28rem] overflow-auto custom-scrollbar"
-                      x-text="activeContextItem?.group === 'prompts' ? getPromptPreview(activeContextItem) : getItemFullDetail(activeContextItem)"
-                    ></pre>
-                  </div>
+                  </template>
 
                   <template x-if="activeContextItem?.group !== 'prompts'">
                     <div class="hidden">

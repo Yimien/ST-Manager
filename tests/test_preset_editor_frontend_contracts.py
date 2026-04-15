@@ -103,6 +103,41 @@ def test_preset_editor_js_exposes_prompt_workspace_state_and_helpers():
     assert 'syncPromptOrder(nextOrderedPrompts = null) {' in source
     assert 'selectWorkspace(workspaceId) {' in source
     assert 'selectPrompt(promptId) {' in source
+    assert 'getPromptRoleValue(prompt) {' in source
+    assert 'getPromptRoleLabel(role) {' in source
+    assert 'normalizePromptPosition(value) {' in source
+    assert 'isChatInjectionPosition(prompt) {' in source
+    assert 'getPromptPositionLabel(prompt) {' in source
+    assert 'label: "系统"' in source
+    assert 'label: "用户"' in source
+    assert 'label: "AI助手"' in source
+    assert 'label: "常规"' in source
+    assert 'label: "继续"' in source
+    assert 'label: "角色扮演"' in source
+    assert 'label: "滑动"' in source
+    assert 'label: "重新生成"' in source
+    assert 'label: "静默"' in source
+    assert 'label: "相对"' in source
+    assert 'label: "聊天中"' in source
+
+
+def test_preset_editor_js_exposes_localized_prompt_option_metadata():
+    source = read_project_file('static/js/components/presetEditor.js')
+
+    assert 'promptRoleOptions:' in source
+    assert 'promptTriggerOptions:' in source
+    assert 'promptPositionOptions:' in source
+    assert 'value: "system", label: "系统"' in source
+    assert 'value: "user", label: "用户"' in source
+    assert 'value: "assistant", label: "AI助手"' in source
+    assert 'value: "normal", label: "常规"' in source
+    assert 'value: "continue", label: "继续"' in source
+    assert 'value: "impersonate", label: "角色扮演"' in source
+    assert 'value: "swipe", label: "滑动"' in source
+    assert 'value: "regenerate", label: "重新生成"' in source
+    assert 'value: "quiet", label: "静默"' in source
+    assert 'value: 0, label: "相对"' in source
+    assert 'value: 1, label: "聊天中"' in source
 
 
 def test_preset_editor_template_removes_prompt_and_unknown_raw_editor_sections():
@@ -135,6 +170,44 @@ def test_preset_editor_runtime_rejects_invalid_bias_numbers():
         editor.updateBiasEntry(0, 'value', 'not-a-number');
         if (editor.editingData.logit_bias[0].value !== 0) {
           throw new Error(`expected invalid bias value to fall back to 0, got ${JSON.stringify(editor.editingData.logit_bias[0])}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_exposes_localized_prompt_option_helpers_and_filters_unknown_triggers():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingData = {
+          prompts: [
+            { identifier: 'main', role: 'unknown', injection_position: 1 },
+          ],
+        };
+        editor.activePromptId = 'main';
+
+        const roleLabels = editor.promptRoleOptions.map((option) => option.label);
+        if (JSON.stringify(roleLabels) !== JSON.stringify(['系统', '用户', 'AI助手'])) {
+          throw new Error(`expected localized role labels, got ${JSON.stringify(roleLabels)}`);
+        }
+
+        const triggerLabels = editor.promptTriggerOptions.map((option) => option.label);
+        if (JSON.stringify(triggerLabels) !== JSON.stringify(['常规', '继续', '角色扮演', '滑动', '重新生成', '静默'])) {
+          throw new Error(`expected localized trigger labels, got ${JSON.stringify(triggerLabels)}`);
+        }
+
+        const roleValue = editor.getPromptRoleValue(editor.activePromptItem);
+        if (roleValue !== 'system') {
+          throw new Error(`expected unknown role to fall back to system, got ${JSON.stringify(roleValue)}`);
+        }
+
+        const positionLabel = editor.getPromptPositionLabel({ injection_position: 1, injection_depth: undefined });
+        if (positionLabel !== '聊天中 @ 4') {
+          throw new Error(`expected default chat position depth label, got ${JSON.stringify(positionLabel)}`);
+        }
+
+        editor.updatePromptTriggers(['swipe', 'unknown', 'quiet']);
+        if (JSON.stringify(editor.editingData.prompts[0].injection_trigger) !== JSON.stringify(['swipe', 'quiet'])) {
+          throw new Error(`expected unknown trigger values to be ignored, got ${JSON.stringify(editor.editingData.prompts[0].injection_trigger)}`);
         }
         """
     )
@@ -526,9 +599,15 @@ def test_preset_editor_template_uses_prompt_workspace_layout_contracts():
     assert '@click="selectPrompt(prompt.__identifier)"' in source
     assert '@click.stop="movePromptItem(index, index - 1)"' in source or '@click="movePromptItem(index, index - 1)"' in source
     assert '@click.stop="movePromptItem(index, index + 1)"' in source or '@click="movePromptItem(index, index + 1)"' in source
-    assert '@click.stop="togglePromptEnabled(prompt.__identifier)"' in source or '@click="togglePromptEnabled(prompt.__identifier)"' in source
-    assert 'x-show="activePromptItem?.marker"' in source or 'activePromptItem?.marker ?' in source
-    assert '占位用预留字段，不承载提示词内容' in source
+    assert '@click.stop="togglePromptEnabled(prompt.__identifier)"' not in source
+    assert '切换启用' not in source
+    assert 'getPromptRoleLabel(prompt.role)' in source
+    assert 'getPromptPositionLabel(prompt)' in source
+    assert 'prompt.__enabled !== false ? \'启用\' : \'禁用\'' not in source
+    assert '<span>启用</span>' not in source
+    assert 'aria-label="切换 Prompt 启用状态"' in source
+    assert '占位用预留字段，不承载提示词内容' not in source
+    assert 'x-show="!activePromptItem?.marker"' not in source
 
 
 def test_preset_editor_template_exposes_prompt_form_fields_instead_of_prompt_raw_json():
@@ -540,8 +619,71 @@ def test_preset_editor_template_exposes_prompt_form_fields_instead_of_prompt_raw
     assert "updatePromptField('injection_depth'" in source
     assert "updatePromptField('injection_order'" in source
     assert 'updatePromptTriggers(' in source
+    assert 'x-for="option in promptRoleOptions"' in source
+    assert 'x-for="option in promptTriggerOptions"' in source
+    assert 'x-for="option in promptPositionOptions"' in source
+    assert ':value="option.value"' in source
+    assert 'x-text="option.label"' in source
+    assert 'activePromptItem.injection_trigger.includes(option.value)' in source
+    assert 'isChatInjectionPosition(activePromptItem)' in source
+    assert '占位用预留字段，不承载提示词内容' not in source
+    assert 'placeholder="占位用预留字段，不承载提示词内容"' not in source
     assert "item.editor?.kind === 'prompt-item'" not in source
     assert "activeItem?.editor?.kind === 'prompt-item'" not in source
+
+
+def test_preset_editor_template_adds_prompt_helper_copy_and_removes_nested_list_scroll_regions():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert '用于侧栏列表和编辑器顶部的可读名称。' in source
+    assert '角色决定提示词以谁的身份注入上下文。' in source
+    assert '勾选后仅在对应场景触发此提示词。' in source
+    assert '控制提示词是在聊天外相对插入，还是注入到聊天流中。' in source
+    assert '仅在“聊天中”位置下生效，数值越小越靠前。' in source
+    assert '仅在“聊天中”位置下生效，用于同深度提示词排序。' in source
+    assert '填写实际要注入的提示词正文；marker 条目无需内容。' in source
+    assert 'p-3 space-y-2 overflow-y-auto custom-scrollbar max-h-[calc(100vh-12rem)] xl:max-h-none' not in source
+    assert 'overflow-y-auto custom-scrollbar min-h-[22rem]' not in source
+
+
+def test_preset_editor_template_localizes_prompt_sidebar_summary_labels():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert 'getPromptRoleLabel(activePromptItem?.role)' in source
+    assert 'getPromptPositionLabel(activePromptItem)' in source
+    assert 'prompt.role || prompt.__identifier || \'prompt\'' not in source
+    assert 'Number(prompt.injection_position ?? 0) === 1 ? `In-Chat @ ${Number(prompt.injection_depth ?? 4)}` : \'相对位置\'' not in source
+
+
+def test_preset_editor_runtime_normalizes_role_and_trigger_option_object_values():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingData = {
+          prompts: [
+            {
+              identifier: 'main',
+              role: 'assistant',
+              injection_trigger: ['normal'],
+            },
+          ],
+        };
+        editor.activePromptId = 'main';
+
+        const selectedTriggerValues = editor.promptTriggerOptions
+          .filter((option) => ['continue', 'quiet'].includes(option.value))
+          .map((option) => option.value);
+        editor.updatePromptTriggers(selectedTriggerValues);
+
+        if (JSON.stringify(editor.editingData.prompts[0].injection_trigger) !== JSON.stringify(['continue', 'quiet'])) {
+          throw new Error(`expected trigger option object values to persist, got ${JSON.stringify(editor.editingData.prompts[0].injection_trigger)}`);
+        }
+
+        editor.updatePromptField('role', editor.promptRoleOptions[1].value);
+        if (editor.editingData.prompts[0].role !== 'user') {
+          throw new Error(`expected role select option value to persist, got ${JSON.stringify(editor.editingData.prompts[0].role)}`);
+        }
+        """
+    )
 
 
 def test_preset_editor_template_keeps_right_info_toggle_mobile_only():
@@ -559,6 +701,9 @@ def test_preset_editor_template_keeps_right_info_toggle_mobile_only():
 
 def test_preset_editor_template_exposes_specialized_editor_sections():
     source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+    select_block = source.split('<template x-if="activeItem?.editor?.kind === \'select\'">', 1)[1].split(
+        '<template x-if="activeItem?.editor?.kind === \'text\'">', 1
+    )[0]
 
     assert (
         "item.editor?.kind === 'prompt-item'" not in source
@@ -576,7 +721,72 @@ def test_preset_editor_template_exposes_specialized_editor_sections():
         "item.editor?.kind === 'key-value-list'" in source
         or "activeItem?.editor?.kind === 'key-value-list'" in source
     )
+    assert "activeItem?.editor?.kind === 'select'" in source
+    assert 'x-for="option in (activeItem?.editor?.options || [])"' in source
+    assert 'resolveSelectOptionValue(activeItem, $event.target.value)' in source
+    assert ':value="option.value ?? option"' in source
+    assert 'x-text="option.label ?? option"' in source
+    assert re.search(
+        r'<template x-if="activeItem\?\.editor\?\.kind === \'select\'">[\s\S]*?<select[\s\S]*?</select>',
+        source,
+    )
+    assert '<input\n                            type="text"' not in select_block
     assert '高级原始编辑区' not in source
+
+
+def test_preset_editor_runtime_preserves_select_option_value_types():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingData = {
+          temperature_mode: 0,
+          feature_enabled: false,
+          plain_mode: 'alpha',
+        };
+
+        const numericItem = {
+          key: 'temperature_mode',
+          editor: {
+            kind: 'select',
+            options: [
+              { value: 0, label: 'Zero' },
+              { value: 1, label: 'One' },
+            ],
+          },
+        };
+        const booleanItem = {
+          key: 'feature_enabled',
+          editor: {
+            kind: 'select',
+            options: [
+              { value: false, label: 'Off' },
+              { value: true, label: 'On' },
+            ],
+          },
+        };
+        const primitiveItem = {
+          key: 'plain_mode',
+          editor: {
+            kind: 'select',
+            options: ['alpha', 'beta'],
+          },
+        };
+
+        editor.setFieldValue(numericItem, editor.resolveSelectOptionValue(numericItem, '1'));
+        if (editor.editingData.temperature_mode !== 1 || typeof editor.editingData.temperature_mode !== 'number') {
+          throw new Error(`expected numeric select value type to persist, got ${JSON.stringify(editor.editingData.temperature_mode)} (${typeof editor.editingData.temperature_mode})`);
+        }
+
+        editor.setFieldValue(booleanItem, editor.resolveSelectOptionValue(booleanItem, 'true'));
+        if (editor.editingData.feature_enabled !== true || typeof editor.editingData.feature_enabled !== 'boolean') {
+          throw new Error(`expected boolean select value type to persist, got ${JSON.stringify(editor.editingData.feature_enabled)} (${typeof editor.editingData.feature_enabled})`);
+        }
+
+        editor.setFieldValue(primitiveItem, editor.resolveSelectOptionValue(primitiveItem, 'beta'));
+        if (editor.editingData.plain_mode !== 'beta' || typeof editor.editingData.plain_mode !== 'string') {
+          throw new Error(`expected primitive string option to stay string, got ${JSON.stringify(editor.editingData.plain_mode)} (${typeof editor.editingData.plain_mode})`);
+        }
+        """
+    )
 
 
 def test_preset_editor_template_avoids_mixing_x_if_and_x_for_on_specialized_editor_templates():

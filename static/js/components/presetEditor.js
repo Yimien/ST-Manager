@@ -18,12 +18,39 @@ import {
 
 const PRESET_DRAFT_PREFIX = "st-manager:preset-draft:";
 
-const PROMPT_TRIGGER_OPTIONS = ["normal", "continue", "impersonate", "quiet"];
+const PROMPT_ROLE_OPTIONS = [
+  { value: "system", label: "系统" },
+  { value: "user", label: "用户" },
+  { value: "assistant", label: "AI助手" },
+];
+
+const PROMPT_TRIGGER_OPTIONS = [
+  { value: "normal", label: "常规" },
+  { value: "continue", label: "继续" },
+  { value: "impersonate", label: "角色扮演" },
+  { value: "swipe", label: "滑动" },
+  { value: "regenerate", label: "重新生成" },
+  { value: "quiet", label: "静默" },
+];
 
 const PROMPT_POSITION_OPTIONS = [
-  { value: 0, label: "相对位置" },
-  { value: 1, label: "In-Chat 注入" },
+  { value: 0, label: "相对" },
+  { value: 1, label: "聊天中" },
 ];
+
+const PROMPT_ROLE_LABELS = Object.fromEntries(
+  PROMPT_ROLE_OPTIONS.map((option) => [option.value, option.label]),
+);
+
+const VALID_PROMPT_ROLES = new Set(
+  PROMPT_ROLE_OPTIONS.map((option) => option.value),
+);
+const VALID_PROMPT_TRIGGERS = new Set(
+  PROMPT_TRIGGER_OPTIONS.map((option) => option.value),
+);
+const PROMPT_POSITION_LABELS = Object.fromEntries(
+  PROMPT_POSITION_OPTIONS.map((option) => [option.value, option.label]),
+);
 
 const SECTION_LABELS = {
   basic: "基础信息",
@@ -102,6 +129,7 @@ export default function presetEditor() {
     baseDataJson: "",
     draftState: { savedAt: "", restored: false },
     sectionLabels: SECTION_LABELS,
+    promptRoleOptions: PROMPT_ROLE_OPTIONS,
     promptTriggerOptions: PROMPT_TRIGGER_OPTIONS,
     promptPositionOptions: PROMPT_POSITION_OPTIONS,
     formatDate,
@@ -305,6 +333,33 @@ export default function presetEditor() {
         this.orderedPromptItems[0] ||
         null
       );
+    },
+
+    getPromptRoleValue(prompt) {
+      const role = String(prompt?.role || "").trim();
+      return VALID_PROMPT_ROLES.has(role) ? role : "system";
+    },
+
+    getPromptRoleLabel(role) {
+      return PROMPT_ROLE_LABELS[this.getPromptRoleValue({ role })] || "系统";
+    },
+
+    normalizePromptPosition(value) {
+      return Number(value) === 1 ? 1 : 0;
+    },
+
+    isChatInjectionPosition(prompt) {
+      return this.normalizePromptPosition(prompt?.injection_position) === 1;
+    },
+
+    getPromptPositionLabel(prompt) {
+      if (!this.isChatInjectionPosition(prompt)) {
+        return PROMPT_POSITION_LABELS[0] || "相对";
+      }
+
+      const depth = Number(prompt?.injection_depth);
+      const normalizedDepth = Number.isFinite(depth) ? depth : 4;
+      return `${PROMPT_POSITION_LABELS[1] || "聊天中"} @ ${normalizedDepth}`;
     },
 
     get genericWorkspaceItems() {
@@ -729,10 +784,13 @@ export default function presetEditor() {
         [key]: value,
       };
       if (key === "injection_position") {
-        nextPrompt[key] = Number(value);
+        nextPrompt[key] = this.normalizePromptPosition(value);
       }
       if (key === "injection_depth" || key === "injection_order") {
         nextPrompt[key] = Number(value);
+      }
+      if (key === "role") {
+        nextPrompt[key] = this.getPromptRoleValue({ role: value });
       }
 
       prompts[promptIndex] = nextPrompt;
@@ -804,7 +862,7 @@ export default function presetEditor() {
         ...prompts[promptIndex],
         injection_trigger: Array.from(selectedValues || [])
           .map((entry) => String(entry || "").trim())
-          .filter(Boolean),
+          .filter((entry) => VALID_PROMPT_TRIGGERS.has(entry)),
       };
       this.setByPath("prompts", prompts);
     },
@@ -880,6 +938,31 @@ export default function presetEditor() {
       }
       this.editingData[item.key] = value;
       this.dirtyPaths[item.key || item.id] = true;
+    },
+
+    resolveSelectOptionValue(item, rawValue) {
+      const options = Array.isArray(item?.editor?.options)
+        ? item.editor.options
+        : [];
+      const normalizedRawValue = String(rawValue ?? "");
+
+      const matchedOption = options.find((option) => {
+        const optionValue =
+          option && typeof option === "object" && "value" in option
+            ? option.value
+            : option;
+        return String(optionValue ?? "") === normalizedRawValue;
+      });
+
+      if (matchedOption === undefined) {
+        return rawValue;
+      }
+
+      return matchedOption &&
+        typeof matchedOption === "object" &&
+        "value" in matchedOption
+        ? matchedOption.value
+        : matchedOption;
     },
 
     moveListItem(path, fromIndex, toIndex) {
