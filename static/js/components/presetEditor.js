@@ -234,6 +234,29 @@ export default function presetEditor() {
       return this.editorView.family === "prompt_manager";
     },
 
+    get scalarWorkspace() {
+      return this.editorView.scalar_workspace || null;
+    },
+
+    get hasScalarWorkspace() {
+      return Boolean(this.scalarWorkspace);
+    },
+
+    get isScalarWorkspaceEditor() {
+      return Boolean(
+        this.editingPresetFile?.preset_kind === "textgen" &&
+        this.editorView.family === "prompt_manager" &&
+        this.activeWorkspace === "scalar_fields" &&
+        this.editorView.scalar_workspace,
+      );
+    },
+
+    get scalarWorkspaceSections() {
+      return Array.isArray(this.scalarWorkspace?.sections)
+        ? this.scalarWorkspace.sections
+        : [];
+    },
+
     get promptItems() {
       this.ensureEditorCollections();
       return this.promptItemsCache;
@@ -549,6 +572,9 @@ export default function presetEditor() {
         .trim()
         .toLowerCase();
       this.filteredItemsCache = (this.editorView.items || []).filter((item) => {
+        if (this.isScalarWorkspaceEditor && item.group === "scalar_fields") {
+          return false;
+        }
         if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
           return false;
         }
@@ -584,6 +610,8 @@ export default function presetEditor() {
       if (!this.isPromptWorkspaceEditor) {
         this.genericWorkspaceItemsCache = this.filteredItemsCache;
       } else if (!this.activeWorkspace || this.activeWorkspace === "prompts") {
+        this.genericWorkspaceItemsCache = [];
+      } else if (this.isScalarWorkspaceEditor) {
         this.genericWorkspaceItemsCache = [];
       } else {
         this.genericWorkspaceItemsCache = (this.editorView.items || []).filter(
@@ -1115,6 +1143,31 @@ export default function presetEditor() {
         return this.getByPath(item.value_path);
       }
       return this.editingData?.[item.key];
+    },
+
+    getScalarWorkspaceFieldValue(fieldKey) {
+      const meta = this.scalarWorkspace?.field_map?.[fieldKey];
+      const storageKey = meta?.storage_key || fieldKey;
+      return this.getByPath(storageKey);
+    },
+
+    setScalarWorkspaceFieldValue(fieldKey, value) {
+      if (!this.editingData) return;
+      const meta = this.scalarWorkspace?.field_map?.[fieldKey];
+      this.setByPath(meta?.storage_key || fieldKey, value);
+    },
+
+    getScalarWorkspaceSectionEntries(sectionId) {
+      const hiddenFields = new Set(this.scalarWorkspace?.hidden_fields || []);
+      return Object.entries(this.scalarWorkspace?.field_map || {})
+        .filter(([fieldKey]) => !hiddenFields.has(fieldKey))
+        .filter(([, meta]) => meta?.section === sectionId)
+        .map(([fieldKey, meta]) => ({
+          fieldKey,
+          storage_key: meta?.storage_key || fieldKey,
+          canonical_key: meta?.canonical_key || fieldKey,
+          ...meta,
+        }));
     },
 
     setFieldValue(item, value) {

@@ -611,8 +611,239 @@
             </div>
           </template>
 
+          <template x-if="isScalarWorkspaceEditor">
+            <div class="space-y-4">
+              <div
+                class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-2"
+              >
+                <div class="text-xs text-[var(--text-dim)]">参数工作区</div>
+                <div class="text-sm font-bold text-[var(--text-main)]">
+                  分组参数编辑
+                </div>
+                <div class="text-[11px] text-[var(--text-dim)]">
+                  按 reader_view 提供的 section
+                  分组编辑可见参数，未分组字段会自动落入兜底区域。
+                </div>
+              </div>
+
+              <template
+                x-for="section in scalarWorkspaceSections"
+                :key="section.id"
+              >
+                <section
+                  class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] overflow-hidden"
+                >
+                  <div class="px-5 py-4 border-b border-[var(--border-light)]">
+                    <div
+                      class="text-base font-bold text-[var(--text-main)]"
+                      x-text="section.label || section.id"
+                    ></div>
+                    <div class="text-[11px] text-[var(--text-dim)]">
+                      当前分组参数会直接写回对应 storage key。
+                    </div>
+                  </div>
+                  <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <template
+                      x-for="field in getScalarWorkspaceSectionEntries(section.id)"
+                      :key="field.storage_key"
+                    >
+                      <label
+                        class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-2"
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div
+                              class="text-sm font-semibold text-[var(--text-main)]"
+                              x-text="field.label || field.canonical_key || field.fieldKey"
+                            ></div>
+                            <div
+                              class="text-[11px] font-mono text-[var(--text-dim)] break-all"
+                              x-text="field.storage_key"
+                            ></div>
+                          </div>
+                          <span
+                            class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                            x-text="field.editor || 'text'"
+                          ></span>
+                        </div>
+
+                        <template x-if="field.editor === 'boolean'">
+                          <div
+                            class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] px-3 py-2"
+                          >
+                            <span class="text-sm text-[var(--text-main)]"
+                              >启用</span
+                            >
+                            <input
+                              type="checkbox"
+                              class="rounded"
+                              :checked="Boolean(getScalarWorkspaceFieldValue(field.storage_key))"
+                              @change="setScalarWorkspaceFieldValue(field.storage_key, $event.target.checked)"
+                            />
+                          </div>
+                        </template>
+
+                        <template x-if="field.editor === 'number'">
+                          <input
+                            type="number"
+                            step="0.01"
+                            class="form-input"
+                            :value="getScalarWorkspaceFieldValue(field.storage_key) ?? 0"
+                            @input="setScalarWorkspaceFieldValue(field.storage_key, Number($event.target.value))"
+                          />
+                        </template>
+
+                        <template x-if="field.editor === 'textarea'">
+                          <textarea
+                            class="form-textarea min-h-[180px] w-full max-w-full min-w-0 custom-scrollbar"
+                            :value="getScalarWorkspaceFieldValue(field.storage_key) || ''"
+                            @input="setScalarWorkspaceFieldValue(field.storage_key, $event.target.value)"
+                          ></textarea>
+                        </template>
+
+                        <template
+                          x-if="field.editor === 'sortable-string-list'"
+                        >
+                          <div class="space-y-2">
+                            <template
+                              x-for="(entry, index) in (Array.isArray(getScalarWorkspaceFieldValue(field.storage_key)) ? getScalarWorkspaceFieldValue(field.storage_key) : [])"
+                              :key="`${field.storage_key}-${index}`"
+                            >
+                              <div
+                                class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3 flex items-center gap-2"
+                              >
+                                <input
+                                  class="form-input flex-1"
+                                  :value="entry || ''"
+                                  @input="updateStringListItem(field.storage_key, index, $event.target.value)"
+                                />
+                                <button
+                                  @click="moveListItem(field.storage_key, index, index - 1)"
+                                  class="btn-secondary px-3 py-1.5 text-xs rounded"
+                                  :disabled="index === 0"
+                                >
+                                  上移
+                                </button>
+                                <button
+                                  @click="moveListItem(field.storage_key, index, index + 1)"
+                                  class="btn-secondary px-3 py-1.5 text-xs rounded"
+                                  :disabled="index === ((Array.isArray(getScalarWorkspaceFieldValue(field.storage_key)) ? getScalarWorkspaceFieldValue(field.storage_key).length : 0) - 1)"
+                                >
+                                  下移
+                                </button>
+                                <button
+                                  @click="removeStringListItem(field.storage_key, index)"
+                                  class="btn-secondary px-3 py-1.5 text-xs rounded hover:text-red-300"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </template>
+                            <button
+                              @click="addStringListItem(field.storage_key)"
+                              class="btn-secondary px-3 py-1.5 text-xs rounded"
+                            >
+                              添加项
+                            </button>
+                          </div>
+                        </template>
+
+                        <template x-if="field.editor === 'key-value-list'">
+                          <div class="space-y-2">
+                            <template
+                              x-for="(entry, index) in (Array.isArray(getScalarWorkspaceFieldValue(field.storage_key)) ? getScalarWorkspaceFieldValue(field.storage_key) : [])"
+                              :key="`${field.storage_key}-bias-${index}`"
+                            >
+                              <div
+                                class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_8rem_auto] gap-2 rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
+                              >
+                                <input
+                                  class="form-input"
+                                  :value="entry.text || ''"
+                                  @input="updateBiasEntry(index, 'text', $event.target.value)"
+                                />
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  class="form-input"
+                                  :value="entry.value ?? 0"
+                                  @input="updateBiasEntry(index, 'value', $event.target.value)"
+                                />
+                                <button
+                                  @click="removeBiasEntry(index)"
+                                  class="btn-secondary px-3 py-1.5 text-xs rounded hover:text-red-300"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </template>
+                            <button
+                              @click="addBiasEntry()"
+                              class="btn-secondary px-3 py-1.5 text-xs rounded"
+                            >
+                              添加 Bias
+                            </button>
+                          </div>
+                        </template>
+
+                        <template
+                          x-if="!['number', 'boolean', 'textarea', 'sortable-string-list', 'key-value-list'].includes(field.editor)"
+                        >
+                          <pre
+                            class="text-xs font-mono whitespace-pre-wrap break-words rounded-xl border border-[var(--border-light)] bg-black/20 p-4 text-[var(--text-sub)] max-h-[18rem] overflow-auto custom-scrollbar"
+                            x-text="formatValue(getScalarWorkspaceFieldValue(field.storage_key))"
+                          ></pre>
+                        </template>
+
+                        <div
+                          class="text-[11px] text-[var(--text-dim)]"
+                          x-text="field.description || field.summary || field.canonical_key || '按工作区元数据直接写回字段。'"
+                        ></div>
+                      </label>
+                    </template>
+                  </div>
+                </section>
+              </template>
+
+              <section
+                x-show="getScalarWorkspaceSectionEntries(null).length || getScalarWorkspaceSectionEntries('').length"
+                class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] overflow-hidden"
+              >
+                <div class="px-5 py-4 border-b border-[var(--border-light)]">
+                  <div class="text-base font-bold text-[var(--text-main)]">
+                    其他参数
+                  </div>
+                  <div class="text-[11px] text-[var(--text-dim)]">
+                    section 缺失时显示在这里，避免可编辑字段丢失。
+                  </div>
+                </div>
+                <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <template
+                    x-for="field in [...getScalarWorkspaceSectionEntries(null), ...getScalarWorkspaceSectionEntries('')]"
+                    :key="`fallback-${field.storage_key}`"
+                  >
+                    <label
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-2"
+                    >
+                      <div
+                        class="text-sm font-semibold text-[var(--text-main)]"
+                        x-text="field.label || field.canonical_key || field.fieldKey"
+                      ></div>
+                      <input
+                        type="text"
+                        class="form-input"
+                        :value="getScalarWorkspaceFieldValue(field.storage_key) || ''"
+                        @input="setScalarWorkspaceFieldValue(field.storage_key, $event.target.value)"
+                      />
+                    </label>
+                  </template>
+                </div>
+              </section>
+            </div>
+          </template>
+
           <template
-            x-if="!isPromptWorkspaceEditor || activeWorkspace !== 'prompts'"
+            x-if="!isPromptWorkspaceEditor || (activeWorkspace !== 'prompts' && !isScalarWorkspaceEditor)"
           >
             <div
               class="grid grid-cols-1 xl:grid-cols-[20rem_minmax(0,1fr)] gap-4 h-full min-h-0"

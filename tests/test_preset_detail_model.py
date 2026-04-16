@@ -349,6 +349,234 @@ def test_preset_detail_reader_view_handles_malformed_prompt_position_values(monk
     assert '相对位置' in prompt_items[0]['summary']
 
 
+def test_preset_detail_reader_view_exposes_scalar_workspace_for_textgen_prompt_manager(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'st-params.json',
+        {
+            'name': 'ST Params',
+            'temp': 0.8,
+            'top_k': 40,
+            'top_p': 0.92,
+            'min_p': 0.1,
+            'rep_pen': 1.1,
+            'freq_pen': 0.2,
+            'pres_pen': 0.1,
+            'temperature_last': True,
+            'dynatemp': True,
+            'min_temp': 0.5,
+            'max_temp': 1.2,
+            'mirostat_mode': 2,
+            'mirostat_tau': 5,
+            'mirostat_eta': 0.1,
+            'guidance_scale': 1.5,
+            'negative_prompt': 'avoid repetition',
+            'json_schema': '{"type":"object"}',
+            'grammar_string': 'root ::= "hi"',
+            'banned_tokens': 'bad\nword',
+            'logit_bias': [{'text': 'forbidden', 'value': -10}],
+            'sampler_order': ['temperature', 'top_p'],
+            'samplers': ['top_p', 'min_p'],
+            'top_a': 0.4,
+            'typical_p': 0.95,
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                }
+            ],
+            'prompt_order': ['main'],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::st-params.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    reader_view = payload['preset']['reader_view']
+    scalar_workspace = reader_view['scalar_workspace']
+
+    assert reader_view['family'] == 'prompt_manager'
+    assert scalar_workspace['profile_id'] == 'st_textgen_parameter_workspace'
+    assert [section['id'] for section in scalar_workspace['sections']] == [
+        'core_sampling',
+        'penalties',
+        'advanced_sampling',
+        'constraints_and_control',
+        'sampler_ordering',
+    ]
+    assert scalar_workspace['field_map']['temp']['label'] == '温度'
+    assert scalar_workspace['field_map']['rep_pen']['label'] == '重复惩罚'
+    assert scalar_workspace['field_map']['guidance_scale']['section'] == 'constraints_and_control'
+    assert scalar_workspace['field_map']['sampler_order']['section'] == 'sampler_ordering'
+    assert 'top_a' in scalar_workspace['hidden_fields']
+    assert 'typical_p' in scalar_workspace['hidden_fields']
+
+
+def test_preset_detail_scalar_workspace_field_map_resolves_aliases_to_canonical_entries(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'alias-params.json',
+        {
+            'name': 'Alias Params',
+            'temp': 0.7,
+            'rep_pen': 1.2,
+            'freq_pen': 0.3,
+            'pres_pen': 0.4,
+            'dynatemp': True,
+            'min_temp': 0.4,
+            'max_temp': 1.1,
+            'grammar_string': 'root ::= "ok"',
+            'prompts': [{'identifier': 'main', 'content': 'hello'}],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::alias-params.json')
+
+    assert res.status_code == 200
+    scalar_workspace = res.get_json()['preset']['reader_view']['scalar_workspace']
+
+    assert scalar_workspace['field_map']['rep_pen']['canonical_key'] == 'repetition_penalty'
+    assert scalar_workspace['field_map']['freq_pen']['canonical_key'] == 'frequency_penalty'
+    assert scalar_workspace['field_map']['pres_pen']['canonical_key'] == 'presence_penalty'
+    assert scalar_workspace['field_map']['dynatemp']['canonical_key'] == 'dynamic_temperature'
+    assert scalar_workspace['field_map']['min_temp']['canonical_key'] == 'dynatemp_low'
+    assert scalar_workspace['field_map']['max_temp']['canonical_key'] == 'dynatemp_high'
+    assert scalar_workspace['field_map']['grammar_string']['canonical_key'] == 'grammar'
+
+
+def test_preset_detail_scalar_workspace_hides_non_st_scalar_fields_from_reader_items(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'hidden-params.json',
+        {
+            'name': 'Hidden Params',
+            'temp': 0.8,
+            'top_a': 0.4,
+            'typical_p': 0.95,
+            'xtc_threshold': 0.2,
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                }
+            ],
+            'prompt_order': ['main'],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::hidden-params.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    reader_view = preset['reader_view']
+    scalar_item_keys = [
+        item.get('source_key')
+        for item in reader_view['items']
+        if item.get('group') == 'scalar_fields'
+    ]
+
+    assert 'temp' in scalar_item_keys
+    assert 'top_a' not in scalar_item_keys
+    assert 'typical_p' not in scalar_item_keys
+    assert 'xtc_threshold' not in scalar_item_keys
+    assert preset['raw_data']['top_a'] == 0.4
+
+
+def test_preset_detail_reader_view_does_not_expose_scalar_workspace_for_non_textgen_prompt_manager(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'instruct-overlap.json',
+        {
+            'name': 'Instruct Overlap',
+            'temperature': 0.8,
+            'grammar': 'root ::= "ok"',
+            'input_sequence': 'User:',
+            'output_sequence': 'Assistant:',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': 'hello',
+                }
+            ],
+            'prompt_order': ['main'],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::instruct-overlap.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    preset = payload['preset']
+    assert preset['preset_kind'] == 'instruct'
+    assert preset['reader_view']['family'] == 'prompt_manager'
+    assert preset['reader_view']['scalar_workspace'] is None
+
+
+def test_merge_preset_content_preserves_hidden_textgen_fields_when_visible_workspace_fields_change():
+    raw_data = {
+        'temp': 0.7,
+        'top_a': 0.35,
+        'typical_p': 0.9,
+        'xtc_threshold': 0.2,
+        'prompts': [{'identifier': 'main', 'content': 'hello'}],
+    }
+
+    merged = presets_api.merge_preset_content(
+        raw_data,
+        'textgen',
+        {
+            'temp': 1.05,
+            'prompts': [{'identifier': 'main', 'content': 'hello'}],
+        },
+    )
+
+    assert merged['temp'] == 1.05
+    assert merged['top_a'] == 0.35
+    assert merged['typical_p'] == 0.9
+    assert merged['xtc_threshold'] == 0.2
+
+
 def test_preset_detail_handles_non_dict_json_root(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(presets_dir / 'list-root.json', ['bad', 'root'])

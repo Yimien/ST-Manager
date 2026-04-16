@@ -131,6 +131,10 @@ export default function presetDetailReader() {
           family_label: view.family_label || "通用预设",
           groups: Array.isArray(view.groups) ? view.groups : [],
           items: view.items,
+          scalar_workspace:
+            view.scalar_workspace && typeof view.scalar_workspace === "object"
+              ? view.scalar_workspace
+              : null,
           stats: view.stats && typeof view.stats === "object" ? view.stats : {},
         };
       }
@@ -139,6 +143,7 @@ export default function presetDetailReader() {
         family_label: "通用预设",
         groups: [],
         items: [],
+        scalar_workspace: null,
         stats: {
           total_count: 0,
         },
@@ -161,6 +166,80 @@ export default function presetDetailReader() {
 
     get isPromptWorkspaceReader() {
       return this.readerView.family === "prompt_manager";
+    },
+
+    get scalarWorkspace() {
+      return this.readerView.scalar_workspace || null;
+    },
+
+    get hasScalarWorkspace() {
+      return !!this.scalarWorkspace;
+    },
+
+    get isScalarWorkspaceReader() {
+      return (
+        this.readerView.family === "prompt_manager" &&
+        this.activeWorkspace === "scalar_fields" &&
+        this.hasScalarWorkspace
+      );
+    },
+
+    get scalarWorkspaceSections() {
+      return Array.isArray(this.scalarWorkspace?.sections)
+        ? this.scalarWorkspace.sections
+        : [];
+    },
+
+    get scalarWorkspaceVisibleFieldEntries() {
+      const fieldEntries = Object.entries(this.scalarWorkspace?.field_map || {});
+      const hiddenFields = new Set(this.scalarWorkspace?.hidden_fields || []);
+      const query = normalizeText(this.searchTerm);
+
+      return fieldEntries.filter(([fieldKey, fieldConfig]) => {
+        if (hiddenFields.has(fieldKey)) {
+          return false;
+        }
+
+        if (!query) {
+          return true;
+        }
+
+        const haystack = [
+          fieldKey,
+          fieldConfig?.canonical_key,
+          fieldConfig?.label,
+          fieldConfig?.section,
+        ]
+          .map(normalizeText)
+          .filter(Boolean)
+          .join(" ");
+        return haystack.includes(query);
+      });
+    },
+
+    get scalarWorkspaceTotalVisibleFieldCount() {
+      const fieldEntries = Object.entries(this.scalarWorkspace?.field_map || {});
+      const hiddenFields = new Set(this.scalarWorkspace?.hidden_fields || []);
+      return fieldEntries.filter(([fieldKey]) => !hiddenFields.has(fieldKey)).length;
+    },
+
+    get scalarWorkspaceSummaryCards() {
+      return [
+        {
+          id: "visible_fields",
+          label: "可见字段",
+          value: this.scalarWorkspaceVisibleFieldEntries.length,
+        },
+        {
+          id: "sections",
+          label: "分区数量",
+          value: this.scalarWorkspaceSections.length,
+        },
+      ];
+    },
+
+    get scalarWorkspaceCards() {
+      return this.scalarWorkspaceSummaryCards;
     },
 
     get promptItems() {
@@ -246,10 +325,14 @@ export default function presetDetailReader() {
     initializeReaderState() {
       this.bindReaderControlCaches();
       if (this.isPromptWorkspaceReader) {
-        this.activeWorkspace =
-          this.readerGroups.find((group) => group.id === "prompts")?.id ||
-          this.readerGroups[0]?.id ||
-          "prompts";
+        const availableWorkspaces = new Set(
+          this.readerGroups.map((group) => group.id).filter(Boolean),
+        );
+        this.activeWorkspace = availableWorkspaces.has(this.activeWorkspace)
+          ? this.activeWorkspace
+          : this.readerGroups.find((group) => group.id === "prompts")?.id ||
+            this.readerGroups[0]?.id ||
+            "prompts";
         this.activeGroup = "all";
         this.activeItemId = "";
         this.refreshReaderCollections();
@@ -393,6 +476,10 @@ export default function presetDetailReader() {
       );
 
       this.filteredItemsCache = this.readerItems.filter((item) => {
+        if (this.isScalarWorkspaceReader && item.group === "scalar_fields") {
+          return false;
+        }
+
         if (this.activeGroup !== "all" && item.group !== this.activeGroup) {
           return false;
         }
@@ -435,8 +522,7 @@ export default function presetDetailReader() {
       } else if (!this.filteredItemsCache.length) {
         this.activeItemCache = null;
       } else {
-        this.activeItemCache =
-          this.filteredItemsCache[0] || this.readerItems[0] || null;
+        this.activeItemCache = this.filteredItemsCache[0] || null;
       }
       this.activeItemId = this.activeItemCache?.id || "";
 
@@ -455,9 +541,13 @@ export default function presetDetailReader() {
 
       const stats = this.readerView.stats || {};
       this.readerStatsCache = {
-        total_count: Number(stats.total_count) || this.readerItems.length,
+        total_count: this.isScalarWorkspaceReader
+          ? this.scalarWorkspaceTotalVisibleFieldCount
+          : Number(stats.total_count) || this.readerItems.length,
         visible_count:
-          this.isPromptWorkspaceReader && this.activeWorkspace === "prompts"
+          this.isScalarWorkspaceReader
+            ? this.scalarWorkspaceVisibleFieldEntries.length
+            : this.isPromptWorkspaceReader && this.activeWorkspace === "prompts"
             ? this.promptFilteredItemsCache.length
             : this.filteredItemsCache.length,
       };
@@ -557,6 +647,22 @@ export default function presetDetailReader() {
     getPromptMarkerIcon(item) {
       const visual = this.getPromptMarkerVisual(item);
       return buildPromptMarkerIcon(visual);
+    },
+
+    getScalarWorkspaceFieldValue(fieldKey) {
+      const fieldConfig = this.scalarWorkspace?.field_map?.[fieldKey] || {};
+      const rawData = this.activePresetDetail?.raw_data || {};
+      const valueKey =
+        fieldConfig.storage_key || fieldKey || fieldConfig.canonical_key || "";
+      return rawData[valueKey];
+    },
+
+    getScalarWorkspaceFieldSummary(fieldKey) {
+      return this.formatValue(this.getScalarWorkspaceFieldValue(fieldKey));
+    },
+
+    getScalarWorkspaceFieldDisplay(fieldKey) {
+      return this.getScalarWorkspaceFieldSummary(fieldKey);
     },
 
     openFullscreenEditor(options = {}) {

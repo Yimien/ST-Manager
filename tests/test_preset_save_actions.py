@@ -72,6 +72,60 @@ def test_preset_save_overwrite_preserves_unknown_fields(monkeypatch, tmp_path):
     assert payload['extensions'] == {'regex_scripts': []}
 
 
+def test_preset_save_overwrite_keeps_hidden_textgen_scalar_workspace_fields(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    preset_file = presets_dir / 'textgen.json'
+    _write_json(
+        preset_file,
+        {
+            'name': 'Textgen',
+            'temp': 0.7,
+            'rep_pen': 1.1,
+            'samplers': ['top_p', 'min_p'],
+            'top_a': 0.2,
+            'typical_p': 0.9,
+            'xtc_threshold': 0.15,
+            'prompts': [{'identifier': 'main', 'content': 'hello'}],
+        },
+    )
+
+    _configure(monkeypatch, tmp_path, presets_dir)
+
+    client = _make_test_app().test_client()
+    detail_res = client.get('/api/presets/detail/global::textgen.json')
+    detail_payload = detail_res.get_json()['preset']
+    revision = detail_payload['source_revision']
+
+    assert detail_payload['reader_view']['scalar_workspace'] is not None
+    assert 'top_a' in detail_payload['reader_view']['scalar_workspace']['hidden_fields']
+
+    save_res = client.post(
+        '/api/presets/save',
+        json={
+            'preset_id': 'global::textgen.json',
+            'preset_kind': 'textgen',
+            'save_mode': 'overwrite',
+            'source_revision': revision,
+            'content': {
+                'name': 'Textgen',
+                'temp': 0.95,
+                'rep_pen': 1.4,
+                'samplers': ['temperature', 'top_p'],
+                'prompts': [{'identifier': 'main', 'content': 'hello'}],
+            },
+        },
+    )
+
+    assert save_res.status_code == 200
+    payload = json.loads(preset_file.read_text(encoding='utf-8'))
+    assert payload['temp'] == 0.95
+    assert payload['rep_pen'] == 1.4
+    assert payload['samplers'] == ['temperature', 'top_p']
+    assert payload['top_a'] == 0.2
+    assert payload['typical_p'] == 0.9
+    assert payload['xtc_threshold'] == 0.15
+
+
 def test_preset_save_overwrite_ignores_removed_unknown_fields_and_preserves_unedited_keys(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     preset_file = presets_dir / 'textgen.json'

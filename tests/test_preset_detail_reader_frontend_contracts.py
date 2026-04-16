@@ -131,6 +131,19 @@ def test_preset_detail_reader_js_exposes_prompt_workspace_helpers():
     assert 'getPromptPositionLabel(item) {' in source
 
 
+def test_preset_detail_reader_js_exposes_scalar_workspace_helpers():
+    source = read_project_file('static/js/components/presetDetailReader.js')
+
+    assert 'get scalarWorkspace() {' in source
+    assert 'get hasScalarWorkspace() {' in source
+    assert 'get isScalarWorkspaceReader() {' in source
+    assert 'get scalarWorkspaceSections() {' in source
+    assert 'get scalarWorkspaceVisibleFieldEntries() {' in source
+    assert 'get scalarWorkspaceSummaryCards() {' in source
+    assert 'getScalarWorkspaceFieldValue(fieldKey) {' in source
+    assert 'getScalarWorkspaceFieldSummary(fieldKey) {' in source
+
+
 def test_preset_detail_reader_template_compacts_prompt_list_metadata_row():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
@@ -279,6 +292,218 @@ def test_preset_detail_reader_runtime_preserves_items_when_reader_groups_are_mis
         }
         if (reader.readerStats.total_count !== 1) {
           throw new Error(`expected stats total count to stay intact, got ${reader.readerStats.total_count}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_uses_scalar_workspace_overview_and_keeps_hidden_fields_out_of_search():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompt 条目' },
+              { id: 'scalar_fields', label: '基础字段' },
+            ],
+            items: [
+              { id: 'field:temp', type: 'field', group: 'scalar_fields', title: 'temp', source_key: 'temp', value_path: 'temp', payload: { key: 'temp', value: 0.8 } },
+              { id: 'field:top_a', type: 'field', group: 'scalar_fields', title: 'top_a', source_key: 'top_a', value_path: 'top_a', payload: { key: 'top_a', value: 0.3 } },
+            ],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+                { id: 'penalties', label: '惩罚参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+              },
+              hidden_fields: ['top_a'],
+              aliases: { temp: 'temperature' },
+            },
+            stats: {},
+          },
+          raw_data: { temp: 0.8, top_a: 0.3 },
+        };
+
+        reader.activeWorkspace = 'scalar_fields';
+        reader.initializeReaderState();
+
+        if (!Array.isArray(reader.scalarWorkspaceSections)) {
+          throw new Error(`expected scalarWorkspaceSections helper array, got ${JSON.stringify(reader.scalarWorkspaceSections)}`);
+        }
+        if (typeof reader.getScalarWorkspaceFieldValue !== 'function') {
+          throw new Error(`expected getScalarWorkspaceFieldValue helper function, got ${typeof reader.getScalarWorkspaceFieldValue}`);
+        }
+        if (!reader.isScalarWorkspaceReader) {
+          throw new Error('expected scalar workspace reader mode to activate');
+        }
+        if (JSON.stringify(reader.scalarWorkspaceSections.map((section) => section.id)) !== JSON.stringify(['core_sampling', 'penalties'])) {
+          throw new Error(`expected scalar workspace sections, got ${JSON.stringify(reader.scalarWorkspaceSections.map((section) => section.id))}`);
+        }
+        if (reader.getScalarWorkspaceFieldValue('temp') !== 0.8) {
+          throw new Error(`expected field read by storage key, got ${JSON.stringify(reader.getScalarWorkspaceFieldValue('temp'))}`);
+        }
+
+        reader.searchTerm = 'top_a';
+        if (reader.scalarWorkspaceVisibleFieldEntries.length !== 0) {
+          throw new Error(`expected hidden field search to stay hidden, got ${JSON.stringify(reader.scalarWorkspaceVisibleFieldEntries)}`);
+        }
+
+        reader.searchTerm = '温度';
+        if (reader.scalarWorkspaceVisibleFieldEntries.length !== 1) {
+          throw new Error(`expected visible scalar workspace search result, got ${JSON.stringify(reader.scalarWorkspaceVisibleFieldEntries)}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_scalar_workspace_does_not_leak_hidden_scalar_item_into_active_context():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompt 条目' },
+              { id: 'scalar_fields', label: '基础字段' },
+            ],
+            items: [
+              { id: 'field:temp', type: 'field', group: 'scalar_fields', title: 'temp', source_key: 'temp', value_path: 'temp', payload: { key: 'temp', value: 0.8 } },
+              { id: 'field:top_a', type: 'field', group: 'scalar_fields', title: 'top_a', source_key: 'top_a', value_path: 'top_a', payload: { key: 'top_a', value: 0.3 } },
+            ],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+              },
+              hidden_fields: ['top_a'],
+              aliases: { temp: 'temperature' },
+            },
+            stats: {},
+          },
+          raw_data: { temp: 0.8, top_a: 0.3 },
+        };
+
+        reader.activeWorkspace = 'scalar_fields';
+        reader.initializeReaderState();
+        reader.searchTerm = 'top_a';
+        reader.refreshReaderCollections();
+
+        if (reader.filteredItems.length !== 0) {
+          throw new Error(`expected generic filtered items to stay empty in scalar workspace hidden-field search, got ${JSON.stringify(reader.filteredItems.map((item) => item.id))}`);
+        }
+        if (reader.activeItem !== null) {
+          throw new Error(`expected no active generic item in scalar workspace hidden-field search, got ${reader.activeItem?.id}`);
+        }
+        if (reader.activeContextItem !== null) {
+          throw new Error(`expected no active context item leak for hidden scalar field, got ${reader.activeContextItem?.id}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_scalar_workspace_visible_count_tracks_visible_workspace_entries():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompt 条目' },
+              { id: 'scalar_fields', label: '基础字段' },
+            ],
+            items: [
+              { id: 'field:temp', type: 'field', group: 'scalar_fields', title: 'temp', source_key: 'temp', value_path: 'temp', payload: { key: 'temp', value: 0.8 } },
+              { id: 'field:rep_pen', type: 'field', group: 'scalar_fields', title: 'rep_pen', source_key: 'rep_pen', value_path: 'rep_pen', payload: { key: 'rep_pen', value: 1.1 } },
+            ],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+                { id: 'penalties', label: '惩罚参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+                rep_pen: { canonical_key: 'repetition_penalty', section: 'penalties', label: '重复惩罚', storage_key: 'rep_pen', editor: 'number' },
+              },
+              hidden_fields: [],
+              aliases: { temp: 'temperature', rep_pen: 'repetition_penalty' },
+            },
+            stats: {},
+          },
+          raw_data: { temp: 0.8, rep_pen: 1.1 },
+        };
+
+        reader.activeWorkspace = 'scalar_fields';
+        reader.initializeReaderState();
+
+        if (reader.scalarWorkspaceVisibleFieldEntries.length !== 2) {
+          throw new Error(`expected two visible scalar workspace entries, got ${reader.scalarWorkspaceVisibleFieldEntries.length}`);
+        }
+        if (reader.readerStats.visible_count !== 2) {
+          throw new Error(`expected visible_count to track scalar workspace entries, got ${reader.readerStats.visible_count}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_scalar_workspace_total_count_tracks_workspace_entry_total():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompt 条目' },
+              { id: 'scalar_fields', label: '基础字段' },
+              { id: 'extensions', label: '扩展设置' },
+            ],
+            items: [
+              { id: 'prompt:main', type: 'prompt', group: 'prompts', title: 'Main', payload: { identifier: 'main', content: 'hello' }, prompt_meta: { order_index: 0 } },
+              { id: 'field:temp', type: 'field', group: 'scalar_fields', title: 'temp', source_key: 'temp', value_path: 'temp', payload: { key: 'temp', value: 0.8 } },
+              { id: 'field:rep_pen', type: 'field', group: 'scalar_fields', title: 'rep_pen', source_key: 'rep_pen', value_path: 'rep_pen', payload: { key: 'rep_pen', value: 1.1 } },
+              { id: 'ext:memory', type: 'extension', group: 'extensions', title: 'Memory', payload: { value: { enabled: true } } },
+            ],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+                { id: 'penalties', label: '惩罚参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+                rep_pen: { canonical_key: 'repetition_penalty', section: 'penalties', label: '重复惩罚', storage_key: 'rep_pen', editor: 'number' },
+              },
+              hidden_fields: [],
+              aliases: { temp: 'temperature', rep_pen: 'repetition_penalty' },
+            },
+            stats: { total_count: 4 },
+          },
+          raw_data: { temp: 0.8, rep_pen: 1.1 },
+        };
+
+        reader.activeWorkspace = 'scalar_fields';
+        reader.initializeReaderState();
+
+        if (reader.readerStats.visible_count !== 2) {
+          throw new Error(`expected scalar workspace visible_count 2, got ${reader.readerStats.visible_count}`);
+        }
+        if (reader.readerStats.total_count !== 2) {
+          throw new Error(`expected scalar workspace total_count 2, got ${reader.readerStats.total_count}`);
+        }
+
+        reader.searchTerm = '温度';
+        if (reader.readerStats.visible_count !== 1) {
+          throw new Error(`expected narrowed scalar visible_count 1, got ${reader.readerStats.visible_count}`);
+        }
+        if (reader.readerStats.total_count !== 2) {
+          throw new Error(`expected scalar workspace total_count to stay 2 after search, got ${reader.readerStats.total_count}`);
         }
         """
     )
@@ -842,6 +1067,24 @@ def test_preset_detail_reader_template_adds_prompt_workspace_branch_contracts():
     assert '启用' in source
     assert '禁用' in source
     assert '预留字段' in source
+
+
+def test_preset_detail_reader_template_exposes_scalar_workspace_overview_branch():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'x-if="isScalarWorkspaceReader"' in source
+    assert '参数概览' in source
+    assert '高级参数摘要' in source
+    assert 'x-for="section in scalarWorkspaceSections"' in source
+    assert 'x-for="entry in scalarWorkspaceVisibleFieldEntries"' in source
+
+
+def test_preset_detail_reader_template_scalar_workspace_header_uses_visible_count():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'isScalarWorkspaceReader' in source
+    assert '`${readerStats.visible_count} / ${readerStats.total_count}`' in source
+    assert "isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${promptFilteredItems.length} / ${orderedPromptItems.length}` : `${filteredItems.length} / ${readerStats.total_count}`" not in source
 
 
 def test_preset_detail_reader_template_removes_marker_placeholder_copy():

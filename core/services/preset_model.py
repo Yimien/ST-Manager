@@ -82,6 +82,194 @@ PROMPT_INJECTION_POSITION_LABELS = {
     1: 'In-Chat 注入',
 }
 
+SCALAR_WORKSPACE_PROFILE_ID = 'st_textgen_parameter_workspace'
+
+SCALAR_WORKSPACE_SECTIONS = [
+    {'id': 'core_sampling', 'label': '核心采样'},
+    {'id': 'penalties', 'label': '惩罚'},
+    {'id': 'advanced_sampling', 'label': '高级采样'},
+    {'id': 'constraints_and_control', 'label': '约束与控制'},
+    {'id': 'sampler_ordering', 'label': '采样器排序'},
+]
+
+SCALAR_WORKSPACE_FIELD_DEFS = [
+    {
+        'canonical_key': 'temp',
+        'storage_keys': ['temp', 'temperature'],
+        'section': 'core_sampling',
+        'label': '温度',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'top_p',
+        'storage_keys': ['top_p'],
+        'section': 'core_sampling',
+        'label': 'Top P',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'top_k',
+        'storage_keys': ['top_k'],
+        'section': 'core_sampling',
+        'label': 'Top K',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'min_p',
+        'storage_keys': ['min_p'],
+        'section': 'core_sampling',
+        'label': 'Min P',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'repetition_penalty',
+        'storage_keys': ['repetition_penalty', 'rep_pen'],
+        'section': 'penalties',
+        'label': '重复惩罚',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'frequency_penalty',
+        'storage_keys': ['frequency_penalty', 'freq_pen'],
+        'section': 'penalties',
+        'label': '频率惩罚',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'presence_penalty',
+        'storage_keys': ['presence_penalty', 'pres_pen'],
+        'section': 'penalties',
+        'label': '存在惩罚',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'temperature_last',
+        'storage_keys': ['temperature_last'],
+        'section': 'advanced_sampling',
+        'label': 'Temperature Last',
+        'editor': 'boolean',
+    },
+    {
+        'canonical_key': 'dynamic_temperature',
+        'storage_keys': ['dynamic_temperature', 'dynatemp'],
+        'section': 'advanced_sampling',
+        'label': '动态温度',
+        'editor': 'boolean',
+    },
+    {
+        'canonical_key': 'dynatemp_low',
+        'storage_keys': ['dynatemp_low', 'min_temp'],
+        'section': 'advanced_sampling',
+        'label': '动态温度下限',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'dynatemp_high',
+        'storage_keys': ['dynatemp_high', 'max_temp'],
+        'section': 'advanced_sampling',
+        'label': '动态温度上限',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'mirostat_mode',
+        'storage_keys': ['mirostat_mode'],
+        'section': 'advanced_sampling',
+        'label': 'Mirostat 模式',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'mirostat_tau',
+        'storage_keys': ['mirostat_tau'],
+        'section': 'advanced_sampling',
+        'label': 'Mirostat Tau',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'mirostat_eta',
+        'storage_keys': ['mirostat_eta'],
+        'section': 'advanced_sampling',
+        'label': 'Mirostat Eta',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'guidance_scale',
+        'storage_keys': ['guidance_scale'],
+        'section': 'constraints_and_control',
+        'label': 'Guidance Scale',
+        'editor': 'number',
+    },
+    {
+        'canonical_key': 'negative_prompt',
+        'storage_keys': ['negative_prompt'],
+        'section': 'constraints_and_control',
+        'label': 'Negative Prompt',
+        'editor': 'textarea',
+    },
+    {
+        'canonical_key': 'json_schema',
+        'storage_keys': ['json_schema'],
+        'section': 'constraints_and_control',
+        'label': 'JSON Schema',
+        'editor': 'textarea',
+    },
+    {
+        'canonical_key': 'grammar',
+        'storage_keys': ['grammar', 'grammar_string'],
+        'section': 'constraints_and_control',
+        'label': 'Grammar',
+        'editor': 'textarea',
+    },
+    {
+        'canonical_key': 'banned_tokens',
+        'storage_keys': ['banned_tokens'],
+        'section': 'constraints_and_control',
+        'label': '禁词',
+        'editor': 'textarea',
+    },
+    {
+        'canonical_key': 'logit_bias',
+        'storage_keys': ['logit_bias'],
+        'section': 'constraints_and_control',
+        'label': 'Logit Bias',
+        'editor': 'key-value-list',
+    },
+    {
+        'canonical_key': 'sampler_order',
+        'storage_keys': ['sampler_order'],
+        'section': 'sampler_ordering',
+        'label': 'Sampler Order',
+        'editor': 'sortable-string-list',
+    },
+    {
+        'canonical_key': 'samplers',
+        'storage_keys': ['samplers'],
+        'section': 'sampler_ordering',
+        'label': 'Sampler Priority',
+        'editor': 'sortable-string-list',
+    },
+]
+
+SCALAR_WORKSPACE_HIDDEN_FIELDS = [
+    'top_a',
+    'typical_p',
+    'tfs',
+    'repetition_penalty_range',
+    'repetition_penalty_decay',
+    'no_repeat_ngram_size',
+    'max_tokens',
+    'openai_max_tokens',
+    'max_length',
+    'min_length',
+    'num_beams',
+    'length_penalty',
+    'do_sample',
+    'early_stopping',
+    'stream_openai',
+    'wrap_in_quotes',
+    'show_thoughts',
+    'xtc_threshold',
+]
+
 
 SECTION_DEFINITIONS = {
     'textgen': {
@@ -446,6 +634,55 @@ def _normalize_prompt_order_entries(prompt_order):
     return []
 
 
+def _resolve_scalar_workspace_field(data, field_def):
+    for storage_key in field_def['storage_keys']:
+        if storage_key in data:
+            return storage_key
+    return None
+
+
+def _matches_textgen_scalar_workspace(data, preset_kind):
+    if preset_kind != 'textgen':
+        return False
+
+    if not _is_prompt_workspace_candidate(data):
+        return False
+
+    for field_def in SCALAR_WORKSPACE_FIELD_DEFS:
+        if _resolve_scalar_workspace_field(data, field_def) is not None:
+            return True
+    return False
+
+
+def _build_scalar_workspace(data, preset_kind):
+    if not _matches_textgen_scalar_workspace(data, preset_kind):
+        return None
+
+    field_map = {}
+    section_ids = set()
+    for field_def in SCALAR_WORKSPACE_FIELD_DEFS:
+        storage_key = _resolve_scalar_workspace_field(data, field_def)
+        if storage_key is None:
+            continue
+
+        section_ids.add(field_def['section'])
+        field_map[storage_key] = {
+            'canonical_key': field_def['canonical_key'],
+            'storage_key': storage_key,
+            'section': field_def['section'],
+            'label': field_def['label'],
+            'editor': field_def['editor'],
+        }
+
+    sections = [section for section in SCALAR_WORKSPACE_SECTIONS if section['id'] in section_ids]
+    return {
+        'profile_id': SCALAR_WORKSPACE_PROFILE_ID,
+        'sections': sections,
+        'field_map': field_map,
+        'hidden_fields': list(SCALAR_WORKSPACE_HIDDEN_FIELDS),
+    }
+
+
 def _prompt_position_label(prompt):
     try:
         position = int(prompt.get('injection_position', 0) or 0)
@@ -599,8 +836,14 @@ def _build_generic_reader_items(data):
     return items
 
 
-def _build_prompt_manager_reader_items(data):
+def _build_prompt_manager_reader_items(data, preset_kind=None):
     items = []
+    hidden_scalar_fields = (
+        set(SCALAR_WORKSPACE_HIDDEN_FIELDS)
+        if _matches_textgen_scalar_workspace(data, preset_kind)
+        else set()
+    )
+
     for field_def in READER_COMMON_FIELD_DEFS:
         key = field_def['key']
         if key in data:
@@ -611,6 +854,8 @@ def _build_prompt_manager_reader_items(data):
     for key, value in data.items():
         if key in {'name', 'title', 'description', 'note', 'prompts', 'prompt_order', 'extensions'}:
             continue
+        if key in hidden_scalar_fields:
+            continue
         if isinstance(value, (dict, list)):
             items.append(_build_structured_reader_item('structured_objects', key, value, key))
         else:
@@ -620,16 +865,17 @@ def _build_prompt_manager_reader_items(data):
     return items
 
 
-def build_reader_view(raw_data):
+def build_reader_view(raw_data, preset_kind=None):
     data = raw_data if isinstance(raw_data, dict) else {}
     if _is_prompt_workspace_candidate(data):
-        items = _build_prompt_manager_reader_items(data)
+        items = _build_prompt_manager_reader_items(data, preset_kind)
         groups = _build_group_defs(PROMPT_MANAGER_READER_GROUP_LABELS, items)
         prompt_count = len([item for item in items if item['type'] == 'prompt'])
 
         return {
             'family': 'prompt_manager',
             'family_label': PROMPT_MANAGER_READER_FAMILY_LABEL,
+            'scalar_workspace': _build_scalar_workspace(data, preset_kind),
             'groups': groups,
             'items': items,
             'stats': {
@@ -645,6 +891,7 @@ def build_reader_view(raw_data):
     return {
         'family': 'generic',
         'family_label': GENERIC_READER_FAMILY_LABEL,
+        'scalar_workspace': None,
         'groups': groups,
         'items': items,
         'stats': {
@@ -657,7 +904,7 @@ def build_reader_view(raw_data):
 def build_preset_detail(*, preset_id, file_path, filename, source_type, source_folder, raw_data, base_dir):
     preset_kind = detect_preset_kind(raw_data, source_folder=source_folder, file_path=file_path)
     sections, _unknown_fields = build_sections(raw_data, preset_kind)
-    reader_view = build_reader_view(raw_data)
+    reader_view = build_reader_view(raw_data, preset_kind)
     data = raw_data if isinstance(raw_data, dict) else {}
 
     try:

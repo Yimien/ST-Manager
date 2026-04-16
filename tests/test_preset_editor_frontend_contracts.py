@@ -136,6 +136,18 @@ def test_preset_editor_js_exposes_prompt_workspace_state_and_helpers():
     assert 'label: "聊天中"' in source
 
 
+def test_preset_editor_js_exposes_scalar_workspace_helpers():
+    source = read_project_file('static/js/components/presetEditor.js')
+
+    assert 'get scalarWorkspace() {' in source
+    assert 'get hasScalarWorkspace() {' in source
+    assert 'get isScalarWorkspaceEditor() {' in source
+    assert 'get scalarWorkspaceSections() {' in source
+    assert 'getScalarWorkspaceFieldValue(fieldKey) {' in source
+    assert 'setScalarWorkspaceFieldValue(fieldKey, value) {' in source
+    assert 'getScalarWorkspaceSectionEntries(sectionId) {' in source
+
+
 def test_preset_editor_js_exposes_localized_prompt_option_metadata():
     source = read_project_file('static/js/components/presetEditor.js')
 
@@ -396,6 +408,155 @@ def test_preset_editor_runtime_tracks_dirty_state_and_refreshes_cached_prompt_co
         editor.setByPath('temperature', 1.1);
         if (!editor.isDirty) {
           throw new Error('expected setByPath to mark editor dirty');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_uses_scalar_workspace_storage_key_helpers_with_canonical_metadata():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          preset_kind: 'textgen',
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompt 条目' },
+              { id: 'scalar_fields', label: '基础字段' },
+            ],
+            items: [],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+                { id: 'penalties', label: '惩罚参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+                rep_pen: { canonical_key: 'repetition_penalty', section: 'penalties', label: '重复惩罚', storage_key: 'rep_pen', editor: 'number' },
+              },
+              hidden_fields: ['top_a'],
+              aliases: { temp: 'temperature', rep_pen: 'repetition_penalty' },
+            },
+          },
+        };
+        editor.editingData = {
+          temp: 0.7,
+          rep_pen: 1.1,
+          top_a: 0.3,
+          prompts: [{ identifier: 'main', content: 'hello' }],
+        };
+        editor.activeWorkspace = 'scalar_fields';
+        editor.refreshEditorCollections();
+
+        if (!editor.isScalarWorkspaceEditor) {
+          throw new Error('expected scalar workspace editor mode to activate');
+        }
+        if (editor.scalarWorkspace?.field_map?.temp?.canonical_key !== 'temperature') {
+          throw new Error(`expected temp canonical metadata, got ${JSON.stringify(editor.scalarWorkspace?.field_map?.temp)}`);
+        }
+        if (editor.scalarWorkspace?.field_map?.rep_pen?.canonical_key !== 'repetition_penalty') {
+          throw new Error(`expected rep_pen canonical metadata, got ${JSON.stringify(editor.scalarWorkspace?.field_map?.rep_pen)}`);
+        }
+        if (editor.getScalarWorkspaceFieldValue('temp') !== 0.7) {
+          throw new Error(`expected scalar workspace storage-key read, got ${JSON.stringify(editor.getScalarWorkspaceFieldValue('temp'))}`);
+        }
+
+        editor.setScalarWorkspaceFieldValue('rep_pen', 1.35);
+        if (editor.editingData.rep_pen !== 1.35) {
+          throw new Error(`expected scalar workspace write to hit storage key, got ${JSON.stringify(editor.editingData)}`);
+        }
+        if (editor.editingData.top_a !== 0.3) {
+          throw new Error(`expected hidden field to remain untouched, got ${JSON.stringify(editor.editingData)}`);
+        }
+        if (!editor.isDirty) {
+          throw new Error('expected scalar workspace field write to mark editor dirty');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_scalar_workspace_section_entries_exclude_hidden_fields():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          preset_kind: 'textgen',
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [{ id: 'scalar_fields', label: '基础字段' }],
+            items: [],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+                top_a: { canonical_key: 'top_a', section: 'core_sampling', label: 'Top A', storage_key: 'top_a', editor: 'number' },
+              },
+              hidden_fields: ['top_a'],
+              aliases: { temp: 'temperature', top_a: 'top_a' },
+            },
+          },
+        };
+        editor.editingData = { temp: 0.7, top_a: 0.3 };
+        editor.activeWorkspace = 'scalar_fields';
+        editor.refreshEditorCollections();
+
+        const entries = editor.getScalarWorkspaceSectionEntries('core_sampling').map((entry) => entry.fieldKey);
+        if (JSON.stringify(entries) !== JSON.stringify(['temp'])) {
+          throw new Error(`expected hidden scalar field to be excluded from section entries, got ${JSON.stringify(entries)}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_scalar_workspace_excludes_generic_scalar_items_from_collections():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          preset_kind: 'textgen',
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [{ id: 'scalar_fields', label: '基础字段' }],
+            items: [
+              {
+                id: 'field:temp',
+                type: 'field',
+                group: 'scalar_fields',
+                title: '温度',
+                source_key: 'temp',
+                value_path: 'temp',
+                editable: true,
+                editor: { kind: 'number' },
+              },
+            ],
+            scalar_workspace: {
+              profile_id: 'st_textgen_parameter_workspace',
+              sections: [
+                { id: 'core_sampling', label: '核心采样参数' },
+              ],
+              field_map: {
+                temp: { canonical_key: 'temperature', section: 'core_sampling', label: '温度', storage_key: 'temp', editor: 'number' },
+              },
+              hidden_fields: [],
+              aliases: { temp: 'temperature' },
+            },
+          },
+        };
+        editor.editingData = { temp: 0.7, prompts: [{ identifier: 'main', content: 'hello' }] };
+        editor.activeWorkspace = 'scalar_fields';
+        editor.activeGroup = 'scalar_fields';
+        editor.refreshEditorCollections();
+
+        if (editor.filteredItems.length !== 0) {
+          throw new Error(`expected specialized scalar workspace to exclude generic scalar items from filteredItems, got ${JSON.stringify(editor.filteredItems.map((item) => item.id))}`);
+        }
+        if (editor.genericWorkspaceItems.length !== 0) {
+          throw new Error(`expected specialized scalar workspace to exclude generic workspace items, got ${JSON.stringify(editor.genericWorkspaceItems.map((item) => item.id))}`);
+        }
+        if (editor.activeItem !== null) {
+          throw new Error(`expected no generic active item in scalar workspace mode, got ${editor.activeItem?.id}`);
         }
         """
     )
@@ -1118,6 +1279,27 @@ def test_preset_editor_template_uses_prompt_workspace_layout_contracts():
     assert 'aria-label="切换 Prompt 启用状态"' in source
     assert '占位用预留字段，不承载提示词内容' not in source
     assert 'x-show="!activePromptItem?.marker"' not in source
+
+
+def test_preset_editor_template_exposes_scalar_workspace_parameter_panels():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert 'x-if="isScalarWorkspaceEditor"' in source
+    assert 'x-for="section in scalarWorkspaceSections"' in source
+    assert 'getScalarWorkspaceSectionEntries(section.id)' in source
+    assert (
+        'getScalarWorkspaceFieldValue(field.storage_key)' in source
+        or 'setScalarWorkspaceFieldValue(field.storage_key' in source
+    )
+
+
+def test_preset_editor_template_scalar_workspace_supports_structured_editor_kinds():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert "field.editor === 'textarea'" in source
+    assert "field.editor === 'sortable-string-list'" in source
+    assert "field.editor === 'key-value-list'" in source
+    assert "field.editor !== 'number' && field.editor !== 'boolean'" not in source
 
 
 def test_preset_editor_template_exposes_prompt_form_fields_instead_of_prompt_raw_json():

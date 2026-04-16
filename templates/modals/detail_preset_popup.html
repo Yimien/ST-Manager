@@ -311,7 +311,7 @@
                   ></span>
                   ·
                   <span
-                    x-text="isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${promptFilteredItems.length} / ${orderedPromptItems.length}` : `${filteredItems.length} / ${readerStats.total_count}`"
+                    x-text="isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${promptFilteredItems.length} / ${orderedPromptItems.length}` : isScalarWorkspaceReader ? `${readerStats.visible_count} / ${readerStats.total_count}` : `${filteredItems.length} / ${readerStats.total_count}`"
                   ></span>
                 </div>
               </div>
@@ -532,63 +532,177 @@
                       </div>
                     </template>
 
+                    <template x-if="isScalarWorkspaceReader">
+                      <div class="space-y-4">
+                        <div
+                          class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-4"
+                        >
+                          <div class="flex items-center justify-between gap-3">
+                            <div>
+                              <div
+                                class="text-base font-semibold text-[var(--text-main)]"
+                              >
+                                参数概览
+                              </div>
+                              <div class="mt-1 text-sm text-[var(--text-dim)]">
+                                按可见字段与分区快速浏览当前工作区。
+                              </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                              <template
+                                x-for="card in scalarWorkspaceCards"
+                                :key="card.id"
+                              >
+                                <div
+                                  class="min-w-[88px] rounded-xl border border-[var(--border-light)] bg-[var(--bg-body)] p-3"
+                                >
+                                  <div
+                                    class="text-[var(--text-dim)]"
+                                    x-text="card.label"
+                                  ></div>
+                                  <div
+                                    class="mt-1 text-base font-bold text-[var(--text-main)]"
+                                    x-text="card.value"
+                                  ></div>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+
+                          <div class="space-y-3">
+                            <div
+                              class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                            >
+                              高级参数摘要
+                            </div>
+
+                            <template
+                              x-if="scalarWorkspaceVisibleFieldEntries.length === 0"
+                            >
+                              <div
+                                class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-body)] p-6 text-center text-sm text-[var(--text-dim)]"
+                              >
+                                当前搜索下没有可见字段。
+                              </div>
+                            </template>
+
+                            <div class="space-y-3">
+                              <template
+                                x-for="section in scalarWorkspaceSections"
+                                :key="section.id"
+                              >
+                                <div class="space-y-2">
+                                  <div
+                                    class="text-sm font-semibold text-[var(--text-main)]"
+                                    x-text="section.label || section.id"
+                                  ></div>
+                                  <div class="grid gap-2">
+                                    <template
+                                      x-for="entry in scalarWorkspaceVisibleFieldEntries"
+                                      :key="entry[0]"
+                                    >
+                                      <article
+                                        x-show="entry[1]?.section === section.id"
+                                        class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-body)] p-3"
+                                      >
+                                        <div
+                                          class="flex items-center justify-between gap-3"
+                                        >
+                                          <div class="min-w-0 flex-1">
+                                            <div
+                                              class="text-sm font-medium text-[var(--text-main)]"
+                                              x-text="entry[1]?.label || entry[0]"
+                                            ></div>
+                                            <div
+                                              class="mt-1 text-[11px] text-[var(--text-dim)] font-mono"
+                                              x-text="entry[1]?.canonical_key || entry[0]"
+                                            ></div>
+                                          </div>
+                                          <div
+                                            class="text-sm font-semibold text-[var(--text-main)]"
+                                            x-text="getScalarWorkspaceFieldDisplay(entry[0])"
+                                          ></div>
+                                        </div>
+                                      </article>
+                                    </template>
+                                  </div>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+
                     <div
                       x-show="activeWorkspace !== 'prompts'"
                       class="space-y-3"
                     >
-                      <template
-                        x-if="readerItems.length > 0 && filteredItems.length === 0"
-                      >
-                        <div
-                          class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
-                        >
-                          <div
-                            class="text-base font-semibold text-[var(--text-main)]"
+                      <template x-if="!isScalarWorkspaceReader">
+                        <div class="space-y-3">
+                          <template
+                            x-if="readerItems.length > 0 && filteredItems.length === 0"
                           >
-                            没有匹配结果
-                          </div>
-                          <div class="mt-2 text-sm text-[var(--text-dim)]">
-                            可以尝试切换工作区、清空搜索词或更换 quick filter。
-                          </div>
-                        </div>
-                      </template>
-
-                      <template x-for="item in filteredItems" :key="item.id">
-                        <article
-                          @click="selectItem(item.id)"
-                          class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
-                          :class="activeContextItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
-                        >
-                          <div>
-                            <div class="flex items-start justify-between gap-3">
-                              <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                  <div
-                                    class="text-sm font-bold text-[var(--text-main)] break-all"
-                                    x-text="item.title"
-                                  ></div>
-                                  <span
-                                    class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
-                                    x-text="getItemBadge(item)"
-                                  ></span>
-                                  <span
-                                    class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
-                                    x-text="getItemGroupLabel(item)"
-                                  ></span>
-                                </div>
-                              </div>
-                              <div
-                                class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
-                                x-text="item.summary || '-' "
-                              ></div>
-                            </div>
-
                             <div
-                              class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
-                              x-text="getItemValuePreview(item)"
-                            ></div>
-                          </div>
-                        </article>
+                              class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                            >
+                              <div
+                                class="text-base font-semibold text-[var(--text-main)]"
+                              >
+                                没有匹配结果
+                              </div>
+                              <div class="mt-2 text-sm text-[var(--text-dim)]">
+                                可以尝试切换工作区、清空搜索词或更换 quick
+                                filter。
+                              </div>
+                            </div>
+                          </template>
+
+                          <template
+                            x-for="item in filteredItems"
+                            :key="item.id"
+                          >
+                            <article
+                              @click="selectItem(item.id)"
+                              class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
+                              :class="activeContextItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                            >
+                              <div>
+                                <div
+                                  class="flex items-start justify-between gap-3"
+                                >
+                                  <div class="min-w-0 flex-1">
+                                    <div
+                                      class="flex items-center gap-2 flex-wrap"
+                                    >
+                                      <div
+                                        class="text-sm font-bold text-[var(--text-main)] break-all"
+                                        x-text="item.title"
+                                      ></div>
+                                      <span
+                                        class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                        x-text="getItemBadge(item)"
+                                      ></span>
+                                      <span
+                                        class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                        x-text="getItemGroupLabel(item)"
+                                      ></span>
+                                    </div>
+                                  </div>
+                                  <div
+                                    class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
+                                    x-text="item.summary || '-' "
+                                  ></div>
+                                </div>
+
+                                <div
+                                  class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
+                                  x-text="getItemValuePreview(item)"
+                                ></div>
+                              </div>
+                            </article>
+                          </template>
+                        </div>
                       </template>
                     </div>
                   </div>
