@@ -268,6 +268,22 @@ def test_preset_editor_template_removes_prompt_and_unknown_raw_editor_sections()
     assert 'applyRawUnknownJson(text) {' not in js_source
 
 
+def test_preset_editor_template_uses_user_facing_copy_for_prompt_and_field_workspaces():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert '提示词列表' in source
+    assert 'SillyTavern 提示词管理' in source
+    assert '请先从左侧选择一个字段。' in source
+    assert '这里显示当前字段的编辑内容。' in source
+    assert '按参数分区编辑当前可见字段，未分区字段会自动显示在“其他参数”。' in source
+
+    assert 'Prompt Workspace' not in source
+    assert 'reader_view.items' not in source
+    assert '请选择一个字段查看 reader 驱动的编辑器内容。' not in source
+    assert '当前字段由 reader_view 驱动渲染。' not in source
+    assert '按 reader_view 提供的 section' not in source
+
+
 def test_preset_editor_runtime_rejects_invalid_bias_numbers():
     run_preset_editor_runtime_check(
         """

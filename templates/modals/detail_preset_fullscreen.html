@@ -190,13 +190,13 @@
             <div
               class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
             >
-              <div class="text-xs text-[var(--text-dim)]">Prompt Workspace</div>
+              <div class="text-xs text-[var(--text-dim)]">提示词列表</div>
               <div class="text-sm font-bold text-[var(--text-main)]">
-                SillyTavern Prompt Manager
+                SillyTavern 提示词管理
               </div>
               <div class="text-[11px] text-[var(--text-dim)]">
-                左侧管理顺序与启用状态，中间编辑当前
-                Prompt，使用本地化角色与位置信息保持与 Prompt Manager 一致。
+                左侧管理提示词顺序与启用状态，中间编辑当前提示词，整体体验与
+                SillyTavern 提示词管理保持一致。
               </div>
             </div>
           </template>
@@ -654,8 +654,7 @@
                   分组参数编辑
                 </div>
                 <div class="text-[11px] text-[var(--text-dim)]">
-                  按 reader_view 提供的 section
-                  分组编辑可见参数，未分组字段会自动落入兜底区域。
+                  按参数分区编辑当前可见字段，未分区字段会自动显示在“其他参数”。
                 </div>
               </div>
 
@@ -1216,7 +1215,7 @@
                     ></div>
                     <div
                       class="text-[11px] text-[var(--text-dim)] break-all"
-                      x-text="activeItem?.value_path || activeItem?.source_key || activeItem?.id || 'reader_view.items' "
+                      x-text="activeItem?.value_path || activeItem?.source_key || activeItem?.id || '未选择字段' "
                     ></div>
                   </div>
                   <button
@@ -1234,7 +1233,7 @@
                     <div
                       class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-body)] p-6 text-sm text-[var(--text-dim)]"
                     >
-                      请选择一个字段查看 reader 驱动的编辑器内容。
+                      请先从左侧选择一个字段。
                     </div>
                   </template>
 
@@ -1249,7 +1248,7 @@
                         ></div>
                         <div
                           class="text-sm text-[var(--text-dim)]"
-                          x-text="activeItem?.summary || '当前字段由 reader_view 驱动渲染。' "
+                          x-text="activeItem?.summary || '这里显示当前字段的编辑内容。' "
                         ></div>
                       </div>
 

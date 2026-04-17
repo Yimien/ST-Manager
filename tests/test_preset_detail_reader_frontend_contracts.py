@@ -150,6 +150,9 @@ def test_preset_detail_reader_js_exposes_mirrored_profile_helpers():
     assert 'get editorProfile() {' in source
     assert 'get isMirroredProfileReader() {' in source
     assert 'get mirroredProfileSections() {' in source
+    assert 'get readerMirroredProfileSections() {' in source
+    assert 'prompt_manager' in source
+    assert 'extensions_and_advanced' in source
     assert 'getProfileSectionFields(sectionId) {' in source
     assert 'getProfileFieldValue(fieldKey) {' in source
     assert 'getProfileFieldDisplay(fieldKey) {' in source
@@ -183,7 +186,7 @@ def test_preset_detail_reader_template_compacts_prompt_state_info_bar():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
     prompt_state_match = re.search(
-        r'Prompt State[\s\S]*?x-text="getPromptFullDetail\(activeContextItem\)"',
+        r'提示词状态[\s\S]*?x-text="getPromptFullDetail\(activeContextItem\)"',
         source,
     )
     assert prompt_state_match is not None
@@ -367,6 +370,47 @@ def test_preset_detail_reader_runtime_reports_slider_percent_for_mirrored_profil
         }
         if (!reader.isProfileFieldToggle(reader.editorProfile.fields.stream_openai)) {
           throw new Error('expected checkbox detection to work');
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_filters_reader_mirrored_sections_for_scalar_workspace():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          raw_data: {},
+          editor_profile: {
+            id: 'st_chat_completion_preset',
+            family: 'st_mirror',
+            sections: [
+              { id: 'prompt_manager', label: '提示词管理' },
+              { id: 'core_sampling', label: '核心采样' },
+              { id: 'extensions_and_advanced', label: '扩展与高级' },
+            ],
+            fields: {},
+          },
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [
+              { id: 'prompts', label: 'Prompts' },
+              { id: 'scalar_fields', label: '基础字段' },
+            ],
+            items: [],
+            scalar_workspace: {
+              sections: [],
+              field_map: {},
+            },
+            stats: {},
+          },
+        };
+
+        reader.initializeReaderState();
+        reader.selectWorkspace('scalar_fields');
+
+        const sectionIds = reader.readerMirroredProfileSections.map((section) => section.id);
+        if (JSON.stringify(sectionIds) !== JSON.stringify(['core_sampling'])) {
+          throw new Error(`expected filtered mirrored sections to equal ['core_sampling'], got ${JSON.stringify(sectionIds)}`);
         }
         """
     )
@@ -1199,7 +1243,8 @@ def test_preset_detail_reader_template_exposes_scalar_workspace_overview_branch(
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
     assert 'x-if="isScalarWorkspaceReader"' in source
-    assert '参数概览' in source
+    assert '参数一览' in source
+    assert '参数概览' not in source
     assert '高级参数摘要' in source
     assert 'x-for="section in scalarWorkspaceSections"' in source
     assert 'x-for="entry in scalarWorkspaceVisibleFieldEntries"' in source
@@ -1208,13 +1253,50 @@ def test_preset_detail_reader_template_exposes_scalar_workspace_overview_branch(
 def test_preset_detail_reader_template_exposes_mirrored_profile_snapshot_branch():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
-    assert 'x-if="isMirroredProfileReader && editorProfile"' in source
-    assert 'x-for="section in mirroredProfileSections"' in source
+    assert '提示词列表' in source
+    assert 'Prompt Workspace' not in source
+    assert 'x-if="isScalarWorkspaceReader && isMirroredProfileReader && editorProfile"' in source
+    assert 'x-for="section in readerMirroredProfileSections"' in source
     assert 'x-for="field in getProfileSectionFields(section.id)"' in source
     assert 'x-text="getProfileFieldDisplay(field.canonical_key)"' in source
     assert ':style="`width: ${getProfileFieldPercent(field.canonical_key)}%`"' in source
     assert 'x-text="resolveProfileFieldMax(field) ?? \'-\' "' in source or 'x-text="resolveProfileFieldMax(field) ?? \'-\'"' in source
     assert "x-text=\"getProfileFieldValue(field.canonical_key) ? '启用' : '关闭'\"" in source
+
+
+def test_preset_detail_reader_template_uses_user_facing_copy_for_empty_states_and_structured_content():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert 'quick filter' not in source
+    assert 'Quick Filters' not in source
+    assert 'identifier' not in source
+    assert 'extension key:' not in source
+    assert 'field key:' not in source
+    assert 'Prompt State' not in source
+    assert '>\n                        Extension\n' not in source
+    assert '>\n                        Field\n' not in source
+    assert '>\n                        Structured\n' not in source
+    assert '没有 reader_view 数据' not in source
+    assert '当前预设没有可展示的 reader_view 分组。' not in source
+    assert '如果后端没有返回 `reader_view.items`，这里会保持空状态。' not in source
+    assert '结构化对象，详情面板可查看完整 payload。' not in source
+    assert '这是结构化对象，下面展示完整 payload 以便阅读。' not in source
+
+    assert '搜索条目、分组、字段...' in source
+    assert '当前预设暂无可展示分组。' in source
+    assert '当前预设暂无可展示内容' in source
+    assert '当前预设还没有可查看的内容。' in source
+    assert '当前预设里还没有可查看的提示词条目。' in source
+    assert '可以尝试切换分组、清空搜索词或调整筛选条件。' in source
+    assert '可以尝试清空搜索词或调整筛选条件。' in source
+    assert '可以尝试切换工作区、清空搜索词或调整筛选条件。' in source
+    assert '从左侧选择条目后，可在这里查看完整内容。' in source
+    assert '扩展键名：' in source
+    assert '字段键名：' in source
+    assert '提示词状态' in source
+    assert '扩展信息' in source
+    assert '字段信息' in source
+    assert '结构化内容' in source
 
 
 def test_preset_detail_reader_template_exposes_non_scalar_mirrored_snapshot_kinds():

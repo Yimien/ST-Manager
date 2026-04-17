@@ -52,6 +52,10 @@ const UI_FILTER_IDS = new Set(UI_FILTERS.map((filter) => filter.id));
 const PROMPT_UI_FILTER_IDS = new Set(
   PROMPT_UI_FILTERS.map((filter) => filter.id),
 );
+const HIDDEN_READER_MIRRORED_SECTION_IDS = new Set([
+  "prompt_manager",
+  "extensions_and_advanced",
+]);
 
 function normalizeText(value) {
   return String(value ?? "")
@@ -683,6 +687,12 @@ export default function presetDetailReader() {
       return Array.isArray(this.editorProfile?.sections)
         ? this.editorProfile.sections
         : [];
+    },
+
+    get readerMirroredProfileSections() {
+      return this.mirroredProfileSections.filter(
+        (section) => !HIDDEN_READER_MIRRORED_SECTION_IDS.has(section?.id),
+      );
     },
 
     getProfileField(fieldKey) {
