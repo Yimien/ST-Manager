@@ -147,6 +147,43 @@ export default function wiEditor() {
       );
     },
 
+    getEditorPositionSelectValue(entry) {
+      const position = Number(entry?.position ?? 1);
+      if (position !== 4) {
+        return String(Number.isFinite(position) ? position : 1);
+      }
+
+      const role = Number(entry?.role);
+      if (role === 1) return "4:1";
+      if (role === 2) return "4:2";
+      return "4:0";
+    },
+
+    updateEditorPositionFromSelect(entry, rawValue) {
+      if (!entry || typeof entry !== "object") return;
+
+      const value = String(rawValue ?? "").trim();
+      if (value === "4:1") {
+        entry.position = 4;
+        entry.role = 1;
+        return;
+      }
+      if (value === "4:2") {
+        entry.position = 4;
+        entry.role = 2;
+        return;
+      }
+      if (value === "4:0") {
+        entry.position = 4;
+        entry.role = 0;
+        return;
+      }
+
+      const position = Number(value);
+      entry.position = Number.isFinite(position) ? position : 1;
+      entry.role = null;
+    },
+
     // === 初始化 ===
     init() {
       // 监听打开编辑器事件

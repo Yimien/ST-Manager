@@ -596,7 +596,8 @@
                 <div class="flex items-center justify-between">
                   <span class="text-gray-500">位置 (Position)</span>
                   <select
-                    x-model.number="activeEditorEntry.position"
+                    :value="getEditorPositionSelectValue(activeEditorEntry)"
+                    @change="updateEditorPositionFromSelect(activeEditorEntry, $event.target.value)"
                     class="bg-[var(--bg-body)] border border-[var(--border-light)] rounded px-2 py-1 max-w-[140px]"
                   >
                     <option value="0">0 - 角色定义前 (Before Char)</option>
@@ -605,7 +606,9 @@
                     <option value="3">3 - 作者注释后 (After AN)</option>
                     <option value="5">5 - 示例消息前 (Before EM)</option>
                     <option value="6">6 - 示例消息后 (After EM)</option>
-                    <option value="4">4 - @层级 (At Depth)</option>
+                    <option value="4:0">4 - @层级 (System)</option>
+                    <option value="4:1">4 - @层级 (User)</option>
+                    <option value="4:2">4 - @层级 (Assistant)</option>
                     <option value="7">7 - 输出端 (Outlet)</option>
                   </select>
                 </div>

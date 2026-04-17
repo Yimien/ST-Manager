@@ -607,6 +607,17 @@ def test_chat_reader_template_places_timebar_inside_message_body():
     assert 'class="chat-message-timebar"' in body_block
 
 
+def test_worldinfo_editor_template_exposes_three_at_depth_role_entries():
+    wi_editor_template = read_project_file('templates/modals/detail_wi_fullscreen.html')
+
+    assert '@层级 (System)' in wi_editor_template
+    assert '@层级 (User)' in wi_editor_template
+    assert '@层级 (Assistant)' in wi_editor_template
+    assert 'getEditorPositionSelectValue(activeEditorEntry)' in wi_editor_template
+    assert "updateEditorPositionFromSelect(activeEditorEntry, $event.target.value)" in wi_editor_template
+    assert '4 - @层级 (At Depth)' not in wi_editor_template
+
+
 def test_chat_reader_css_keeps_floor_chip_as_primary_reader_anchor():
     chat_reader_css = read_project_file('static/css/modules/view-chats.css')
 
