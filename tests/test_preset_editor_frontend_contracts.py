@@ -148,22 +148,16 @@ def test_preset_editor_js_exposes_scalar_workspace_helpers():
     assert 'getScalarWorkspaceSectionEntries(sectionId) {' in source
 
 
-def test_preset_editor_js_exposes_mirrored_profile_helpers():
+def test_preset_editor_js_exposes_filtered_mirrored_field_helpers():
     source = read_project_file('static/js/components/presetEditor.js')
 
-    assert 'get editorProfile() {' in source
-    assert 'get isMirroredProfileEditor() {' in source
-    assert 'get mirroredProfileSections() {' in source
-    assert 'get activeMirroredSection() {' in source
+    assert 'activeMirroredFieldId:' in source
+    assert 'get mirroredWorkspaceFieldItems() {' in source
+    assert 'get activeMirroredField() {' in source
+    assert 'getFilteredProfileSectionFields(sectionId) {' in source
+    assert 'selectMirroredField(fieldId) {' in source
+    assert 'syncActiveMirroredField() {' in source
     assert 'getProfileSectionFields(sectionId) {' in source
-    assert 'getMirroredSectionFieldCount(sectionId) {' in source
-    assert 'getProfileFieldValue(fieldKey) {' in source
-    assert 'setProfileFieldValue(fieldKey, value) {' in source
-    assert 'normalizeProfileFieldValue(field, value) {' in source
-    assert 'getProfileFieldPercent(fieldKey) {' in source
-    assert 'isProfileFieldSlider(field) {' in source
-    assert 'isProfileFieldToggle(field) {' in source
-    assert 'isProfileFieldSelect(field) {' in source
 
 
 def test_preset_editor_js_exposes_localized_prompt_option_metadata():
@@ -268,20 +262,44 @@ def test_preset_editor_template_removes_prompt_and_unknown_raw_editor_sections()
     assert 'applyRawUnknownJson(text) {' not in js_source
 
 
-def test_preset_editor_template_uses_user_facing_copy_for_prompt_and_field_workspaces():
+def test_preset_editor_template_uses_user_facing_copy_for_prompt_and_mirrored_workspaces():
     source = read_project_file('templates/modals/detail_preset_fullscreen.html')
 
     assert '提示词列表' in source
-    assert 'SillyTavern 提示词管理' in source
-    assert '请先从左侧选择一个字段。' in source
-    assert '这里显示当前字段的编辑内容。' in source
-    assert '按参数分区编辑当前可见字段，未分区字段会自动显示在“其他参数”。' in source
+    assert '当前筛选下没有可用字段' in source
+    assert 'Prompt Manager' not in source
+    assert 'Reader Workspace' not in source
+    assert 'SillyTavern 提示词管理' not in source
+    assert '当前分区使用 profile schema 直接驱动 ST 镜像控件。' not in source
 
-    assert 'Prompt Workspace' not in source
-    assert 'reader_view.items' not in source
-    assert '请选择一个字段查看 reader 驱动的编辑器内容。' not in source
-    assert '当前字段由 reader_view 驱动渲染。' not in source
-    assert '按 reader_view 提供的 section' not in source
+
+def test_preset_editor_template_localizes_remaining_prompt_workspace_copy():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert '当前提示词' in source
+    assert '提示词内容' in source
+    assert '提示词基础信息' in source
+    assert '当前预设没有可编辑的提示词条目。' in source
+    assert '切换提示词启用状态' in source
+    assert '标识符' in source
+    assert '聊天内深度' in source
+
+    assert '当前 Prompt' not in source
+    assert 'Prompt 内容' not in source
+    assert 'Prompt 基础信息' not in source
+    assert '当前预设没有可编辑的 Prompt 条目。' not in source
+    assert '切换 Prompt 启用状态' not in source
+    assert 'In-Chat 深度' not in source
+
+
+def test_preset_editor_template_localizes_remaining_parameter_copy():
+    source = read_project_file('templates/modals/detail_preset_fullscreen.html')
+
+    assert '当前分组参数会直接写回对应参数项。' in source
+    assert '添加偏置' in source
+
+    assert '当前分组参数会直接写回对应 storage key。' not in source
+    assert '添加 Bias' not in source
 
 
 def test_preset_editor_runtime_rejects_invalid_bias_numbers():
@@ -622,6 +640,138 @@ def test_preset_editor_runtime_tracks_active_mirrored_section_workspace_and_coun
         }
         if (editor.activeMirroredSection?.id !== 'output_and_reasoning') {
           throw new Error(`expected active mirrored section to follow workspace, got ${editor.activeMirroredSection?.id}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_filters_and_selects_mirrored_fields_by_workspace_state():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          preset_kind: 'textgen',
+          editor_profile: {
+            id: 'st_chat_completion_preset',
+            family: 'st_mirror',
+            sections: [
+              { id: 'prompt_manager', label: 'Prompt Manager' },
+              { id: 'output_and_reasoning', label: '输出与推理' },
+            ],
+            fields: {
+              openai_max_context: {
+                id: 'openai_max_context',
+                label: '上下文长度',
+                storage_key: 'openai_max_context',
+                section: 'output_and_reasoning',
+                control: 'range_with_number',
+                min: 512,
+                max: 8192,
+                step: 1,
+              },
+              openai_reasoning_notes: {
+                id: 'openai_reasoning_notes',
+                label: '推理说明',
+                storage_key: 'openai_reasoning_notes',
+                section: 'output_and_reasoning',
+                control: 'textarea',
+              },
+              prompts: {
+                id: 'prompts',
+                label: '提示词列表',
+                storage_key: 'prompts',
+                section: 'prompt_manager',
+                control: 'prompt_workspace',
+              },
+            },
+          },
+          reader_view: {
+            family: 'prompt_manager',
+            groups: [{ id: 'prompts', label: 'Prompt 条目' }],
+            items: [],
+            stats: {},
+          },
+        };
+        editor.editingData = {
+          openai_max_context: 4096,
+          openai_reasoning_notes: 'long reasoning text',
+          prompts: [{ identifier: 'main', content: 'hello' }],
+          prompt_order: ['main'],
+        };
+        editor.activeWorkspace = 'output_and_reasoning';
+        editor.refreshEditorCollections();
+
+        if (JSON.stringify(editor.mirroredWorkspaceFieldItems.map((field) => field.id)) !== JSON.stringify(['openai_max_context', 'openai_reasoning_notes'])) {
+          throw new Error(`expected mirrored workspace fields, got ${JSON.stringify(editor.mirroredWorkspaceFieldItems.map((field) => field.id))}`);
+        }
+        if (editor.activeMirroredField?.id !== 'openai_max_context') {
+          throw new Error(`expected first mirrored field active by default, got ${editor.activeMirroredField?.id}`);
+        }
+
+        editor.selectMirroredField('openai_reasoning_notes');
+        if (editor.activeMirroredField?.id !== 'openai_reasoning_notes') {
+          throw new Error(`expected explicit mirrored field selection, got ${editor.activeMirroredField?.id}`);
+        }
+
+        editor.uiFilter = 'longtext';
+        editor.refreshEditorCollections();
+        if (JSON.stringify(editor.mirroredWorkspaceFieldItems.map((field) => field.id)) !== JSON.stringify(['openai_reasoning_notes'])) {
+          throw new Error(`expected longtext filter to keep textarea field only, got ${JSON.stringify(editor.mirroredWorkspaceFieldItems.map((field) => field.id))}`);
+        }
+        if (editor.activeMirroredField?.id !== 'openai_reasoning_notes') {
+          throw new Error(`expected filtered selection to stay on surviving field, got ${editor.activeMirroredField?.id}`);
+        }
+
+        editor.searchTerm = 'missing';
+        editor.refreshEditorCollections();
+        if (editor.mirroredWorkspaceFieldItems.length !== 0) {
+          throw new Error(`expected search to clear mirrored field list, got ${editor.mirroredWorkspaceFieldItems.length}`);
+        }
+        if (editor.activeMirroredField !== null) {
+          throw new Error(`expected no active mirrored field after empty result, got ${editor.activeMirroredField?.id}`);
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_degrades_safely_when_editor_profile_is_missing():
+    run_preset_editor_runtime_check(
+        """
+        editor.editingPresetFile = {
+          preset_kind: 'textgen',
+          reader_view: {
+            family: 'generic',
+            groups: [
+              { id: 'basic', label: '基础信息' },
+            ],
+            items: [
+              {
+                id: 'field:name',
+                group: 'basic',
+                title: '名称',
+                summary: 'preset name',
+                editable: true,
+                value_path: 'name',
+                editor: { kind: 'text' },
+              },
+            ],
+            stats: {},
+          },
+        };
+        editor.editingData = { name: 'Test Preset' };
+        editor.activeWorkspace = 'all';
+        editor.refreshEditorCollections();
+
+        if (editor.editorProfile) {
+          throw new Error(`expected missing editor profile to stay absent, got ${JSON.stringify(editor.editorProfile)}`);
+        }
+        if (editor.activeMirroredSection?.id) {
+          throw new Error(`expected no mirrored section, got ${editor.activeMirroredSection?.id}`);
+        }
+        if (editor.activeMirroredField?.id) {
+          throw new Error(`expected no mirrored field, got ${editor.activeMirroredField?.id}`);
+        }
+        if (editor.filteredItems[0]?.id !== 'field:name') {
+          throw new Error(`expected generic item flow to remain available, got ${editor.filteredItems[0]?.id}`);
         }
         """
     )
@@ -1523,7 +1673,7 @@ def test_preset_editor_template_uses_prompt_workspace_layout_contracts():
     assert 'getPromptPositionLabel(prompt)' in source
     assert 'prompt.__enabled !== false ? \'启用\' : \'禁用\'' not in source
     assert '<span>启用</span>' not in source
-    assert 'aria-label="切换 Prompt 启用状态"' in source
+    assert 'aria-label="切换提示词启用状态"' in source
     assert '占位用预留字段，不承载提示词内容' not in source
     assert 'x-show="!activePromptItem?.marker"' not in source
 
@@ -1540,19 +1690,12 @@ def test_preset_editor_template_exposes_scalar_workspace_parameter_panels():
     )
 
 
-def test_preset_editor_template_exposes_mirrored_profile_control_panels():
+def test_preset_editor_template_exposes_filtered_mirrored_profile_control_panels():
     source = read_project_file('templates/modals/detail_preset_fullscreen.html')
 
-    assert (
-        'x-if="isMirroredProfileEditor && editorProfile"' in source
-        or "x-if=\"isMirroredProfileEditor && editorProfile && (!isPromptWorkspaceEditor || activeWorkspace !== 'prompts')\"" in source
-    )
-    assert 'x-for="section in mirroredProfileSections"' in source
-    assert 'x-for="field in getProfileSectionFields(activeMirroredSection.id)"' in source
-    assert '@input="setProfileFieldValue(field.id, $event.target.value)"' in source
-    assert '@change="setProfileFieldValue(field.id, $event.target.checked)"' in source
-    assert '@change="setProfileFieldValue(field.id, $event.target.value)"' in source
-    assert ':style="`width: ${getProfileFieldPercent(field.id)}%`"' in source
+    assert 'x-for="field in mirroredWorkspaceFieldItems"' in source
+    assert '@click="selectMirroredField(field.id)"' in source
+    assert 'x-for="field in getProfileSectionFields(activeMirroredSection.id)"' not in source
 
 
 def test_preset_editor_template_exposes_mirrored_profile_section_navigation():
@@ -1584,15 +1727,16 @@ def test_preset_editor_template_mirrored_profile_uses_stable_field_ids_for_bindi
     assert 'setProfileFieldValue(field.canonical_key, $event.target.checked)' not in source
 
 
-def test_preset_editor_template_exposes_mirrored_profile_auxiliary_metadata_panel():
+def test_preset_editor_template_uses_user_facing_active_mirrored_field_panel():
     source = read_project_file('templates/modals/detail_preset_fullscreen.html')
 
     assert 'activeMirroredField?.description' in source
-    assert 'activeMirroredField?.storage_key' in source
-    assert 'activeMirroredField?.default' in source
-    assert 'activeMirroredField?.preset_bound' in source
-    assert 'activeMirroredField?.source_key ||' in source
-    assert 'resolveProfileFieldMax(activeMirroredField)' in source
+    assert '当前筛选下没有可用字段' in source
+    assert 'getProfileFieldValue(activeMirroredField.id)' not in source
+    assert 'getProfileFieldValue(activeMirroredField?.id)' in source
+    assert 'activeMirroredField?.storage_key' not in source
+    assert 'activeMirroredField?.source_key ||' not in source
+    assert 'activeMirroredField?.preset_bound' not in source
 
 
 def test_preset_editor_template_exposes_full_mirrored_profile_control_kinds():

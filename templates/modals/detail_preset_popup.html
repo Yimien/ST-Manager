@@ -20,7 +20,7 @@
           ></h3>
           <span
             class="px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-[var(--border-light)] bg-[var(--bg-panel)] text-[var(--text-main)]"
-            x-text="activePresetDetail?.preset_kind || 'preset'"
+            x-text="activePresetDetail?.preset_kind || '预设'"
           ></span>
           <span
             class="px-2 py-0.5 rounded text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
@@ -296,7 +296,7 @@
                   <span x-show="!isPromptWorkspaceReader">内容流</span>
                   <span
                     x-show="isPromptWorkspaceReader && activeWorkspace === 'prompts'"
-                    >Prompt 列表</span
+                    >提示词列表</span
                   >
                   <span
                     x-show="isPromptWorkspaceReader && activeWorkspace !== 'prompts'"
@@ -310,7 +310,7 @@
                   ></span>
                   <span
                     x-show="isPromptWorkspaceReader && activeWorkspace === 'prompts'"
-                    >按 prompt_order 排序</span
+                    >按提示词顺序排序</span
                   >
                   <span
                     x-show="isPromptWorkspaceReader && activeWorkspace !== 'prompts'"
@@ -462,7 +462,7 @@
                             <div
                               class="text-base font-semibold text-[var(--text-main)]"
                             >
-                              没有匹配的 Prompt
+                              没有匹配的提示词
                             </div>
                             <div class="mt-2 text-sm text-[var(--text-dim)]">
                               可以尝试清空搜索词或调整筛选条件。
@@ -505,11 +505,11 @@
                                   </span>
                                   <span
                                     class="sr-only"
-                                    x-text="item.prompt_meta?.is_enabled ? 'Prompt 已启用' : 'Prompt 已禁用'"
+                                    x-text="item.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
                                   ></span>
                                   <span
                                     aria-hidden="true"
-                                    :title="item.prompt_meta?.is_enabled ? 'Prompt 已启用' : 'Prompt 已禁用'"
+                                    :title="item.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
                                     class="ml-auto relative h-5 w-9 flex-shrink-0 rounded-full transition-colors"
                                     :class="item.prompt_meta?.is_enabled ? 'bg-emerald-500/80' : 'bg-amber-500/40'"
                                   >
@@ -556,12 +556,12 @@
                                   参数一览
                                 </div>
                                 <div class="text-[11px] text-[var(--text-dim)]">
-                                  只读展示当前基础字段对应的镜像参数。
+                                  快速查看当前分区的重要参数与状态。
                                 </div>
                               </div>
                               <div
                                 class="text-[11px] text-[var(--text-dim)]"
-                                x-text="editorProfile.label || editorProfile.id"
+                                x-text="editorProfile?.label || editorProfile?.id || '参数一览'"
                               ></div>
                             </div>
 
@@ -797,8 +797,12 @@
                   </template>
                   <div class="min-w-0 flex-1">
                     <div
+                      class="text-xs text-[var(--text-dim)]"
+                      x-text="activeContextItem?.group === 'prompts' ? '活动提示词' : '当前条目'"
+                    ></div>
+                    <div
                       class="text-lg font-bold text-[var(--text-main)] break-all"
-                      x-text="activeContextItem?.title || '未选择条目'"
+                      x-text="activeContextItem?.title || (activeContextItem?.group === 'prompts' ? '尚未选择提示词' : '未选择条目')"
                     ></div>
                     <div
                       class="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-[var(--text-dim)]"
@@ -880,12 +884,12 @@
                         <div class="flex flex-wrap items-center gap-3 min-w-0">
                           <span
                             class="sr-only"
-                            x-text="activeContextItem?.prompt_meta?.is_enabled ? 'Prompt 已启用' : 'Prompt 已禁用'"
+                            x-text="activeContextItem?.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
                           ></span>
                           <span
                             aria-hidden="true"
                             class="relative h-5 w-9 rounded-full transition-colors"
-                            :title="activeContextItem?.prompt_meta?.is_enabled ? 'Prompt 已启用' : 'Prompt 已禁用'"
+                            :title="activeContextItem?.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
                             :class="activeContextItem?.prompt_meta?.is_enabled ? 'bg-emerald-500/80' : 'bg-amber-500/40'"
                           >
                             <span
@@ -920,6 +924,15 @@
                             复制
                           </button>
                         </template>
+                      </div>
+                      <div class="grid grid-cols-1 gap-2 text-xs">
+                        <div>
+                          <div class="text-[var(--text-dim)]">标识符</div>
+                          <div
+                            class="font-mono break-all text-[var(--text-main)]"
+                            x-text="activeContextItem?.payload?.identifier || activeContextItem?.prompt_meta?.identifier || activeContextItem?.id || '-'"
+                          ></div>
+                        </div>
                       </div>
                       <div
                         x-show="getPromptFullDetail(activeContextItem)"

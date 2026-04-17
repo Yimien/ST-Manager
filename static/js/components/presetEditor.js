@@ -123,6 +123,7 @@ export default function presetEditor() {
     activePromptId: "",
     activeGenericItemId: "",
     activeItemId: "",
+    activeMirroredFieldId: "",
     searchTerm: "",
     uiFilter: "all",
     showMobileSidebar: false,
@@ -291,14 +292,88 @@ export default function presetEditor() {
       );
     },
 
+    getFilteredProfileSectionFields(sectionId) {
+      const term = String(this.searchTerm || "")
+        .trim()
+        .toLowerCase();
+      const editableControls = new Set([
+        "range_with_number",
+        "number",
+        "checkbox",
+        "select",
+        "textarea",
+        "sortable_string_list",
+        "string_list",
+        "key_value_list",
+        "raw_json",
+      ]);
+
+      return this.getProfileSectionFields(sectionId).filter((field) => {
+        if (
+          this.uiFilter === "editable" &&
+          !editableControls.has(field?.control)
+        ) {
+          return false;
+        }
+        if (
+          this.uiFilter === "changed" &&
+          !this.isProfileFieldDirty(
+            field?.storage_key || field?.canonical_key || field?.id,
+          )
+        ) {
+          return false;
+        }
+        if (this.uiFilter === "longtext" && field?.control !== "textarea") {
+          return false;
+        }
+        if (
+          this.uiFilter === "collections" &&
+          ![
+            "sortable_string_list",
+            "string_list",
+            "key_value_list",
+            "prompt_workspace",
+          ].includes(field?.control)
+        ) {
+          return false;
+        }
+        if (!term) return true;
+
+        const haystack = [
+          field?.label,
+          field?.description,
+          field?.storage_key,
+          field?.canonical_key,
+          field?.id,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(term);
+      });
+    },
+
     getMirroredSectionFieldCount(sectionId) {
       return this.getProfileSectionFields(sectionId).length;
     },
 
+    get mirroredWorkspaceFieldItems() {
+      if (!this.activeMirroredSection) return [];
+      if (this.activeMirroredSection.id === "prompt_manager") return [];
+      return this.getFilteredProfileSectionFields(
+        this.activeMirroredSection.id,
+      );
+    },
+
     get activeMirroredField() {
-      if (!this.activeMirroredSection) return null;
+      const visibleFields = this.mirroredWorkspaceFieldItems;
+      if (!visibleFields.length) return null;
       return (
-        this.getProfileSectionFields(this.activeMirroredSection.id)[0] || null
+        visibleFields.find(
+          (field) => field.id === this.activeMirroredFieldId,
+        ) ||
+        visibleFields[0] ||
+        null
       );
     },
 
@@ -672,6 +747,7 @@ export default function presetEditor() {
       this.cacheActiveWorkspace = this.activeWorkspace;
 
       this.syncActiveEditorSelections();
+      this.syncActiveMirroredField();
     },
 
     syncActiveEditorSelections() {
@@ -1158,16 +1234,19 @@ export default function presetEditor() {
         workspaceId || (this.isPromptWorkspaceEditor ? "prompts" : "all");
       if (!this.isPromptWorkspaceEditor) {
         this.selectGroup(this.activeWorkspace);
+        this.syncActiveMirroredField();
         return;
       }
 
       if (this.activeWorkspace === "prompts") {
+        this.activeMirroredFieldId = "";
         this.refreshEditorCollections();
         return;
       }
 
       this.activeGroup = this.activeWorkspace;
       this.refreshEditorCollections();
+      this.syncActiveMirroredField();
     },
 
     selectItem(itemId) {
@@ -1231,6 +1310,27 @@ export default function presetEditor() {
       return Object.values(this.editorProfile?.fields || {}).filter(
         (field) => field.section === sectionId,
       );
+    },
+
+    isProfileFieldDirty(fieldKey) {
+      if (!fieldKey) return false;
+      const field = this.getProfileField(fieldKey);
+      return [
+        fieldKey,
+        field?.storage_key,
+        field?.canonical_key,
+        field?.id,
+      ].some((dirtyKey) => Boolean(dirtyKey && this.dirtyPaths[dirtyKey]));
+    },
+
+    syncActiveMirroredField() {
+      const nextField = this.activeMirroredField;
+      this.activeMirroredFieldId = nextField?.id || "";
+    },
+
+    selectMirroredField(fieldId) {
+      this.activeMirroredFieldId = String(fieldId || "");
+      this.syncActiveMirroredField();
     },
 
     getProfileFieldValue(fieldKey) {

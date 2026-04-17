@@ -11,11 +11,11 @@
     >
       <div class="flex items-center gap-3 min-w-0">
         <div class="text-[var(--accent-main)] font-bold text-sm">
-          Preset Editor
+          预设编辑器
         </div>
         <div
           class="px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-[var(--border-light)] text-[var(--text-main)] bg-[var(--bg-sub)]"
-          x-text="editingPresetFile?.preset_kind || 'preset'"
+          x-text="editingPresetFile?.preset_kind || '预设'"
         ></div>
         <div class="min-w-0">
           <div
@@ -122,7 +122,7 @@
             <div
               class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
             >
-              <div class="text-xs text-[var(--text-dim)]">Reader Workspace</div>
+              <div class="text-xs text-[var(--text-dim)]">字段筛选</div>
               <div
                 class="text-sm font-bold text-[var(--text-main)]"
                 x-text="editingPresetFile?.preset_kind_label || '预设'"
@@ -171,15 +171,15 @@
                 </button>
               </div>
               <div class="text-[11px] text-[var(--text-dim)]">
-                <span x-show="uiFilter === 'all'">显示全部 reader 字段</span>
+                <span x-show="uiFilter === 'all'">全部: 显示当前分区全部字段</span>
                 <span x-show="uiFilter === 'editable'"
-                  >仅显示可直接编辑的字段</span
+                  >可编辑: 仅显示可直接编辑的字段</span
                 >
-                <span x-show="uiFilter === 'changed'">聚焦当前已修改内容</span>
+                <span x-show="uiFilter === 'changed'">已修改: 仅显示已修改字段</span>
                 <span x-show="uiFilter === 'collections'"
-                  >聚焦列表与复杂集合编辑器</span
+                  >集合: 仅显示列表与复合字段</span
                 >
-                <span x-show="uiFilter === 'longtext'">聚焦长文本字段</span>
+                <span x-show="uiFilter === 'longtext'">长文本: 仅显示长文本字段</span>
               </div>
             </div>
           </template>
@@ -192,11 +192,10 @@
             >
               <div class="text-xs text-[var(--text-dim)]">提示词列表</div>
               <div class="text-sm font-bold text-[var(--text-main)]">
-                SillyTavern 提示词管理
+                提示词工作区
               </div>
               <div class="text-[11px] text-[var(--text-dim)]">
-                左侧管理提示词顺序与启用状态，中间编辑当前提示词，整体体验与
-                SillyTavern 提示词管理保持一致。
+                左侧管理提示词顺序与启用状态，中间编辑当前提示词内容与参数。
               </div>
             </div>
           </template>
@@ -265,39 +264,6 @@
             </div>
           </template>
 
-          <template x-if="isPromptWorkspaceEditor">
-            <div
-              class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3 space-y-2"
-            >
-              <div class="text-xs text-[var(--text-dim)]">工作区</div>
-              <button
-                @click="selectWorkspace('prompts')"
-                class="w-full text-left px-3 py-2 rounded-xl text-sm border transition-colors"
-                :class="activeWorkspace === 'prompts' ? 'bg-[var(--accent-main)]/15 text-[var(--text-main)] border-[var(--accent-main)]/30' : 'bg-[var(--bg-body)] text-[var(--text-dim)] border-transparent hover:border-[var(--border-light)] hover:text-[var(--text-main)]'"
-              >
-                Prompt 条目
-              </button>
-              <template
-                x-for="group in editorView.groups.filter((group) => group.id !== 'prompts')"
-                :key="`workspace-${group.id}`"
-              >
-                <button
-                  @click="selectWorkspace(group.id)"
-                  class="w-full text-left px-3 py-2 rounded-xl text-sm border transition-colors"
-                  :class="activeWorkspace === group.id ? 'bg-[var(--accent-main)]/15 text-[var(--text-main)] border-[var(--accent-main)]/30' : 'bg-[var(--bg-body)] text-[var(--text-dim)] border-transparent hover:border-[var(--border-light)] hover:text-[var(--text-main)]'"
-                >
-                  <div
-                    class="font-medium"
-                    x-text="group.title || group.label || group.id"
-                  ></div>
-                  <div
-                    class="text-[11px] text-[var(--text-dim)] truncate"
-                    x-text="group.summary || group.description || '切换到该工作区继续编辑'"
-                  ></div>
-                </button>
-              </template>
-            </div>
-          </template>
         </div>
       </aside>
 
@@ -318,12 +284,11 @@
             </button>
           </div>
 
-          <template
-            x-if="isPromptWorkspaceEditor && activeWorkspace === 'prompts'"
-          >
-            <div
-              class="grid grid-cols-1 xl:grid-cols-[22rem_minmax(0,1fr)] gap-4 h-full min-h-0"
-            >
+          <template x-if="isPromptWorkspaceEditor">
+            <template x-if="activeWorkspace === 'prompts'">
+              <div
+                class="grid grid-cols-1 xl:grid-cols-[22rem_minmax(0,1fr)] gap-4 h-full min-h-0"
+              >
               <section
                 class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] min-h-[22rem] flex flex-col overflow-hidden"
               >
@@ -332,11 +297,11 @@
                 >
                   <div>
                     <div class="text-sm font-bold text-[var(--text-main)]">
-                      Prompt 列表
+                      提示词列表
                     </div>
                     <div
                       class="text-[11px] text-[var(--text-dim)]"
-                      x-text="`${orderedPromptItems.length} 个 Prompt`"
+                      x-text="`${orderedPromptItems.length} 个提示词`"
                     ></div>
                   </div>
                   <div class="text-[11px] text-[var(--text-dim)]">
@@ -350,7 +315,7 @@
                     <div
                       class="rounded-xl border border-dashed border-[var(--border-light)] bg-[var(--bg-body)] p-4 text-sm text-[var(--text-dim)]"
                     >
-                      当前预设没有可编辑的 Prompt 条目。
+                      当前预设没有可编辑的提示词条目。
                     </div>
                   </template>
                   <template
@@ -383,7 +348,7 @@
                             <input
                               type="checkbox"
                               class="peer prompt-toggle-input"
-                              aria-label="切换 Prompt 启用状态"
+                              aria-label="切换提示词启用状态"
                               :checked="prompt.__enabled !== false"
                               @change="togglePromptEnabled(prompt.__identifier)"
                             />
@@ -442,11 +407,11 @@
                 >
                   <div class="min-w-0">
                     <div class="text-xs text-[var(--text-dim)]">
-                      当前 Prompt
+                      当前提示词
                     </div>
                     <div
                       class="text-lg font-bold text-[var(--text-main)]"
-                      x-text="activePromptItem?.name || activePromptItem?.__identifier || '选择左侧 Prompt 开始编辑'"
+                      x-text="activePromptItem?.name || activePromptItem?.__identifier || '选择左侧提示词开始编辑'"
                     ></div>
                     <div
                       class="text-[11px] text-[var(--text-dim)] break-all"
@@ -468,7 +433,7 @@
                     <div
                       class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-body)] p-6 text-sm text-[var(--text-dim)]"
                     >
-                      请选择一个 Prompt 条目开始编辑。
+                      请选择一个提示词条目开始编辑。
                     </div>
                   </template>
 
@@ -478,11 +443,11 @@
                         class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-2"
                       >
                         <div class="text-sm font-bold text-[var(--text-main)]">
-                          Prompt 基础信息
+                          提示词基础信息
                         </div>
                         <div class="text-sm text-[var(--text-dim)]">
-                          名称、角色、注入位置与触发器按 SillyTavern Prompt
-                          Manager 心智编辑。
+                          名称、角色、注入位置与触发器按 SillyTavern
+                          提示词管理的使用习惯编辑。
                         </div>
                       </div>
 
@@ -555,7 +520,7 @@
                           class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-2"
                         >
                           <div class="text-xs text-[var(--text-dim)]">
-                            In-Chat 深度
+                            聊天内深度
                           </div>
                           <div class="text-[11px] text-[var(--text-dim)]">
                             仅在“聊天中”位置下生效，数值越小越靠前。
@@ -624,7 +589,7 @@
                           <div
                             class="text-sm font-bold text-[var(--text-main)]"
                           >
-                            Prompt 内容
+                            提示词内容
                           </div>
                           <div class="text-[11px] text-[var(--text-dim)]">
                             填写实际要注入的提示词正文；marker 条目无需内容。
@@ -642,6 +607,7 @@
                 </div>
               </section>
             </div>
+          </template>
           </template>
 
           <template x-if="isScalarWorkspaceEditor">
@@ -671,7 +637,7 @@
                       x-text="section.label || section.id"
                     ></div>
                     <div class="text-[11px] text-[var(--text-dim)]">
-                      当前分组参数会直接写回对应 storage key。
+                      当前分组参数会直接写回对应参数项。
                     </div>
                   </div>
                   <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -813,7 +779,7 @@
                               @click="addBiasEntry()"
                               class="btn-secondary px-3 py-1.5 text-xs rounded"
                             >
-                              添加 Bias
+                              添加偏置
                             </button>
                           </div>
                         </template>
@@ -896,12 +862,21 @@
                   </div>
 
                   <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <template x-if="mirroredWorkspaceFieldItems.length === 0">
+                      <div
+                        class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-body)] p-4 text-sm text-[var(--text-dim)] xl:col-span-2"
+                      >
+                        当前筛选下没有可用字段。
+                      </div>
+                    </template>
                     <template
-                      x-for="field in getProfileSectionFields(activeMirroredSection.id)"
+                      x-for="field in mirroredWorkspaceFieldItems"
                       :key="field.id"
                     >
                       <div
-                        class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-body)] p-4 space-y-3"
+                        @click="selectMirroredField(field.id)"
+                        class="rounded-2xl border bg-[var(--bg-body)] p-4 space-y-3 cursor-pointer transition-colors"
+                        :class="activeMirroredField?.id === field.id ? 'border-[var(--accent-main)]/40 bg-[var(--accent-main)]/10' : 'border-[var(--border-light)] hover:border-[var(--accent-main)]/20'"
                       >
                         <div class="flex items-center justify-between gap-3">
                           <div>
@@ -1066,7 +1041,7 @@
                                 @click="addBiasEntry()"
                                 class="btn-secondary px-3 py-1.5 text-xs rounded"
                               >
-                                添加 Bias
+                                添加偏置
                               </button>
                             </div>
                             <template
@@ -1385,7 +1360,7 @@
                               @click="addBiasEntry()"
                               class="btn-secondary px-3 py-1.5 text-xs rounded"
                             >
-                              添加 Bias
+                              添加偏置
                             </button>
                           </div>
                           <div class="space-y-2">
@@ -1553,10 +1528,10 @@
             <div
               class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
             >
-              <div class="text-xs text-[var(--text-dim)]">活动 Prompt</div>
+              <div class="text-xs text-[var(--text-dim)]">活动提示词</div>
               <div
                 class="text-base font-bold text-[var(--text-main)]"
-                x-text="activePromptItem?.name || activePromptItem?.__identifier || '尚未选择 Prompt'"
+                x-text="activePromptItem?.name || activePromptItem?.__identifier || '尚未选择提示词'"
               ></div>
               <div
                 class="text-xs text-[var(--text-dim)]"
@@ -1564,7 +1539,7 @@
               ></div>
               <div class="grid grid-cols-1 gap-2 text-xs">
                 <div>
-                  <div class="text-[var(--text-dim)]">Identifier</div>
+                  <div class="text-[var(--text-dim)]">标识符</div>
                   <div
                     class="font-mono break-all text-[var(--text-main)]"
                     x-text="activePromptItem?.__identifier || '-'"
@@ -1590,7 +1565,7 @@
           </template>
 
           <template
-            x-if="!isPromptWorkspaceEditor || activeWorkspace !== 'prompts'"
+            x-if="!isMirroredProfileEditor && (!isPromptWorkspaceEditor || activeWorkspace !== 'prompts')"
           >
             <div
               class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
@@ -1624,67 +1599,52 @@
           </template>
 
           <template
-            x-if="isMirroredProfileEditor && activeMirroredField && (!isPromptWorkspaceEditor || activeWorkspace !== 'prompts')"
+            x-if="isMirroredProfileEditor && (!isPromptWorkspaceEditor || activeWorkspace !== 'prompts')"
           >
             <div
               class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
             >
-              <div class="text-xs text-[var(--text-dim)]">镜像字段</div>
-              <div
-                class="text-base font-bold text-[var(--text-main)]"
-                x-text="activeMirroredField?.label || activeMirroredField?.id || '尚未选择字段'"
-              ></div>
-              <div
-                class="text-xs text-[var(--text-dim)]"
-                x-text="activeMirroredField?.description || '当前分区使用 profile schema 直接驱动 ST 镜像控件。'"
-              ></div>
-              <div class="grid grid-cols-1 gap-2 text-xs">
-                <div>
-                  <div class="text-[var(--text-dim)]">存储键</div>
-                  <div
-                    class="font-mono break-all text-[var(--text-main)]"
-                    x-text="activeMirroredField?.storage_key || '-'"
-                  ></div>
+              <template x-if="!activeMirroredField && mirroredWorkspaceFieldItems.length === 0">
+                <div class="text-sm text-[var(--text-dim)]">
+                  当前筛选下没有可用字段。
                 </div>
-                <div>
-                  <div class="text-[var(--text-dim)]">来源键</div>
-                  <div
-                    class="font-mono break-all text-[var(--text-main)]"
-                    x-text="activeMirroredField?.source_key || activeMirroredField?.canonical_key || '-'"
-                  ></div>
+              </template>
+              <template x-if="!activeMirroredField && mirroredWorkspaceFieldItems.length > 0">
+                <div class="text-sm text-[var(--text-dim)]">
+                  请先从中间选择一个字段。
                 </div>
-                <div class="grid grid-cols-3 gap-2">
-                  <div>
-                    <div class="text-[var(--text-dim)]">最小值</div>
-                    <div
-                      class="text-[var(--text-main)]"
-                      x-text="activeMirroredField?.min ?? '-'"
-                    ></div>
-                  </div>
-                  <div>
-                    <div class="text-[var(--text-dim)]">最大值</div>
-                    <div
-                      class="text-[var(--text-main)]"
-                      x-text="resolveProfileFieldMax(activeMirroredField) ?? '-'"
-                    ></div>
-                  </div>
-                  <div>
-                    <div class="text-[var(--text-dim)]">默认值</div>
-                    <div
-                      class="text-[var(--text-main)]"
-                      x-text="activeMirroredField?.default ?? '-'"
-                    ></div>
+              </template>
+              <template x-if="activeMirroredField">
+                <div class="space-y-3">
+                  <div class="text-xs text-[var(--text-dim)]">当前字段</div>
+                  <div
+                    class="text-base font-bold text-[var(--text-main)]"
+                    x-text="activeMirroredField?.label || activeMirroredField?.id || '尚未选择字段'"
+                  ></div>
+                  <div
+                    class="text-xs text-[var(--text-dim)]"
+                    x-text="activeMirroredField?.description || '调整当前字段的值会直接影响该分区的生成设置。'"
+                  ></div>
+                  <div class="grid grid-cols-1 gap-2 text-xs">
+                      <div>
+                        <div class="text-[var(--text-dim)]">当前值</div>
+                        <div
+                          class="font-mono break-all text-[var(--text-main)]"
+                        x-text="formatValue(getProfileFieldValue(activeMirroredField?.id))"
+                        ></div>
+                      </div>
+                    <div>
+                      <div class="text-[var(--text-dim)]">默认值</div>
+                      <div
+                        class="font-mono break-all text-[var(--text-main)]"
+                        x-text="formatValue(activeMirroredField?.default ?? '-')"
+                      ></div>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div class="text-[var(--text-dim)]">Preset Bound</div>
-                  <div
-                    class="text-[var(--text-main)]"
-                    x-text="activeMirroredField?.preset_bound === false ? '否' : '是'"
-                  ></div>
-                </div>
-              </div>
+              </template>
             </div>
+            </template>
           </template>
 
           <div

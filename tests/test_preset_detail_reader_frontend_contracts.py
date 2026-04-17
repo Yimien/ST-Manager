@@ -202,6 +202,28 @@ def test_preset_detail_reader_template_compacts_prompt_state_info_bar():
     assert ('sr-only' in prompt_state_block) or ('aria-label=' in prompt_state_block)
 
 
+def test_preset_detail_reader_template_localizes_remaining_prompt_copy():
+    source = read_project_file('templates/modals/detail_preset_popup.html')
+
+    assert '提示词列表' in source
+    assert '按提示词顺序排序' in source
+    assert '没有匹配的提示词' in source
+    assert '提示词已启用' in source
+    assert '提示词已禁用' in source
+    assert '活动提示词' in source
+    assert '尚未选择提示词' in source
+    assert '标识符' in source
+
+    assert 'Prompt 列表' not in source
+    assert '按 prompt_order 排序' not in source
+    assert '没有匹配的 Prompt' not in source
+    assert 'Prompt 已启用' not in source
+    assert 'Prompt 已禁用' not in source
+    assert '活动 Prompt' not in source
+    assert '尚未选择 Prompt' not in source
+    assert 'Identifier' not in source
+
+
 def test_preset_detail_reader_runtime_initializes_prompt_workspace_and_switches_active_context():
     run_preset_detail_reader_runtime_check(
         """
@@ -1295,53 +1317,72 @@ def test_preset_detail_reader_template_exposes_scalar_workspace_overview_branch(
     assert '高级参数摘要' not in source
 
 
-def test_preset_detail_reader_template_exposes_mirrored_profile_snapshot_branch():
+def test_preset_detail_reader_template_exposes_null_safe_mirrored_profile_snapshot_branch():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
     assert '提示词列表' in source
     assert 'Prompt Workspace' not in source
     assert 'x-if="isScalarWorkspaceReader && isMirroredProfileReader && editorProfile"' in source
     assert 'x-for="section in readerMirroredProfileSections"' in source
-    assert 'x-for="field in getProfileSectionFields(section.id)"' in source
-    assert 'x-text="getProfileFieldDisplay(field.canonical_key)"' in source
-    assert ':style="`width: ${getProfileFieldPercent(field.canonical_key)}%`"' in source
-    assert 'x-text="resolveProfileFieldMax(field) ?? \'-\' "' in source or 'x-text="resolveProfileFieldMax(field) ?? \'-\'"' in source
-    assert "x-text=\"getProfileFieldValue(field.canonical_key) ? '启用' : '关闭'\"" in source
+    assert 'editorProfile.label || editorProfile.id' not in source
+    assert "editorProfile?.label || editorProfile?.id || '参数一览'" in source or 'editorProfile?.label || editorProfile?.id || "参数一览"' in source
 
 
-def test_preset_detail_reader_template_uses_user_facing_copy_for_empty_states_and_structured_content():
+def test_preset_detail_reader_template_uses_user_facing_copy_without_developer_mirror_labels():
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
-    assert 'quick filter' not in source
-    assert 'Quick Filters' not in source
-    assert 'identifier' not in source
-    assert 'extension key:' not in source
-    assert 'field key:' not in source
-    assert 'Prompt State' not in source
-    assert '>\n                        Extension\n' not in source
-    assert '>\n                        Field\n' not in source
-    assert '>\n                        Structured\n' not in source
-    assert '没有 reader_view 数据' not in source
-    assert '当前预设没有可展示的 reader_view 分组。' not in source
-    assert '如果后端没有返回 `reader_view.items`，这里会保持空状态。' not in source
-    assert '结构化对象，详情面板可查看完整 payload。' not in source
-    assert '这是结构化对象，下面展示完整 payload 以便阅读。' not in source
-
-    assert '搜索条目、分组、字段...' in source
-    assert '当前预设暂无可展示分组。' in source
+    assert 'Reader Workspace' not in source
+    assert 'profile schema' not in source
+    assert '只读展示当前基础字段对应的镜像参数。' not in source
+    assert '提示词列表' in source
     assert '当前预设暂无可展示内容' in source
-    assert '当前预设还没有可查看的内容。' in source
-    assert '当前预设里还没有可查看的提示词条目。' in source
-    assert '可以尝试切换分组、清空搜索词或调整筛选条件。' in source
-    assert '可以尝试清空搜索词或调整筛选条件。' in source
-    assert '可以尝试切换工作区、清空搜索词或调整筛选条件。' not in source
-    assert '从左侧选择条目后，可在这里查看完整内容。' in source
-    assert '扩展键名：' in source
-    assert '字段键名：' in source
-    assert '提示词状态' in source
-    assert '扩展信息' in source
-    assert '字段信息' in source
-    assert '结构化内容' in source
+
+
+def test_preset_detail_reader_runtime_degrades_safely_when_editor_profile_is_missing():
+    run_preset_detail_reader_runtime_check(
+        """
+        reader.activePresetDetail = {
+          raw_data: {
+            name: 'Test Preset',
+          },
+          reader_view: {
+            family: 'generic',
+            groups: [
+              { id: 'basic', label: '基础信息' },
+            ],
+            items: [
+              {
+                id: 'field:name',
+                type: 'field',
+                group: 'basic',
+                title: '名称',
+                payload: { value: 'Test Preset' },
+              },
+            ],
+            stats: { total_count: 1 },
+          },
+        };
+
+        if (reader.editorProfile != null) {
+          throw new Error(`expected missing editor_profile to keep editorProfile nullish, got ${JSON.stringify(reader.editorProfile)}`);
+        }
+        if (reader.isMirroredProfileReader !== false) {
+          throw new Error(`expected missing editor_profile to disable mirrored reader mode, got ${reader.isMirroredProfileReader}`);
+        }
+
+        reader.initializeReaderState();
+
+        if (reader.editorProfile != null) {
+          throw new Error(`expected editorProfile to remain nullish after initializeReaderState, got ${JSON.stringify(reader.editorProfile)}`);
+        }
+        if (reader.isMirroredProfileReader !== false) {
+          throw new Error(`expected mirrored reader mode to stay false after initializeReaderState, got ${reader.isMirroredProfileReader}`);
+        }
+        if (reader.activeItem?.id !== 'field:name') {
+          throw new Error(`expected generic field item to remain active, got ${reader.activeItem?.id}`);
+        }
+        """
+    )
 
 
 def test_preset_detail_reader_template_exposes_non_scalar_mirrored_snapshot_kinds():
@@ -1399,7 +1440,7 @@ def test_preset_detail_reader_template_prevents_blank_prompt_content_cards_and_s
     source = read_project_file('templates/modals/detail_preset_popup.html')
 
     assert "activeWorkspace === 'prompts' && orderedPromptItems.length > 0 && promptFilteredItems.length === 0" in source
-    assert '没有匹配的 Prompt' in source
+    assert '没有匹配的提示词' in source
     assert "x-if=\"activeContextItem?.group !== 'prompts'\"" in source
     assert "activeContextItem?.group === 'prompts' ? getPromptPreview(activeContextItem) : getItemFullDetail(activeContextItem)" not in source
 
