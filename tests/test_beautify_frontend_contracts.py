@@ -8,46 +8,120 @@ def read_project_file(relative_path):
     return (PROJECT_ROOT / relative_path).read_text(encoding='utf-8')
 
 
-def test_app_registers_beautify_components_and_api_module_contracts():
-    app_source = read_project_file('static/js/app.js')
-    api_source = read_project_file('static/js/api/beautify.js')
+def assert_contains_any(text, variants):
+    assert any(variant in text for variant in variants), f'Missing expected variants: {variants}'
+def test_index_template_lifts_beautify_scope_to_main_container_above_shared_includes():
+    template = read_project_file('templates/index.html')
 
-    assert 'import beautifyGrid from "./components/beautifyGrid.js";' in app_source
-    assert 'import beautifyPreviewFrame from "./components/beautifyPreviewFrame.js";' in app_source
-    assert 'Alpine.data("beautifyGrid", beautifyGrid);' in app_source
-    assert 'Alpine.data("beautifyPreviewFrame", beautifyPreviewFrame);' in app_source
+    main_container_index = template.index('<div class="main-container" x-data="beautifyGrid">')
+    sidebar_index = template.index('{% include "components/sidebar.html" %}')
+    beautify_grid_index = template.index('{% include "components/grid_beautify.html" %}')
 
-    assert 'export async function listBeautifyPackages(' in api_source
-    assert 'export async function getBeautifyPackage(' in api_source
-    assert 'export async function importBeautifyTheme(' in api_source
-    assert 'export async function importBeautifyWallpaper(' in api_source
-    assert 'export async function installBeautifyVariant(' in api_source
-    assert 'export async function applyBeautifyVariant(' in api_source
+    assert main_container_index < sidebar_index < beautify_grid_index
 
 
-def test_state_and_header_sources_add_beautify_mode_search_and_selection_state():
-    state_source = read_project_file('static/js/state.js')
-    header_source = read_project_file('static/js/components/header.js')
+def test_sidebar_template_hosts_beautify_toolbar_filters_and_package_list_contract():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+    theme_change_handlers = (
+        '@change="handleThemeFiles($event.target.files); $event.target.value = \'\'"',
+        '@change="handleThemeFiles($event.target.files); $event.target.value = \"\""',
+    )
+    wallpaper_change_handlers = (
+        '@change="handleWallpaperFiles($event.target.files); $event.target.value = \'\'"',
+        '@change="handleWallpaperFiles($event.target.files); $event.target.value = \"\""',
+    )
 
-    assert 'beautifyList: [],' in state_source
-    assert 'beautifySearch: "",' in state_source
-    assert 'beautifyPlatformFilter: "all",' in state_source
-    assert 'beautifyInstallFilter: "all",' in state_source
-    assert 'beautifySelectedPackageId: "",' in state_source
-    assert 'beautifySelectedVariantId: "",' in state_source
-    assert 'beautifySelectedWallpaperId: "",' in state_source
-    assert 'beautifyPreviewDevice: "pc",' in state_source
+    assert "currentMode === 'beautify' && visibleSidebar" in sidebar_template
+    assert 'beautify-sidebar-panel' in sidebar_template
+    assert 'class="flex-1 flex flex-col overflow-hidden bg-[var(--bg-panel)] beautify-sidebar-panel beautify-sidebar-pane"' in sidebar_template
+    assert 'beautify-toolbar' in sidebar_template
+    assert 'beautify-package-list custom-scrollbar' in sidebar_template
+    assert 'x-model.debounce.200ms="beautifySearch"' in sidebar_template
+    assert 'x-model="platformFilter"' in sidebar_template
+    assert 'x-model="installFilter"' in sidebar_template
+    assert '@click="fetchPackages()"' in sidebar_template
+    assert any(handler in sidebar_template for handler in theme_change_handlers)
+    assert any(handler in sidebar_template for handler in wallpaper_change_handlers)
+    assert 'filteredPackages' in sidebar_template
+    assert '@click="selectPackage(item.id)"' in sidebar_template
+    assert 'selectedPackageId === item.id' in sidebar_template
 
-    assert '"beautify",' in header_source
-    assert 'get beautifySearch() {' in header_source
-    assert 'set beautifySearch(val) {' in header_source
+
+def test_app_js_registers_beautify_runtime_components():
+    app_js = read_project_file('static/js/app.js')
+
+    assert_contains_any(app_js, ('import beautifyGrid from "./components/beautifyGrid.js";', "import beautifyGrid from './components/beautifyGrid.js';"))
+    assert_contains_any(app_js, ('import beautifyPreviewFrame from "./components/beautifyPreviewFrame.js";', "import beautifyPreviewFrame from './components/beautifyPreviewFrame.js';"))
+    assert_contains_any(app_js, ('Alpine.data("beautifyGrid", beautifyGrid);', "Alpine.data('beautifyGrid', beautifyGrid);"))
+    assert_contains_any(app_js, ('Alpine.data("beautifyPreviewFrame", beautifyPreviewFrame);', "Alpine.data('beautifyPreviewFrame', beautifyPreviewFrame);"))
 
 
-def test_sidebar_and_layout_sources_route_beautify_mode_and_mobile_upload_contracts():
-    sidebar_source = read_project_file('static/js/components/sidebar.js')
-    layout_source = read_project_file('static/js/components/layout.js')
+def test_beautify_api_exports_core_runtime_helpers():
+    beautify_api = read_project_file('static/js/api/beautify.js')
 
-    assert "mode === 'beautify'" in sidebar_source
-    assert 'window.stUploadBeautifyThemeFiles' in sidebar_source
-    assert 'window.dispatchEvent(new CustomEvent(\'refresh-beautify-list\'' in sidebar_source or 'window.dispatchEvent(new CustomEvent("refresh-beautify-list"' in sidebar_source
-    assert "mode !== 'cards' && mode !== 'worldinfo' && mode !== 'chats' && mode !== 'beautify'" in layout_source or "mode !== 'beautify'" in layout_source
+    expected_exports = (
+        'listBeautifyPackages',
+        'getBeautifyPackage',
+        'importBeautifyTheme',
+        'importBeautifyWallpaper',
+        'updateBeautifyVariant',
+        'installBeautifyVariant',
+        'applyBeautifyVariant',
+        'deleteBeautifyPackage',
+        'buildBeautifyPreviewAssetUrl',
+    )
+
+    for export_name in expected_exports:
+        assert_contains_any(
+            beautify_api,
+            (
+                f'export async function {export_name}(',
+                f'export function {export_name}(',
+            ),
+        )
+
+
+def test_state_js_keeps_beautify_store_keys():
+    state_js = read_project_file('static/js/state.js')
+
+    expected_keys = (
+        'beautifyList',
+        'beautifySearch',
+        'beautifyPlatformFilter',
+        'beautifyInstallFilter',
+        'beautifySelectedPackageId',
+        'beautifySelectedVariantId',
+        'beautifySelectedWallpaperId',
+        'beautifyPreviewDevice',
+        'beautifyActiveDetail',
+        'beautifyActiveVariant',
+        'beautifyActiveWallpaper',
+    )
+
+    for key in expected_keys:
+        assert_contains_any(state_js, (f'{key}:', f'"{key}":', f"'{key}':"))
+
+
+def test_header_js_binds_beautify_search_and_mobile_upload_mode():
+    header_js = read_project_file('static/js/components/header.js')
+
+    assert_contains_any(header_js, ('"beautify"', "'beautify'"))
+    assert_contains_any(header_js, ('get beautifySearch()', 'get beautifySearch ()'))
+    assert_contains_any(header_js, ('return this.$store.global.beautifySearch;', 'return this.$store.global.beautifySearch || "";', "return this.$store.global.beautifySearch || '';"))
+    assert_contains_any(header_js, ('set beautifySearch(val)', 'set beautifySearch (val)'))
+    assert 'this.$store.global.beautifySearch = val;' in header_js
+    assert_contains_any(header_js, ('new CustomEvent("request-mobile-upload")', "new CustomEvent('request-mobile-upload')"))
+
+
+def test_layout_or_sidebar_keeps_beautify_mode_refresh_and_upload_routing():
+    layout_js = read_project_file('static/js/components/layout.js')
+    sidebar_js = read_project_file('static/js/components/sidebar.js')
+
+    assert_contains_any(layout_js, ('mode !== "beautify"', "mode !== 'beautify'"))
+    assert_contains_any(layout_js, ('mode === "beautify"', "mode === 'beautify'"))
+    assert_contains_any(layout_js, ('new CustomEvent("refresh-beautify-list")', "new CustomEvent('refresh-beautify-list')"))
+
+    assert_contains_any(sidebar_js, ('const mode = this.currentMode;',))
+    assert_contains_any(sidebar_js, ('mode === "beautify"', "mode === 'beautify'"))
+    assert_contains_any(sidebar_js, ('window.stUploadBeautifyThemeFiles(files);',))
+    assert_contains_any(sidebar_js, ('window.dispatchEvent(new CustomEvent("refresh-beautify-list"));', "window.dispatchEvent(new CustomEvent('refresh-beautify-list'));"))

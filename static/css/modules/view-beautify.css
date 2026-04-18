@@ -1,21 +1,16 @@
 .beautify-layout {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 1rem;
+  display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   padding: 1rem;
   background: var(--bg-body);
 }
 
-.beautify-sidebar-pane,
-.beautify-stage-pane {
-  min-height: 0;
-}
-
-.beautify-sidebar-pane {
+.beautify-sidebar-panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--border-light);
   border-radius: 18px;
   background: linear-gradient(
@@ -253,6 +248,9 @@
 }
 
 .beautify-stage-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid var(--border-light);
   border-radius: 20px;
   background:
@@ -499,9 +497,6 @@
 }
 
 @media (max-width: 1180px) {
-  .beautify-layout {
-    grid-template-columns: 320px minmax(0, 1fr);
-  }
   .beautify-stage-body {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -515,18 +510,11 @@
 }
 
 @media (max-width: 900px) {
-  .beautify-layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "stage" "list";
-  }
-  .beautify-stage-pane {
-    grid-area: stage;
-  }
-  .beautify-sidebar-pane {
-    grid-area: list;
-  }
   .beautify-preview-shell {
     min-height: 520px;
+  }
+  .sidebar-mobile .beautify-sidebar-panel {
+    min-height: 0;
   }
   .beautify-toolbar-actions,
   .beautify-stage-controls,
