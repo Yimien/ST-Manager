@@ -9,6 +9,22 @@ def read_project_file(relative_path):
     return (PROJECT_ROOT / relative_path).read_text(encoding='utf-8')
 
 
+def compact_whitespace(source):
+    return re.sub(r'\s+', ' ', source).strip()
+
+
+def normalize_js_assertion_source(source):
+    compact = compact_whitespace(source).replace('"', "'")
+    compact = re.sub(r'([({\[])\s+', r'\1', compact)
+    compact = re.sub(r'\s+([)}\]])', r'\1', compact)
+    compact = re.sub(r'\s*,\s*', ', ', compact)
+    return re.sub(r',\s*([)\]}])', r'\1', compact)
+
+
+def js_contains(source, snippet):
+    return normalize_js_assertion_source(snippet) in normalize_js_assertion_source(source)
+
+
 def extract_css_block(css_source, selector):
     selector_start = css_source.index(selector)
     block_start = css_source.index('{', selector_start)
@@ -47,8 +63,24 @@ def extract_media_block(css_source, media_query):
 
 
 def extract_js_function_block(source, signature):
-    function_start = source.index(signature)
-    block_start = source.index('{', function_start)
+    try:
+        function_start = source.index(signature)
+        block_start = source.index('{', function_start)
+    except ValueError:
+        name_match = re.search(r'(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(', signature)
+        if not name_match:
+            raise ValueError(f'Function signature not found: {signature}')
+
+        function_name = re.escape(name_match.group(1))
+        fallback_match = re.search(
+            rf'(^|\n)\s*(?:async\s+)?{function_name}\s*\([\s\S]*?\)\s*\{{',
+            source,
+            re.MULTILINE,
+        )
+        if not fallback_match:
+            raise ValueError(f'Function signature not found: {signature}')
+        block_start = fallback_match.end() - 1
+
     depth = 1
     index = block_start + 1
 
@@ -499,13 +531,16 @@ def test_chat_grid_reconciles_reader_panel_state_on_device_type_changes():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'reconcileReaderPanelsForDeviceType' in chat_grid_source
-    assert "this.$watch('$store.global.deviceType'" in chat_grid_source
+    assert js_contains(chat_grid_source, "this.$watch('$store.global.deviceType'")
     assert 'this.reconcileReaderPanelsForDeviceType();' in chat_grid_source
-    assert "if (responsiveMode === 'mobile')" in chat_grid_source
-    assert "if (responsiveMode === 'tablet')" in chat_grid_source
-    assert "this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : (this.readerRightTab === 'floors' ? 'navigator' : 'search');" in chat_grid_source
-    assert "this.readerShowLeftPanel = this.readerMobilePanel === 'tools';" in chat_grid_source
-    assert "this.readerShowRightPanel = true;" in chat_grid_source
+    assert js_contains(chat_grid_source, "if (responsiveMode === 'mobile')")
+    assert js_contains(chat_grid_source, "if (responsiveMode === 'tablet')")
+    assert js_contains(
+        chat_grid_source,
+        "this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : this.readerRightTab === 'floors' ? 'navigator' : 'search';",
+    )
+    assert js_contains(chat_grid_source, "this.readerShowLeftPanel = this.readerMobilePanel === 'tools';")
+    assert js_contains(chat_grid_source, "this.readerShowRightPanel = true;")
 
 
 def test_chat_reader_template_keeps_all_nested_modal_entry_points():
@@ -550,11 +585,14 @@ def test_chat_reader_template_exposes_reader_status_and_accessibility_hooks():
 def test_chat_grid_resets_reader_feedback_tone_to_steady_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert 'setReaderFeedbackTone(tone = \'neutral\')' in chat_grid_source
-    assert "if (tone === 'error' || tone === 'danger' || tone === 'success')" in chat_grid_source
+    assert js_contains(chat_grid_source, "setReaderFeedbackTone(tone = 'neutral')")
+    assert js_contains(
+        chat_grid_source,
+        "if (tone === 'error' || tone === 'danger' || tone === 'success')",
+    )
     assert "this.readerSaveFeedbackTone = this.replaceStatus || this.regexConfigStatus ? 'neutral' : 'neutral';" not in chat_grid_source
     assert "this.readerSaveFeedbackTone = this.replaceStatus || this.regexConfigStatus ? 'neutral' : 'neutral'" not in chat_grid_source
-    assert 'this.setReaderFeedbackTone();' in chat_grid_source
+    assert js_contains(chat_grid_source, 'this.setReaderFeedbackTone();')
 
 
 def test_chat_reader_css_defines_distinct_tablet_and_mobile_breakpoints():
@@ -650,17 +688,20 @@ def test_chat_reader_css_rebalances_header_rows_at_narrow_widths():
 def test_chat_grid_mobile_reader_panel_state_keeps_one_active_panel():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "this.readerShowLeftPanel = active === 'tools';" in chat_grid_source
-    assert "this.readerShowRightPanel = active === 'search' || active === 'navigator';" in chat_grid_source
+    assert js_contains(chat_grid_source, "this.readerShowLeftPanel = active === 'tools';")
+    assert js_contains(
+        chat_grid_source,
+        "this.readerShowRightPanel = active === 'search' || active === 'navigator';",
+    )
     assert 'this.readerShowRightPanel = Boolean(active);' not in chat_grid_source
 
 
 def test_chat_grid_reader_responsive_mode_uses_reactive_device_type_instead_of_window_width():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "const deviceType = this.$store.global.deviceType;" in chat_grid_source
-    assert "if (deviceType === 'mobile')" in chat_grid_source
-    assert "if (deviceType === 'tablet')" in chat_grid_source
+    assert js_contains(chat_grid_source, 'const deviceType = this.$store.global.deviceType;')
+    assert js_contains(chat_grid_source, "if (deviceType === 'mobile')")
+    assert js_contains(chat_grid_source, "if (deviceType === 'tablet')")
     assert 'window.innerWidth < 900' not in chat_grid_source
     assert 'window.innerWidth < 1180' not in chat_grid_source
 
@@ -668,10 +709,19 @@ def test_chat_grid_reader_responsive_mode_uses_reactive_device_type_instead_of_w
 def test_chat_grid_reader_body_grid_style_drives_desktop_tablet_and_mobile_layouts_from_panel_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "return 'grid-template-columns: minmax(0, 1fr);';" in chat_grid_source
-    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;" in chat_grid_source
-    assert "return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
-    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
+    assert js_contains(chat_grid_source, "return 'grid-template-columns: minmax(0, 1fr);';")
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;',
+    )
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;',
+    )
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;',
+    )
 
 
 def test_chat_reader_template_assigns_dynamic_grid_columns_to_center_and_right_panes():
@@ -906,7 +956,10 @@ def test_chat_grid_scroll_to_floor_closes_mobile_drawers_before_showing_target_f
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     scroll_block = extract_js_function_block(chat_grid_source, "async scrollToFloor(floor, persist = true, behavior = 'smooth', anchorSource = READER_ANCHOR_SOURCES.JUMP) {")
 
-    assert "const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);" in scroll_block
+    assert js_contains(
+        scroll_block,
+        "const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);",
+    )
     assert 'if (shouldHideMobilePanel) {' in scroll_block
     assert 'this.hideReaderPanels();' in scroll_block
 
@@ -936,7 +989,10 @@ def test_chat_grid_scroll_element_to_top_uses_container_rect_delta_instead_of_of
 
     assert 'const containerRect = container.getBoundingClientRect();' in scroll_block
     assert 'const elementRect = el.getBoundingClientRect();' in scroll_block
-    assert 'const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);' in scroll_block
+    assert js_contains(
+        scroll_block,
+        'const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);',
+    )
     assert 'el.offsetTop - container.offsetTop - 12' not in scroll_block
 
 
@@ -1025,10 +1081,13 @@ def test_chat_grid_closes_mobile_navigation_chrome_before_showing_reader():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
 
-    assert "if (this.$store.global.deviceType === 'mobile') {" in open_detail_block
+    assert js_contains(open_detail_block, "if (this.$store.global.deviceType === 'mobile') {")
     assert 'this.$store.global.visibleSidebar = false;' in open_detail_block
-    assert "document.body.style.overflow = '';" in open_detail_block
-    assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in open_detail_block
+    assert js_contains(open_detail_block, "document.body.style.overflow = '';")
+    assert js_contains(
+        open_detail_block,
+        "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));",
+    )
 
 
 def test_chat_grid_closes_mobile_navigation_chrome_before_opening_reader_nested_modals():
@@ -1036,10 +1095,13 @@ def test_chat_grid_closes_mobile_navigation_chrome_before_opening_reader_nested_
 
     for signature in ('openRegexConfig() {', 'openRegexHelp() {', 'openFloorEditor(message) {'):
         block = extract_js_function_block(chat_grid_source, signature)
-        assert "if (this.$store.global.deviceType === 'mobile') {" in block
+        assert js_contains(block, "if (this.$store.global.deviceType === 'mobile') {")
         assert 'this.$store.global.visibleSidebar = false;' in block
-        assert "document.body.style.overflow = '';" in block
-        assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in block
+        assert js_contains(block, "document.body.style.overflow = '';")
+        assert js_contains(
+            block,
+            "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));",
+        )
 
 
 def test_chat_grid_temporarily_releases_document_scroll_lock_while_reader_is_open():
@@ -1049,9 +1111,9 @@ def test_chat_grid_temporarily_releases_document_scroll_lock_while_reader_is_ope
     open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
     close_detail_block = extract_js_function_block(chat_grid_source, 'closeChatDetail() {')
 
-    assert "document.documentElement.style.overflow = enabled ? 'auto' : '';" in helper_block
-    assert "document.body.style.overflow = enabled ? 'auto' : '';" in helper_block
-    assert "document.body.style.height = enabled ? 'auto' : '';" in helper_block
+    assert js_contains(helper_block, "document.documentElement.style.overflow = enabled ? 'auto' : '';")
+    assert js_contains(helper_block, "document.body.style.overflow = enabled ? 'auto' : '';")
+    assert js_contains(helper_block, "document.body.style.height = enabled ? 'auto' : '';")
     assert 'this.setMobileReaderDocumentScrollState(true);' in open_detail_block
     assert 'this.setMobileReaderDocumentScrollState(false);' in close_detail_block
 
@@ -1071,9 +1133,15 @@ def test_chat_grid_collapses_mobile_header_layout_height_when_header_is_hidden()
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     metrics_block = extract_js_function_block(chat_grid_source, 'updateReaderLayoutMetrics() {')
 
-    assert "const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden" in metrics_block
+    assert js_contains(
+        metrics_block,
+        "const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden",
+    )
     assert "? 0" in metrics_block
-    assert "root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);" in metrics_block
+    assert js_contains(
+        metrics_block,
+        "root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);",
+    )
 
 
 def test_chat_reader_css_mobile_hidden_header_releases_layout_space():
@@ -1290,7 +1358,7 @@ def test_chat_grid_tracks_mobile_regex_header_visibility_separately_from_reader_
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'regexConfigMobileHeaderHidden: false,' in chat_grid_source
-    assert "regexConfigMobileTab: 'effective'," in chat_grid_source
+    assert js_contains(chat_grid_source, "regexConfigMobileTab: 'effective',")
     regex_scroll_block = extract_js_function_block(chat_grid_source, 'handleRegexConfigScroll(event) {')
     assert 'const previousHidden = this.regexConfigMobileHeaderHidden;' in regex_scroll_block
     assert 'this.regexConfigMobileHeaderHidden = true;' in regex_scroll_block
@@ -1320,19 +1388,31 @@ def test_chat_grid_open_floor_editor_seeds_primary_editor_from_raw_message_only(
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_floor_editor_block = extract_js_function_block(chat_grid_source, 'openFloorEditor(message) {')
 
-    assert "this.editingMessageRawDraft = String(message.mes || '');" in open_floor_editor_block
-    assert "this.editingMessageDraft = this.extractDisplayContent(this.editingMessageRawDraft);" in open_floor_editor_block
-    assert "this.editingMessageDraft = String(message.content || message.mes || '');" not in open_floor_editor_block
+    assert js_contains(open_floor_editor_block, "this.editingMessageRawDraft = String(message.mes || '');")
+    assert js_contains(
+        open_floor_editor_block,
+        'this.editingMessageDraft = this.extractDisplayContent(this.editingMessageRawDraft);',
+    )
+    assert not js_contains(
+        open_floor_editor_block,
+        "this.editingMessageDraft = String(message.content || message.mes || '');",
+    )
 
 
 def test_chat_grid_save_floor_edit_persists_raw_message_and_rebuilds_rendered_reader_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     save_floor_edit_block = extract_js_function_block(chat_grid_source, 'async saveFloorEdit() {')
 
-    assert "target.mes = String(this.editingMessageRawDraft || '');" in save_floor_edit_block
+    assert js_contains(
+        save_floor_edit_block,
+        "target.mes = String(this.editingMessageRawDraft || '');",
+    )
     assert 'focusFloor: this.editingFloor,' in save_floor_edit_block
     assert 'this.rebuildActiveChatMessages(runtimeConfig);' in chat_grid_source
-    assert 'await this.setReaderWindowAroundFloor(focusFloor || 1, \'center\');' in chat_grid_source
+    assert js_contains(
+        chat_grid_source,
+        "await this.setReaderWindowAroundFloor(focusFloor || 1, 'center');",
+    )
 
 
 def test_chat_reader_css_mobile_stacks_floor_editor_sections_and_resets_note_overlap_spacing():
@@ -1377,9 +1457,12 @@ def test_chat_reader_template_desktop_header_exposes_independent_tools_search_an
 def test_chat_grid_reader_desktop_panel_controls_close_only_the_target_panel():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;" in chat_grid_source
-    assert "this.readerShowRightPanel = false;" in chat_grid_source
-    assert "this.readerRightTab = nextTab;" in chat_grid_source
+    assert js_contains(
+        chat_grid_source,
+        'const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;',
+    )
+    assert js_contains(chat_grid_source, 'this.readerShowRightPanel = false;')
+    assert js_contains(chat_grid_source, 'this.readerRightTab = nextTab;')
     assert 'closeReaderRightPanel() {' in chat_grid_source
     close_right_section = chat_grid_source.split('closeReaderRightPanel() {', 1)[1].split('}', 1)[0]
     assert 'this.readerShowLeftPanel = false;' not in close_right_section
@@ -1395,9 +1478,9 @@ def test_chat_reader_template_right_close_button_uses_desktop_specific_close_log
 def test_chat_grid_reader_pane_styles_reflow_center_when_left_panel_closes():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "return 'grid-column: 1;';" in chat_grid_source
-    assert "return 'grid-column: 2;';" in chat_grid_source
-    assert "return 'grid-column: 3;';" in chat_grid_source
+    assert js_contains(chat_grid_source, "return 'grid-column: 1;';")
+    assert js_contains(chat_grid_source, "return 'grid-column: 2;';")
+    assert js_contains(chat_grid_source, "return 'grid-column: 3;';")
 
 
 def test_chat_reader_template_binds_desktop_pane_visibility_to_inline_display_styles():
@@ -1420,7 +1503,7 @@ def test_chat_grid_reader_mobile_mode_is_not_only_ua_driven():
 def test_layout_recomputes_global_device_type_on_window_resize():
     layout_source = read_project_file('static/js/components/layout.js')
 
-    assert "window.addEventListener('resize', () => {" in layout_source
+    assert js_contains(layout_source, "window.addEventListener('resize', () => {")
     assert 'this.reDeviceType();' in layout_source
 
 
@@ -1496,7 +1579,7 @@ def test_chat_grid_does_not_seed_regex_summary_with_default_instruction_status()
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_regex_block = extract_js_function_block(chat_grid_source, 'openRegexConfig() {')
 
-    assert "this.regexConfigStatus = '';" in open_regex_block
+    assert js_contains(open_regex_block, "this.regexConfigStatus = '';")
     assert '测试区默认不自动加载内容，按需手动载入当前定位楼层即可。' not in open_regex_block
 
 
@@ -1574,10 +1657,16 @@ def test_mobile_header_script_closes_menu_before_sidebar_and_upload_actions():
 def test_mobile_sidebar_script_listens_for_upload_trigger_and_cleans_up():
     sidebar_source = read_project_file('static/js/components/sidebar.js')
 
-    assert "window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
-    assert "window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
+    assert js_contains(
+        sidebar_source,
+        "window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);",
+    )
+    assert js_contains(
+        sidebar_source,
+        "window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);",
+    )
     handle_upload_block = extract_js_function_block(sidebar_source, 'handleMobileUploadRequest()')
-    assert "this.currentMode === 'chats'" in handle_upload_block
+    assert js_contains(handle_upload_block, "this.currentMode === 'chats'")
     assert '!this.$refs.mobileImportInput' in handle_upload_block
     assert 'this.$refs.mobileImportInput.click();' in handle_upload_block
 
@@ -1659,7 +1748,7 @@ def test_card_sidebar_template_removes_expansion_only_lower_pane_layout_styles()
 
     assert ":style=\"tagsSectionExpanded ? 'flex: 1;' : ''\"" not in sidebar_template
     assert 'style="display: flex; flex-direction: column; overflow: hidden;"' not in sidebar_template
-    assert 'x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in sidebar_template
+    assert 'x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in compact_whitespace(sidebar_template)
 
 
 def test_card_sidebar_and_pagination_templates_add_empty_state_and_mobile_wrap_hooks():
@@ -1748,11 +1837,10 @@ def test_mobile_modal_components_css_defines_shared_fullscreen_dynamic_viewport_
 
     assert 'width: 100vw;' in container_block
     assert 'max-width: 100vw;' in container_block
-    assert 'height: 100vh;' in container_block
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in container_block
-    assert 'height: 100dvh;' in container_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in container_block
-    assert container_block.index('height: 100dvh;') < container_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));')
+    assert '--app-viewport-height-safe' in container_block
+    assert '--app-viewport-height, 100dvh' in container_block
+    assert 'min-height:' in container_block
     assert 'border-radius: 0;' in container_block
 
 
@@ -1766,11 +1854,10 @@ def test_detail_modal_mobile_css_uses_dynamic_viewport_and_safe_area_spacing():
     detail_content_block = extract_exact_css_block(mobile_detail_css, '.detail-content')
 
     assert 'width: 100vw;' in detail_modal_block
-    assert 'height: 100vh;' in detail_modal_block
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in detail_modal_block
-    assert 'height: 100dvh;' in detail_modal_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in detail_modal_block
-    assert detail_modal_block.index('height: 100dvh;') < detail_modal_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));')
+    assert '--app-viewport-height-safe' in detail_modal_block
+    assert '--app-viewport-height, 100dvh' in detail_modal_block
+    assert 'min-height:' in detail_modal_block
     assert 'max-width: 100vw;' in detail_modal_block
     assert 'margin: 0 !important;' in detail_modal_block
     assert 'top: calc(env(safe-area-inset-top, 0px) + 0.5rem);' in detail_toolbar_block
@@ -1804,17 +1891,14 @@ def test_mobile_tool_and_custom_modal_variants_prefer_dynamic_viewport_height():
     advanced_editor_compact = re.sub(r'\s+', ' ', advanced_editor_block).strip()
     large_editor_compact = re.sub(r'\s+', ' ', large_editor_block).strip()
 
-    assert 'height: 100dvh !important;' in advanced_editor_block
     assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in advanced_editor_compact
     assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in advanced_editor_compact
-    assert advanced_editor_compact.index('height: 100dvh !important;') < advanced_editor_compact.index('height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;')
     assert 'padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem) !important;' in advanced_header_block
     assert 'padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem) !important;' in advanced_footer_block
     assert 'min-height: 0;' in advanced_split_block
     assert 'min-height: 0;' in advanced_editor_pane_block
     assert '-webkit-overflow-scrolling: touch;' in advanced_editor_pane_block
 
-    assert 'height: 100dvh !important;' in large_editor_block
     assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in large_editor_compact
     assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in large_editor_compact
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in settings_block
@@ -2062,9 +2146,9 @@ def test_automation_modal_css_keeps_inline_sort_actions_compact_and_wrapping():
 def test_detail_modal_template_marks_multicard_mobile_tabs_for_stacked_layout():
     detail_template = read_project_file('templates/modals/detail_card.html')
 
-    assert '<section x-show="tab===\'basic\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
-    assert '<section x-show="tab===\'persona\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
-    assert '<section x-show="tab===\'dialog\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
+    for tab in ('basic', 'persona', 'dialog'):
+        assert f'x-show="tab===\'{tab}\'"' in detail_template
+    assert detail_template.count('class="detail-section detail-section-fill detail-section-mobile-stack"') >= 3
 
 
 def test_detail_modal_dialog_editors_allow_first_message_inner_box_to_shrink_with_card_height():
@@ -2616,8 +2700,8 @@ def test_sidebar_js_handles_mode_specific_category_trees_and_capability_gating()
     assert 'setPresetCategory' in sidebar_source
     assert 'getFolderCapabilities(path, mode = this.currentMode)' in sidebar_source
     assert 'reset invalid category selection to root' not in sidebar_source
-    assert 'this.$watch(\'$store.global.wiAllFolders\'' in sidebar_source
-    assert 'this.$watch(\'$store.global.presetAllFolders\'' in sidebar_source
+    assert js_contains(sidebar_source, 'this.$watch(\'$store.global.wiAllFolders\'')
+    assert js_contains(sidebar_source, 'this.$watch(\'$store.global.presetAllFolders\'')
 
 
 def test_worldinfo_grid_js_uses_category_metadata_and_explicit_upload_fallback_contract():

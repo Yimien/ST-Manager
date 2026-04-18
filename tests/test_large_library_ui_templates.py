@@ -90,7 +90,7 @@ def test_header_source_gates_search_mode_and_handles_index_status_poll_failures(
     state_source = read_project_file('static/js/state.js')
 
     assert 'get canUseFulltextSearch() {' in header_source
-    assert "this.currentMode === 'worldinfo'" in header_source
+    assert "this.currentMode === 'worldinfo'" in header_source or 'this.currentMode === "worldinfo"' in header_source
     assert "this.$store.global.settingsForm.worldinfo_list_use_index" in header_source
     assert "this.$store.global.settingsForm.cards_list_use_index" in header_source
     assert "this.$store.global.settingsForm.fast_search_use_index" in header_source
@@ -108,8 +108,11 @@ def test_header_source_forces_stale_fulltext_modes_back_to_fast():
     header_source = read_project_file('static/js/components/header.js')
 
     assert 'ensureSearchModeAllowed() {' in header_source
-    assert "if (this.searchMode !== 'fulltext' || this.canUseFulltextSearch) return;" in header_source
-    assert "this.searchMode = 'fast';" in header_source
+    assert (
+        "if (this.searchMode !== 'fulltext' || this.canUseFulltextSearch) return;" in header_source
+        or 'if (this.searchMode !== "fulltext" || this.canUseFulltextSearch) return;' in header_source
+    )
+    assert "this.searchMode = 'fast';" in header_source or 'this.searchMode = "fast";' in header_source
     assert 'this.ensureSearchModeAllowed();' in header_source
 
 
@@ -208,8 +211,14 @@ def test_card_grid_source_uses_rendered_grid_measurements_and_cleans_up_windowin
     assert 'grid.querySelector(".st-card")' in card_grid_source
     assert 'gridStyle.rowGap || gridStyle.gap' in card_grid_source
     assert 'destroy() {' in card_grid_source
-    assert 'removeEventListener("scroll", this._syncCardWindowRangeHandler)' in card_grid_source
-    assert 'window.removeEventListener("resize", this._syncCardWindowRangeHandler)' in card_grid_source
+    assert re.search(
+        r'removeEventListener\(\s*["\']scroll["\'],\s*this\._syncCardWindowRangeHandler\s*,?\s*\)',
+        card_grid_source,
+    )
+    assert re.search(
+        r'window\.removeEventListener\(\s*["\']resize["\'],\s*this\._syncCardWindowRangeHandler\s*\)',
+        card_grid_source,
+    )
     assert 'grid-column: 1 / -1;' in cards_css
 
 
@@ -287,7 +296,10 @@ def test_worldinfo_detail_popup_expands_reader_batch_before_toc_scroll():
 
     assert 'const visibleIndex = (this.uiFilteredEntries || []).indexOf(entry);' in source
     assert 'if (visibleIndex >= this.readerRenderLimit) {' in source
-    assert 'this.readerRenderLimit = Math.max(this.readerRenderLimit, visibleIndex + 1);' in source
+    assert re.search(
+        r'this\.readerRenderLimit\s*=\s*Math\.max\(\s*this\.readerRenderLimit,\s*visibleIndex\s*\+\s*1,?\s*\)',
+        source,
+    )
 
 
 def test_worldinfo_detail_popup_load_more_controls_match_task4_contract():
