@@ -1,50 +1,50 @@
-function escapeCssText(value) {
-  return String(value || "").replace(/<\/style/gi, "<\\/style");
+import { buildBeautifyPreviewAssetUrl } from "../api/beautify.js";
+import {
+  clearIsolatedHtml,
+  renderIsolatedHtml,
+} from "../runtime/renderRuntime.js";
+import { buildBeautifyPreviewDocument } from "./beautifyPreviewDocument.js";
+
+let previewBaseCssPromise = null;
+
+async function loadPreviewBaseCss() {
+  if (!previewBaseCssPromise) {
+    previewBaseCssPromise = fetch("/static/css/modules/st-preview-base.css")
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load preview base CSS: ${res.status}`);
+        }
+        return res.text();
+      })
+      .catch((error) => {
+        previewBaseCssPromise = null;
+        throw error;
+      });
+  }
+  return previewBaseCssPromise;
 }
 
-export function buildBeautifyPreviewStyle(theme = {}, wallpaperUrl = "") {
-  const fontScale = Number(theme.font_scale || 1) || 1;
-  const blurStrength = Number(theme.blur_strength || 10) || 10;
-  const shadowWidth = Number(theme.shadow_width || 2) || 2;
-  const chatWidth = Number(theme.chat_width || 50) || 50;
-  return {
-    "--beautify-main-text": theme.main_text_color || "#f8fafc",
-    "--beautify-italics-text":
-      theme.italics_text_color || theme.main_text_color || "#dbeafe",
-    "--beautify-underline-text": theme.underline_text_color || "#93c5fd",
-    "--beautify-quote-text": theme.quote_text_color || "#cbd5f5",
-    "--beautify-blur-tint": theme.blur_tint_color || "rgba(15, 23, 42, 0.74)",
-    "--beautify-chat-tint": theme.chat_tint_color || "rgba(15, 23, 42, 0.42)",
-    "--beautify-user-tint":
-      theme.user_mes_blur_tint_color || "rgba(59, 130, 246, 0.2)",
-    "--beautify-bot-tint":
-      theme.bot_mes_blur_tint_color || "rgba(148, 163, 184, 0.18)",
-    "--beautify-shadow-color": theme.shadow_color || "rgba(15, 23, 42, 0.38)",
-    "--beautify-border-color":
-      theme.border_color || "rgba(148, 163, 184, 0.24)",
-    "--beautify-font-scale": `${fontScale}`,
-    "--beautify-chat-width": `${Math.max(36, Math.min(100, chatWidth))}%`,
-    "--beautify-blur-strength": `${Math.max(0, blurStrength)}px`,
-    "--beautify-shadow-width": `${Math.max(0, shadowWidth)}px`,
-    "--beautify-wallpaper-url": wallpaperUrl
-      ? `url("${wallpaperUrl}")`
-      : "none",
-  };
+async function resolvePreviewBaseCss() {
+  try {
+    return await loadPreviewBaseCss();
+  } catch (error) {
+    console.warn(
+      "Beautify preview base CSS unavailable, using inline preview styles only.",
+      error,
+    );
+    return "";
+  }
 }
 
 export default function beautifyPreviewFrame() {
   return {
-    injectedCustomCss: "",
+    previewBaseCss: "",
 
-    get previewStyleObject() {
-      const detail = this.$store.global.beautifyActiveDetail || {};
-      const variant = this.$store.global.beautifyActiveVariant || {};
-      const wallpaper = this.$store.global.beautifyActiveWallpaper || {};
-      const theme = variant.theme_data || {};
-      const wallpaperUrl = wallpaper.file
-        ? this.buildPreviewAssetUrl(wallpaper.file)
-        : "";
-      return buildBeautifyPreviewStyle(theme, wallpaperUrl);
+    get previewHostEl() {
+      if (this.$refs?.previewHost) {
+        return this.$refs.previewHost;
+      }
+      return this.$el?.querySelector(".beautify-preview-host") || null;
     },
 
     get previewShellMode() {
@@ -57,29 +57,71 @@ export default function beautifyPreviewFrame() {
       return hint.preview_accuracy === "approx";
     },
 
-    get previewCustomCss() {
-      const variant = this.$store.global.beautifyActiveVariant || {};
-      return String((variant.theme_data || {}).custom_css || "").trim();
-    },
-
     init() {
-      this.$watch("$store.global.beautifySelectedVariantId", () => {
-        this.injectedCustomCss = this.previewCustomCss;
+      this.$watch("$store.global.beautifyActiveDetail", (detail) => {
+        if (!detail) {
+          this.destroy();
+          return;
+        }
+        this.$nextTick(() => {
+          this.renderPreview();
+        });
       });
-      this.injectedCustomCss = this.previewCustomCss;
-    },
-
-    buildPreviewAssetUrl(relativePath) {
-      const normalized = String(relativePath || "").replace(
-        /^data\/library\/beautify\//,
-        "",
+      this.$watch("$store.global.beautifyActiveVariant", () =>
+        this.renderPreview(),
       );
-      return `/api/beautify/preview-asset/${normalized.split("/").map(encodeURIComponent).join("/")}`;
+      this.$watch("$store.global.beautifyActiveWallpaper", () =>
+        this.renderPreview(),
+      );
+      this.$watch("$store.global.beautifyPreviewDevice", () =>
+        this.renderPreview(),
+      );
+      this.renderPreview();
+      this.$nextTick(() => {
+        this.renderPreview();
+      });
+      resolvePreviewBaseCss().then((css) => {
+        this.previewBaseCss = css;
+        this.renderPreview();
+      });
     },
 
-    customCssMarkup() {
-      if (!this.injectedCustomCss) return "";
-      return `<style>${escapeCssText(this.injectedCustomCss)}</style>`;
+    resolvePreviewState() {
+      const variant = this.$store.global.beautifyActiveVariant || {};
+      const wallpaper = this.$store.global.beautifyActiveWallpaper || {};
+      return {
+        platform: this.previewShellMode === "mobile" ? "mobile" : "pc",
+        theme: variant.theme_data || {},
+        wallpaperUrl: wallpaper.file
+          ? buildBeautifyPreviewAssetUrl(wallpaper.file)
+          : "",
+      };
+    },
+
+    renderPreview() {
+      const host = this.previewHostEl;
+      if (!host) {
+        return;
+      }
+
+      const state = this.resolvePreviewState();
+      const documentHtml = buildBeautifyPreviewDocument({
+        ...state,
+        baseCss: this.previewBaseCss,
+      });
+
+      renderIsolatedHtml(host, {
+        htmlPayload: documentHtml,
+        minHeight: state.platform === "mobile" ? 760 : 900,
+        maxHeight: state.platform === "mobile" ? 3200 : 4800,
+      });
+    },
+
+    destroy() {
+      const host = this.previewHostEl;
+      if (host) {
+        clearIsolatedHtml(host, { clearShadow: true });
+      }
     },
   };
 }

@@ -1144,6 +1144,16 @@ def test_chat_grid_collapses_mobile_header_layout_height_when_header_is_hidden()
     )
 
 
+def test_chat_grid_exposes_scoped_html_formatter_and_shadow_renderer_to_alpine():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert 'formatScopedDisplayedHtml' in chat_grid_source
+    assert 'updateShadowContent' in chat_grid_source
+    assert "from \"../utils/stDisplayFormatter.js\"" in chat_grid_source or "from '../utils/stDisplayFormatter.js'" in chat_grid_source
+    assert 'updateShadowContent,' in chat_grid_source
+    assert 'formatScopedDisplayedHtml,' in chat_grid_source
+
+
 def test_chat_reader_css_mobile_hidden_header_releases_layout_space():
     chat_reader_css = read_project_file('static/css/modules/view-chats.css')
     mobile_block = extract_media_block(chat_reader_css, '@media (max-width: 899px)')

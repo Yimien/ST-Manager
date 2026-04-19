@@ -24,6 +24,7 @@ import {
   clearInlineIsolatedHtml,
   applyPretextIntrinsicSize,
   estimatePretextBlockHeight,
+  updateShadowContent,
 } from "../utils/dom.js";
 import {
   extractReaderEnhancementMetadata,
@@ -35,6 +36,7 @@ import {
   buildUnifiedDisplaySource,
   renderUnifiedDisplayHtml,
 } from "../utils/unifiedTextPreview.js";
+import { formatScopedDisplayedHtml } from "../utils/stDisplayFormatter.js";
 import {
   createFloorVariableSnapshotResolver,
   getActiveMessageVariables,
@@ -5094,6 +5096,9 @@ export default function chatGrid() {
     get editingMessageSourcePreview() {
       return this.editingMessageRawDraft || this.editingMessageDraft || "";
     },
+
+    updateShadowContent,
+    formatScopedDisplayedHtml,
 
     get editingMessageParsedPreviewHtml() {
       const flags = resolveReaderFormatFlags(this.editingMessageTarget || {});

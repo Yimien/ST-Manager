@@ -69,6 +69,7 @@ def test_update_mixed_preview_content_is_a_compatibility_wrapper_over_render_uni
 def test_preview_entrypoints_continue_using_shared_dom_renderers_with_unified_preview_host():
     advanced_editor_template = read_project_file('templates/modals/advanced_editor.html')
     large_editor_template = read_project_file('templates/modals/large_editor.html')
+    markdown_preview_template = read_project_file('templates/modals/markdown_preview.html')
     detail_card_template = read_project_file('templates/modals/detail_card.html')
     html_preview_template = read_project_file('templates/modals/html_preview.html')
     detail_modal_source = read_project_file('static/js/components/detailModal.js')
@@ -88,8 +89,9 @@ def test_preview_entrypoints_continue_using_shared_dom_renderers_with_unified_pr
     assert 'updateMixedPreviewContent($el' not in detail_card_template
     assert 'updateMixedPreviewContent($el' not in html_preview_template
     assert 'updateShadowContent($el' not in large_editor_template
+    assert 'updateShadowContent($el' in markdown_preview_template
     assert 'updateMixedPreviewContent(' not in large_editor_source
-    assert 'updateShadowContent(' not in large_editor_source
+    assert 'updateShadowContent,' in large_editor_source
     update_preview_block = large_editor_source.split('updatePreview(el) {', 1)[1]
     update_preview_block = update_preview_block.split('        // === 粘贴处理', 1)[0]
     assert 'renderUnifiedPreviewHost(el, this.largeEditorContent, {' in update_preview_block

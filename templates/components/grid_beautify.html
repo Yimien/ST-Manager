@@ -102,43 +102,16 @@
               当前预览为近似效果，安装到 ST 后为完整效果。
             </div>
             <div
-              class="beautify-preview-shell"
+              class="beautify-preview-frame-shell"
               :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
-              :style="Object.entries(previewStyleObject).map(([key, value]) => `${key}:${value}`).join(';')"
             >
-              <div class="beautify-preview-wallpaper"></div>
-              <div class="beautify-preview-overlay"></div>
-              <div class="beautify-preview-device-frame">
-                <div class="beautify-preview-topbar">
-                  <span>ST Theme Preview</span>
-                  <span x-text="activeVariant?.platform || 'dual'"></span>
-                </div>
-                <div class="beautify-preview-chat-window">
-                  <div class="beautify-preview-message is-bot">
-                    <div class="beautify-preview-avatar"></div>
-                    <div class="beautify-preview-bubble">
-                      <div class="beautify-preview-name">Bot</div>
-                      <p>这是一段接近 SillyTavern 聊天气泡的预览文本。</p>
-                      <p class="is-quote">引用与高亮颜色会映射到主题变量。</p>
-                    </div>
-                  </div>
-                  <div class="beautify-preview-message is-user">
-                    <div class="beautify-preview-avatar"></div>
-                    <div class="beautify-preview-bubble">
-                      <div class="beautify-preview-name">You</div>
-                      <p>
-                        <em>字体缩放、边框、阴影、模糊强度</em>
-                        都会在这里近似体现。
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div class="beautify-preview-inputbar">
-                  <span>输入框预览</span>
-                  <span>chat width</span>
-                </div>
-              </div>
-              <div x-html="customCssMarkup()"></div>
+              <div
+                x-ref="previewHost"
+                class="beautify-preview-host"
+                :data-preview-platform="previewShellMode"
+                data-runtime-owner="beautify-preview"
+                data-runtime-label="Beautify ST Preview"
+              ></div>
             </div>
           </div>
 

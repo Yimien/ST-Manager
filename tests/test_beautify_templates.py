@@ -64,6 +64,17 @@ def test_beautify_grid_template_keeps_unavailable_device_button_disabled_instead
     assert ':disabled="!hasMobileVariant"' in template or ":disabled='!hasMobileVariant'" in template
 
 
+def test_beautify_grid_template_uses_isolated_preview_host_instead_of_inline_preview_dom():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert 'beautify-preview-host' in template
+    assert 'x-ref="previewHost"' in template or "x-ref='previewHost'" in template
+    assert 'beautify-preview-frame-shell' in template
+    assert 'beautify-preview-chat-window' not in template
+    assert 'beautify-preview-inputbar' not in template
+    assert 'customCssMarkup()' not in template
+
+
 def test_beautify_layout_css_uses_shared_sidebar_flex_contract():
     css = read_project_file('static/css/modules/view-beautify.css')
     layout_block = css.split('.beautify-layout {', 1)[1].split('}', 1)[0]
@@ -83,6 +94,30 @@ def test_beautify_layout_css_uses_shared_sidebar_flex_contract():
     assert 'min-width: 0;' in stage_block
     assert 'min-height: 0;' in stage_block
     assert '.beautify-sidebar-pane {' not in css
+
+
+def test_beautify_layout_css_styles_isolated_preview_host_shell():
+    css = read_project_file('static/css/modules/view-beautify.css')
+    frame_shell_block = css.split('.beautify-preview-frame-shell {', 1)[1].split('}', 1)[0]
+    preview_host_block = css.split('.beautify-preview-host {', 1)[1].split('}', 1)[0]
+    mobile_host_block = css.split(
+        '.beautify-preview-frame-shell.is-mobile .beautify-preview-host {',
+        1,
+    )[1].split('}', 1)[0]
+
+    assert '.beautify-preview-frame-shell {' in css
+    assert 'min-height: 900px;' in frame_shell_block
+    assert 'overflow: visible;' in frame_shell_block
+    assert '.beautify-preview-host {' in css
+    assert 'width: 100%;' in preview_host_block
+    assert 'min-height: 900px;' in preview_host_block
+    assert 'border: 0;' in preview_host_block
+    assert 'background: transparent;' in preview_host_block
+    assert '.beautify-preview-frame-shell.is-mobile {' in css
+    assert '.beautify-preview-frame-shell.is-mobile .beautify-preview-host {' in css
+    assert 'min-height: 760px;' in mobile_host_block
+    assert '.beautify-preview-chat-window {' not in css
+    assert '.beautify-preview-inputbar {' not in css
 
 
 def test_beautify_grid_template_mobile_css_drops_grid_area_layout():

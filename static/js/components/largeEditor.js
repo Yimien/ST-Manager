@@ -7,6 +7,7 @@ import {
   insertAtCursor,
   renderMarkdown,
   renderUnifiedPreviewHost,
+  updateShadowContent,
 } from "../utils/dom.js";
 import { uploadNoteImage } from "../api/resource.js";
 
@@ -39,6 +40,7 @@ export default function largeEditor() {
 
     renderUnifiedPreviewHost,
     renderMarkdown,
+    updateShadowContent,
 
     get editingData() {
       return this.editingDataRef || {};
