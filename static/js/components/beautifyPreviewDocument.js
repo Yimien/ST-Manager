@@ -10,6 +10,31 @@ function escapeCssText(value) {
   return String(value ?? "").replace(/<\/style/gi, "<\\/style");
 }
 
+function sanitizePreviewCustomCss(value) {
+  return String(value ?? "")
+    .replace(/@import\s+url\((['"]?)https?:\/\/[^)]+\1\)\s*;?/gi, '')
+    .replace(/@import\s+(['"])https?:\/\/[^;]+\1\s*;?/gi, '');
+}
+
+function buildPreviewContentSecurityPolicy() {
+  const localResourceOrigins = [
+    "'self'",
+    'data:',
+    'blob:',
+    'http://127.0.0.1:5000',
+    'https://127.0.0.1:5000',
+  ];
+  const imageOrigins = [...localResourceOrigins, 'http:', 'https:'];
+
+  return [
+    "default-src 'none'",
+    "script-src 'unsafe-inline'",
+    "style-src 'unsafe-inline' http://127.0.0.1:5000 https://127.0.0.1:5000",
+    `font-src ${localResourceOrigins.join(' ')}`,
+    `img-src ${imageOrigins.join(' ')}`,
+  ].join('; ');
+}
+
 function escapeCssUrl(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
@@ -70,6 +95,51 @@ function buildPreviewBodyClasses(theme = {}) {
   }
 
   return classes;
+}
+
+const PREVIEW_IDENTITY_ASSET_PATHS = {
+  character: "/static/images/beautify-preview/qiwu.png",
+  user: "/static/images/beautify-preview/chunlan.png",
+};
+
+function buildInlineAvatarDataUri({
+  label,
+  size = 96,
+  radius = 24,
+  background = "#d8e8c8",
+  foreground = "#3c5a2a",
+}) {
+  const fontSize = Math.max(Math.round(size * 0.3125), 16);
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}' viewBox='0 0 ${size} ${size}'%3E%3Crect width='${size}' height='${size}' rx='${radius}' fill='${encodeURIComponent(background)}'/%3E%3Ctext x='50%25' y='55%25' font-size='${fontSize}' text-anchor='middle' fill='${encodeURIComponent(foreground)}' font-family='Arial'%3E${encodeURIComponent(label)}%3C/text%3E%3C/svg%3E`;
+}
+
+function resolvePreviewAvatarSrc({ avatarSrc = "", avatarLabel = "", size = 96 }) {
+  if (avatarSrc) {
+    return avatarSrc;
+  }
+
+  return buildInlineAvatarDataUri({
+    label: avatarLabel,
+    size,
+    radius: Math.round(size / 4),
+  });
+}
+
+function buildPreviewIdentities() {
+  return {
+    system: {
+      name: "SillyTavern System",
+      avatarLabel: "ST",
+    },
+    character: {
+      name: "栖梧",
+      avatarSrc: PREVIEW_IDENTITY_ASSET_PATHS.character,
+    },
+    user: {
+      name: "春岚",
+      avatarSrc: PREVIEW_IDENTITY_ASSET_PATHS.user,
+    },
+  };
 }
 
 function serializeCssVars(vars) {
@@ -175,6 +245,7 @@ function buildMessage({
   mesId,
   name,
   avatarLabel,
+  avatarSrc = "",
   messageHtml,
   timestamp,
   tokenCounter,
@@ -188,12 +259,14 @@ function buildMessage({
     classes.push(extraClass);
   }
 
+  const resolvedAvatarSrc = resolvePreviewAvatarSrc({ avatarSrc, avatarLabel });
+
   return `
     <div class="${classes.join(" ")}" mesid="${escapeHtml(mesId)}" ch_name="${escapeHtml(name)}" is_user="${isUser ? "true" : "false"}" is_system="${isSystem ? "true" : "false"}" bookmark_link="">
       <div class="for_checkbox"></div><input type="checkbox" class="del_checkbox">
       <div class="mesAvatarWrapper">
         <div class="avatar">
-          <img alt="${escapeHtml(name)}" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='24' fill='%23d8e8c8'/%3E%3Ctext x='50%25' y='55%25' font-size='30' text-anchor='middle' fill='%233c5a2a' font-family='Arial'%3E${encodeURIComponent(avatarLabel)}%3C/text%3E%3C/svg%3E">
+          <img alt="${escapeHtml(name)}" src="${escapeHtml(resolvedAvatarSrc)}">
         </div>
         <div class="mesIDDisplay">#${escapeHtml(mesId)}</div>
         <div class="mes_timer">${escapeHtml(timestamp)}</div>
@@ -360,6 +433,7 @@ export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "") {
 
 export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
+  const previewIdentities = buildPreviewIdentities();
   const sendFormClasses = ["no-connection"];
 
   if (theme.compact_input_area) {
@@ -609,7 +683,7 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
         <div id="rm_PinAndTabs">
           <div id="right-nav-panel-tabs">
             <div id="rm_button_selected_ch">
-              <h2 class="interactable">Astra</h2>
+              <h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2>
             </div>
             <div id="result_info" class="flex-container" style="display: none;">
               <div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference.">
@@ -627,10 +701,10 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
           <div class="st-preview-panel-body st-preview-drawer-panel st-preview-character-panel" id="character_popup" data-panel-surface="character">
             <div class="st-preview-character-card">
               <div class="avatar-container selected">
-                <div class="avatar"><img alt="Astra" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='24' fill='%23dbead1'/%3E%3Ctext x='50%25' y='54%25' font-size='40' text-anchor='middle' fill='%233c5a2a' font-family='Arial'%3EA%3C/text%3E%3C/svg%3E"></div>
+                <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
               </div>
               <div class="st-preview-character-copy">
-                <div class="ch_name"><span class="name_text">Astra</span></div>
+                <div class="ch_name"><span class="name_text">${escapeHtml(previewIdentities.character.name)}</span></div>
                 <div class="flex-container gap3px">
                   <div class="menu_button_icon" title="Favorite"><i class="fa-solid fa-star"></i></div>
                   <div class="menu_button_icon" title="Duplicate"><i class="fa-solid fa-copy"></i></div>
@@ -640,18 +714,18 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
                   <span>Persona metadata preview</span>
                 </div>
                 <div class="character_select" id="rm_button_selected_ch">
-                  <div class="avatar"></div>
+                  <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
                   <div class="character_name_block">
-                    <h2>Astra</h2>
-                    <div class="ch_additional_info">Guide · selected preview card</div>
+                    <h2>${escapeHtml(previewIdentities.character.name)}</h2>
+                    <div class="ch_additional_info">默认演示角色</div>
                   </div>
                 </div>
                 <div id="rm_print_characters_block">
                   <div class="character_select_container">
                     <div class="avatar-container selected">
-                      <div class="avatar"></div>
+                      <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
                       <div class="character_name_block">
-                        <div class="ch_name">Astra</div>
+                        <div class="ch_name">${escapeHtml(previewIdentities.character.name)}</div>
                         <div class="ch_additional_info">Currently selected</div>
                       </div>
                     </div>
@@ -680,8 +754,8 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
     <div id="chat">
       ${buildMessage({
         mesId: "1",
-        name: "SillyTavern System",
-        avatarLabel: "ST",
+        name: previewIdentities.system.name,
+        avatarLabel: previewIdentities.system.avatarLabel,
         timestamp: "System",
         tokenCounter: "meta",
         isSystem: true,
@@ -691,8 +765,9 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
       })}
       ${buildMessage({
         mesId: "2",
-        name: "Astra",
-        avatarLabel: "A",
+        name: previewIdentities.character.name,
+        avatarLabel: "QW",
+        avatarSrc: previewIdentities.character.avatarSrc,
         timestamp: "08:14",
         tokenCounter: "318 tok",
         includeReasoning: true,
@@ -701,8 +776,9 @@ export function buildBeautifyPreviewSampleMarkup(platform = "pc", theme = {}) {
       })}
       ${buildMessage({
         mesId: "3",
-        name: "You",
-        avatarLabel: "Y",
+        name: previewIdentities.user.name,
+        avatarLabel: "CL",
+        avatarSrc: previewIdentities.user.avatarSrc,
         timestamp: "08:15",
         tokenCounter: "142 tok",
         isUser: true,
@@ -786,9 +862,10 @@ export function buildBeautifyPreviewDocument({
     ? ` class="${escapeHtml(bodyClasses.join(" "))}"`
     : "";
   const serializedVars = serializeCssVars(themeVars);
-  const customCss = escapeCssText(theme.custom_css || "");
+  const customCss = escapeCssText(sanitizePreviewCustomCss(theme.custom_css || ""));
   const markup = buildBeautifyPreviewSampleMarkup(normalizedPlatform, theme);
   const behaviorScript = buildPreviewBehaviorScript();
+  const contentSecurityPolicy = escapeHtml(buildPreviewContentSecurityPolicy());
   const mobileStylesheetMarkup =
     normalizedPlatform === "mobile"
       ? '\n    <link rel="stylesheet" href="/static/vendor/sillytavern/css/mobile-styles.css" />'
@@ -799,6 +876,7 @@ export function buildBeautifyPreviewDocument({
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}" />
     <title>Beautify Native ST Preview</title>
     <link rel="stylesheet" href="/static/vendor/sillytavern/style.css" />
     ${mobileStylesheetMarkup}

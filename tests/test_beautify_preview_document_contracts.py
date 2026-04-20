@@ -169,6 +169,57 @@ def test_build_beautify_preview_document_escapes_css_sensitive_content():
     )
 
 
+def test_build_beautify_preview_document_blocks_external_theme_resource_loads_with_csp():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({
+          theme: {
+            custom_css: '@import url("https://fontsapi.zeoseven.com/437/main/result.css"); #chat { background-image: url("https://iili.io/qs8cjZN.png"); }',
+          },
+          platform: 'pc',
+        });
+
+        for (const token of [
+          '<meta http-equiv="Content-Security-Policy"',
+          "default-src 'none'",
+          "script-src 'unsafe-inline'",
+          "style-src 'unsafe-inline' http://127.0.0.1:5000 https://127.0.0.1:5000",
+          "font-src 'self' data: blob: http://127.0.0.1:5000 https://127.0.0.1:5000",
+          "img-src 'self' data: blob: http://127.0.0.1:5000 https://127.0.0.1:5000 http: https:",
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_strips_remote_theme_imports_but_keeps_remote_background_images():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({
+          theme: {
+            custom_css: '@import url("https://fontsapi.zeoseven.com/437/main/result.css"); #chat { background-image: url("https://iili.io/qs8cjZN.png"); color: rgb(1, 2, 3); } .mes { background-image: url("/static/vendor/sillytavern/img/down-arrow.svg"); }',
+          },
+          platform: 'pc',
+        });
+
+        for (const token of [
+          'color: rgb(1, 2, 3);',
+          'url("https://iili.io/qs8cjZN.png")',
+          'url("/static/vendor/sillytavern/img/down-arrow.svg")',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+
+        for (const token of [
+          '@import url("https://fontsapi.zeoseven.com/437/main/result.css")',
+        ]) {
+          if (html.includes(token)) throw new Error(`unexpected remote resource token: ${token}`);
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
     run_preview_document_check(
         '''
@@ -468,6 +519,51 @@ def test_build_beautify_preview_sample_markup_contains_st_character_result_info_
     )
 
 
+def test_build_beautify_preview_document_uses_local_demo_identity_avatar_paths():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc' });
+
+        for (const token of [
+          '/static/images/beautify-preview/qiwu.png',
+          '/static/images/beautify-preview/chunlan.png',
+          'ch_name="栖梧"',
+          'ch_name="春岚"',
+          'name_text">栖梧</span>',
+          'name_text">春岚</span>',
+          '<h2 class="interactable">栖梧</h2>',
+          'alt="栖梧" src="/static/images/beautify-preview/qiwu.png"',
+          'alt="春岚" src="/static/images/beautify-preview/chunlan.png"',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+
+        for (const token of [
+          'ch_name="Astra"',
+          'name_text">Astra</span>',
+          'ch_name="You"',
+          'name_text">You</span>',
+        ]) {
+          if (html.includes(token)) throw new Error(`unexpected placeholder token: ${token}`);
+        }
+
+        const systemMessageStart = html.indexOf('ch_name="SillyTavern System"');
+        const systemMessageEnd = html.indexOf('mesid="2"', systemMessageStart);
+        const systemMessageHtml = html.slice(systemMessageStart, systemMessageEnd === -1 ? undefined : systemMessageEnd);
+        if (!systemMessageHtml.includes('alt="SillyTavern System" src="data:image/svg+xml')) {
+          throw new Error('system message should keep the simple inline placeholder avatar');
+        }
+        const systemInlineAvatarMatches = systemMessageHtml.match(/src="data:image\/svg\+xml/g) || [];
+        if (systemInlineAvatarMatches.length !== 1) {
+          throw new Error(`expected exactly one inline system avatar, got ${systemInlineAvatarMatches.length}`);
+        }
+        if (systemMessageHtml.includes('hidden aria-hidden="true"')) {
+          throw new Error('system message should not include hidden duplicate avatar markup');
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_document_wires_panel_toggle_script_and_default_state():
     run_preview_document_check(
         '''
@@ -523,6 +619,14 @@ def test_build_beautify_preview_document_hides_top_settings_holder_in_default_pr
     assert '#top-settings-holder {' in source
     top_settings_block = source.split('#top-settings-holder {', 1)[1].split('}', 1)[0]
     assert 'display: none;' in top_settings_block
+
+
+def test_beautify_preview_identity_assets_exist_in_project_static_images():
+    for relative_path in [
+        'static/images/beautify-preview/qiwu.png',
+        'static/images/beautify-preview/chunlan.png',
+    ]:
+        assert (ROOT / relative_path).is_file(), f'missing preview identity asset: {relative_path}'
 
 
 def test_vendored_sillytavern_style_css_uses_local_down_arrow_asset():
