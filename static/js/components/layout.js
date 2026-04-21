@@ -190,6 +190,11 @@ export default function layout() {
 
     // 切换模式 (Cards / WorldInfo)
     switchMode(mode) {
+      if (this.$store.global.deviceType === "mobile") {
+        this.$store.global.visibleSidebar = false;
+        document.body.style.overflow = "";
+      }
+
       this.$store.global.currentMode = mode;
       this.selectedIds = []; // 清空选中
 

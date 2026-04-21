@@ -105,6 +105,36 @@ export default function beautifyGrid() {
       return true;
     },
 
+    get mobileFullscreenOpen() {
+      return !!this.$store.global.beautifyMobileFullscreenOpen;
+    },
+
+    set mobileFullscreenOpen(val) {
+      this.$store.global.beautifyMobileFullscreenOpen = !!val;
+      return true;
+    },
+
+    get mobileDrawerOpen() {
+      return !!this.$store.global.beautifyMobileDrawerOpen;
+    },
+
+    set mobileDrawerOpen(val) {
+      this.$store.global.beautifyMobileDrawerOpen = !!val;
+      return true;
+    },
+
+    get mobileDrawerTab() {
+      return this.$store.global.beautifyMobileDrawerTab || "variant";
+    },
+
+    set mobileDrawerTab(val) {
+      const allowed = ["variant", "wallpapers", "screenshots"];
+      this.$store.global.beautifyMobileDrawerTab = allowed.includes(val)
+        ? val
+        : "variant";
+      return true;
+    },
+
     get workspace() {
       return this.$store.global.beautifyWorkspace || "packages";
     },
@@ -130,6 +160,10 @@ export default function beautifyGrid() {
     set stageMode(val) {
       this.$store.global.beautifyStageMode = val;
       return true;
+    },
+
+    get showMobileFullscreen() {
+      return this.mobileFullscreenOpen && this.isMobileFullscreenEnabled();
     },
 
     get activeDetail() {
@@ -160,6 +194,22 @@ export default function beautifyGrid() {
         this.screenshotOptions[0] ||
         null
       );
+    },
+
+    get mobileDrawerSummary() {
+      if (this.mobileDrawerTab === "wallpapers") {
+        return this.activeWallpaper?.filename || "当前壁纸";
+      }
+      if (this.mobileDrawerTab === "screenshots") {
+        return this.activeScreenshot?.filename || "截图列表";
+      }
+      return this.activeVariant?.theme_name || "当前变体";
+    },
+
+    syncMobileFullscreenState() {
+      if (!this.isMobileFullscreenEnabled()) {
+        this.closeMobileFullscreen();
+      }
     },
 
     get filteredPackages() {
@@ -202,6 +252,8 @@ export default function beautifyGrid() {
         if (mode === "beautify") {
           this.fetchPackages();
           this.fetchGlobalSettings();
+        } else {
+          this.closeMobileFullscreen();
         }
       });
 
@@ -216,6 +268,12 @@ export default function beautifyGrid() {
           this.fetchPackages();
         }
       });
+
+      if (typeof window !== "undefined" && window?.addEventListener) {
+        window.addEventListener("resize", () => {
+          this.syncMobileFullscreenState();
+        });
+      }
 
       window.stUploadBeautifyThemeFiles = (files) =>
         this.handleThemeFiles(files);
@@ -377,8 +435,49 @@ export default function beautifyGrid() {
       }
     },
 
+    isMobileBeautifyViewport() {
+      if (typeof window === "undefined") return false;
+      if (typeof window.matchMedia === "function") {
+        return window.matchMedia("(max-width: 900px)").matches;
+      }
+      return Number(window.innerWidth || 0) <= 900;
+    },
+
+    isMobileFullscreenEnabled() {
+      return (
+        this.workspace !== "settings" &&
+        !!this.activePackage &&
+        this.isMobileBeautifyViewport()
+      );
+    },
+
+    openMobileFullscreen(mode = this.stageMode) {
+      const nextMode = mode === "screenshot" ? "screenshot" : "preview";
+      this.stageMode = nextMode;
+      this.mobileFullscreenOpen = true;
+      this.mobileDrawerOpen = false;
+      this.mobileDrawerTab =
+        nextMode === "screenshot" ? "screenshots" : "variant";
+    },
+
+    closeMobileFullscreen() {
+      this.mobileFullscreenOpen = false;
+      this.mobileDrawerOpen = false;
+    },
+
+    toggleMobileDrawer(force = null) {
+      this.mobileDrawerOpen =
+        typeof force === "boolean" ? force : !this.mobileDrawerOpen;
+    },
+
+    setMobileDrawerTab(tab) {
+      this.mobileDrawerTab = tab;
+      this.mobileDrawerOpen = true;
+    },
+
     switchBeautifyWorkspace(workspace) {
       this.workspace = workspace === "settings" ? "settings" : "packages";
+      this.closeMobileFullscreen();
       if (this.workspace === "settings") {
         this.stageMode = "preview";
         this.fetchGlobalSettings();
@@ -386,12 +485,21 @@ export default function beautifyGrid() {
     },
 
     setStageMode(mode) {
-      this.stageMode = mode === "screenshot" ? "screenshot" : "preview";
+      const nextMode = mode === "screenshot" ? "screenshot" : "preview";
+      if (this.isMobileFullscreenEnabled()) {
+        this.openMobileFullscreen(nextMode);
+        return;
+      }
+      this.stageMode = nextMode;
     },
 
     selectScreenshot(screenshotId) {
       this.$store.global.beautifySelectedScreenshotId = screenshotId || "";
       this.stageMode = "screenshot";
+      if (this.isMobileFullscreenEnabled()) {
+        this.mobileFullscreenOpen = true;
+        this.mobileDrawerTab = "screenshots";
+      }
     },
 
     selectWallpaper(wallpaperId) {
@@ -777,6 +885,7 @@ export default function beautifyGrid() {
         if (!res?.success) {
           throw new Error(res?.error || "删除失败");
         }
+        this.closeMobileFullscreen();
         this.selectedPackageId = "";
         this.$store.global.beautifyActiveDetail = null;
         this.$store.global.beautifyActiveVariant = null;

@@ -107,6 +107,45 @@ def run_beautify_grid_runtime_check(script_body):
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def run_layout_runtime_check(script_body):
+    source_path = PROJECT_ROOT / 'static/js/components/layout.js'
+    node_script = textwrap.dedent(
+        f"""
+        import {{ readFileSync }} from 'node:fs';
+
+        const sourcePath = {json.dumps(str(source_path))};
+        let source = readFileSync(sourcePath, 'utf8');
+        source = source.replace(/^import[\\s\\S]*?;\\r?\\n/gm, '');
+        source = source.replace('export default function layout()', 'function layout()');
+
+        const stubs = `
+        const moveFolder = async () => ({{ success: true }});
+        const moveCard = async () => ({{ success: true }});
+        globalThis.CustomEvent = class CustomEvent {{
+          constructor(type, options = {{}}) {{
+            this.type = type;
+            this.detail = options.detail;
+          }}
+        }};
+        `;
+
+        const module = await import(
+          'data:text/javascript,' + encodeURIComponent(stubs + source + '\\nexport default layout;'),
+        );
+
+        {textwrap.dedent(script_body)}
+        """
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def run_render_runtime_check(script_body):
     source_path = PROJECT_ROOT / 'static/js/runtime/renderRuntime.js'
     node_script = textwrap.dedent(
@@ -669,6 +708,14 @@ def test_state_js_keeps_extended_beautify_store_keys():
     assert 'beautifyGlobalSettings: null' in state_js
 
 
+def test_state_js_keeps_mobile_beautify_fullscreen_store_keys():
+    state_js = read_project_file('static/js/state.js')
+
+    assert 'beautifyMobileFullscreenOpen: false' in state_js
+    assert 'beautifyMobileDrawerOpen: false' in state_js
+    assert 'beautifyMobileDrawerTab: "variant"' in state_js or "beautifyMobileDrawerTab: 'variant'" in state_js
+
+
 def test_header_js_binds_beautify_search_and_mobile_upload_mode():
     header_js = read_project_file('static/js/components/header.js')
 
@@ -678,6 +725,247 @@ def test_header_js_binds_beautify_search_and_mobile_upload_mode():
     assert_contains_any(header_js, ('set beautifySearch(val)', 'set beautifySearch (val)'))
     assert 'this.$store.global.beautifySearch = val;' in header_js
     assert_contains_any(header_js, ('new CustomEvent("request-mobile-upload")', "new CustomEvent('request-mobile-upload')"))
+
+
+def test_beautify_grid_source_tracks_mobile_fullscreen_methods():
+    grid_source = read_project_file('static/js/components/beautifyGrid.js')
+
+    for token in (
+        'get mobileFullscreenOpen()',
+        'set mobileFullscreenOpen(val)',
+        'get mobileDrawerOpen()',
+        'set mobileDrawerOpen(val)',
+        'get mobileDrawerTab()',
+        'set mobileDrawerTab(val)',
+        'get showMobileFullscreen()',
+        'get mobileDrawerSummary()',
+        'isMobileBeautifyViewport()',
+        'isMobileFullscreenEnabled()',
+        'openMobileFullscreen(mode = this.stageMode)',
+        'closeMobileFullscreen()',
+        'toggleMobileDrawer(force = null)',
+        'setMobileDrawerTab(tab)',
+    ):
+        assert token in grid_source
+
+
+def test_beautify_grid_opens_mobile_fullscreen_for_stage_entry_and_screenshot_selection():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = {
+          matchMedia: (query) => ({ matches: query === '(max-width: 900px)' }),
+          innerWidth: 390,
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyActiveDetail: {
+              id: 'pkg_demo',
+              variants: {},
+              wallpapers: {},
+              screenshots: {
+                shot_1: { id: 'shot_1', file: 'shot-1.png' },
+              },
+            },
+            beautifyStageMode: 'preview',
+            beautifySelectedScreenshotId: '',
+            beautifyMobileFullscreenOpen: false,
+            beautifyMobileDrawerOpen: true,
+            beautifyMobileDrawerTab: 'variant',
+            showToast: () => {},
+          },
+        };
+
+        component.setStageMode('preview');
+
+        if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
+          throw new Error('preview stage entry should open mobile fullscreen');
+        }
+        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
+          throw new Error('stage entry should collapse the drawer');
+        }
+
+        component.selectScreenshot('shot_1');
+
+        if (component.$store.global.beautifyStageMode !== 'screenshot') {
+          throw new Error('selectScreenshot should switch into screenshot stage');
+        }
+        if (component.$store.global.beautifySelectedScreenshotId !== 'shot_1') {
+          throw new Error('selected screenshot id should be preserved');
+        }
+        if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
+          throw new Error('screenshot selection should keep mobile fullscreen open');
+        }
+        if (component.$store.global.beautifyMobileDrawerTab !== 'screenshots') {
+          throw new Error('screenshot selection should focus the screenshot drawer tab');
+        }
+        '''
+    )
+
+
+def test_beautify_grid_closes_mobile_fullscreen_when_switching_to_settings_workspace():
+    run_beautify_grid_runtime_check(
+        '''
+        let settingsFetches = 0;
+        globalThis.__gridStubs = {
+          getBeautifySettings: async () => {
+            settingsFetches += 1;
+            return { success: true, item: null };
+          },
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyMobileFullscreenOpen: true,
+            beautifyMobileDrawerOpen: true,
+            showToast: () => {},
+          },
+        };
+
+        component.switchBeautifyWorkspace('settings');
+        await Promise.resolve();
+
+        if (component.$store.global.beautifyWorkspace !== 'settings') {
+          throw new Error('workspace should change to settings');
+        }
+        if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
+          throw new Error('fullscreen should close when entering settings workspace');
+        }
+        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
+          throw new Error('drawer should close when entering settings workspace');
+        }
+        if (settingsFetches !== 1) {
+          throw new Error(`expected one settings refetch, got ${settingsFetches}`);
+        }
+        '''
+    )
+
+
+def test_beautify_grid_opens_mobile_fullscreen_for_screenshot_empty_state_without_images():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = {
+          matchMedia: () => ({ matches: true }),
+          innerWidth: 390,
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyActiveDetail: {
+              id: 'pkg_demo',
+              variants: {},
+              wallpapers: {},
+              screenshots: {},
+            },
+            beautifyStageMode: 'preview',
+            beautifyMobileFullscreenOpen: false,
+            beautifyMobileDrawerOpen: true,
+            beautifyMobileDrawerTab: 'variant',
+            showToast: () => {},
+          },
+        };
+
+        component.setStageMode('screenshot');
+
+        if (component.$store.global.beautifyStageMode !== 'screenshot') {
+          throw new Error('screenshot mode should be preserved even without images');
+        }
+        if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
+          throw new Error('mobile fullscreen should still open for screenshot empty state');
+        }
+        if (component.$store.global.beautifyMobileDrawerTab !== 'screenshots') {
+          throw new Error('screenshot empty state should focus the screenshot drawer tab');
+        }
+        '''
+    )
+
+
+def test_beautify_grid_clears_mobile_fullscreen_when_leaving_beautify_mode():
+    run_beautify_grid_runtime_check(
+        '''
+        const watchers = new Map();
+        globalThis.window = {
+          addEventListener: () => {},
+        };
+        const component = module.default();
+        component.$store = {
+          global: {
+            currentMode: 'beautify',
+            beautifyWorkspace: 'packages',
+            beautifyActiveDetail: { id: 'pkg_demo', variants: {}, wallpapers: {}, screenshots: {} },
+            beautifyMobileFullscreenOpen: true,
+            beautifyMobileDrawerOpen: true,
+            showToast: () => {},
+          },
+        };
+        component.$watch = (key, callback) => watchers.set(key, callback);
+
+        component.init();
+
+        const modeWatcher = watchers.get('$store.global.currentMode');
+        if (typeof modeWatcher !== 'function') {
+          throw new Error('expected currentMode watcher');
+        }
+
+        component.$store.global.currentMode = 'cards';
+        modeWatcher('cards');
+
+        if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
+          throw new Error('fullscreen should clear when leaving beautify mode');
+        }
+        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
+          throw new Error('drawer should clear when leaving beautify mode');
+        }
+        '''
+    )
+
+
+def test_beautify_grid_clears_stale_mobile_fullscreen_on_desktop_resize():
+    run_beautify_grid_runtime_check(
+        '''
+        const listeners = new Map();
+        globalThis.window = {
+          matchMedia: () => ({ matches: false }),
+          innerWidth: 1280,
+          addEventListener: (name, callback) => listeners.set(name, callback),
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            currentMode: 'beautify',
+            beautifyWorkspace: 'packages',
+            beautifyActiveDetail: { id: 'pkg_demo', variants: {}, wallpapers: {}, screenshots: {} },
+            beautifyMobileFullscreenOpen: true,
+            beautifyMobileDrawerOpen: true,
+            showToast: () => {},
+          },
+        };
+        component.$watch = () => {};
+
+        component.init();
+
+        const resizeHandler = listeners.get('resize');
+        if (typeof resizeHandler !== 'function') {
+          throw new Error('expected resize handler registration');
+        }
+
+        resizeHandler();
+
+        if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
+          throw new Error('desktop resize should clear stale mobile fullscreen state');
+        }
+        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
+          throw new Error('desktop resize should also clear drawer state');
+        }
+        '''
+    )
 
 
 def test_layout_or_sidebar_keeps_beautify_mode_refresh_and_upload_routing():
@@ -692,6 +980,58 @@ def test_layout_or_sidebar_keeps_beautify_mode_refresh_and_upload_routing():
     assert_contains_any(sidebar_js, ('mode === "beautify"', "mode === 'beautify'"))
     assert_contains_any(sidebar_js, ('window.stUploadBeautifyThemeFiles(files);',))
     assert_contains_any(sidebar_js, ('window.dispatchEvent(new CustomEvent("refresh-beautify-list"));', "window.dispatchEvent(new CustomEvent('refresh-beautify-list'));"))
+
+
+def test_layout_switch_mode_closes_mobile_sidebar_before_entering_beautify():
+    run_layout_runtime_check(
+        '''
+        const events = [];
+        globalThis.document = {
+          body: {
+            style: {
+              overflow: 'hidden',
+            },
+          },
+        };
+        globalThis.window = {
+          dispatchEvent: (event) => events.push(event.type),
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            deviceType: 'mobile',
+            visibleSidebar: true,
+            currentMode: 'cards',
+            viewState: {
+              searchQuery: 'demo',
+              filterTags: ['tag_a'],
+              excludedTags: ['tag_b'],
+              filterCategory: 'folder/demo',
+              favFilter: 'fav',
+              selectedIds: [],
+              draggedCards: [],
+              draggedFolder: null,
+            },
+          },
+        };
+
+        component.switchMode('beautify');
+
+        if (component.$store.global.currentMode !== 'beautify') {
+          throw new Error('expected switchMode to enter beautify');
+        }
+        if (component.$store.global.visibleSidebar !== false) {
+          throw new Error('mobile mode switch should close the sidebar');
+        }
+        if (document.body.style.overflow !== '') {
+          throw new Error('mobile mode switch should clear body scroll lock');
+        }
+        if (!events.includes('refresh-beautify-list')) {
+          throw new Error('beautify mode switch should still refresh the beautify list');
+        }
+        '''
+    )
 
 
 def test_beautify_preview_document_module_exports_document_builder_contract():
