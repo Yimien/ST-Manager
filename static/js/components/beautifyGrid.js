@@ -36,7 +36,6 @@ export default function beautifyGrid() {
   return {
     isLoading: false,
     isActionLoading: false,
-    importTargetPackageId: "",
     globalCharacterName: "",
     globalUserName: "",
     packageCharacterName: "",
@@ -114,27 +113,6 @@ export default function beautifyGrid() {
       return true;
     },
 
-    get mobileDrawerOpen() {
-      return !!this.$store.global.beautifyMobileDrawerOpen;
-    },
-
-    set mobileDrawerOpen(val) {
-      this.$store.global.beautifyMobileDrawerOpen = !!val;
-      return true;
-    },
-
-    get mobileDrawerTab() {
-      return this.$store.global.beautifyMobileDrawerTab || "variant";
-    },
-
-    set mobileDrawerTab(val) {
-      const allowed = ["variant", "wallpapers", "screenshots"];
-      this.$store.global.beautifyMobileDrawerTab = allowed.includes(val)
-        ? val
-        : "variant";
-      return true;
-    },
-
     get workspace() {
       return this.$store.global.beautifyWorkspace || "packages";
     },
@@ -196,19 +174,23 @@ export default function beautifyGrid() {
       );
     },
 
-    get mobileDrawerSummary() {
-      if (this.mobileDrawerTab === "wallpapers") {
-        return this.activeWallpaper?.filename || "当前壁纸";
-      }
-      if (this.mobileDrawerTab === "screenshots") {
-        return this.activeScreenshot?.filename || "截图列表";
-      }
-      return this.activeVariant?.theme_name || "当前变体";
+    hasMobilePreviewContext() {
+      return this.workspace === "settings" || !!this.activePackage;
+    },
+
+    requestPreviewReset() {
+      this.$store.global.beautifyPreviewResetToken =
+        Number(this.$store.global.beautifyPreviewResetToken || 0) + 1;
+    },
+
+    closeMobilePreviewAndReset() {
+      this.closeMobileFullscreen();
+      this.requestPreviewReset();
     },
 
     syncMobileFullscreenState() {
-      if (!this.isMobileFullscreenEnabled()) {
-        this.closeMobileFullscreen();
+      if (this.mobileFullscreenOpen && !this.isMobileFullscreenEnabled()) {
+        this.closeMobilePreviewAndReset();
       }
     },
 
@@ -252,12 +234,20 @@ export default function beautifyGrid() {
         if (mode === "beautify") {
           this.fetchPackages();
           this.fetchGlobalSettings();
+        } else if (this.mobileFullscreenOpen) {
+          this.closeMobilePreviewAndReset();
         } else {
           this.closeMobileFullscreen();
         }
       });
 
       this.$watch("$store.global.beautifySearch", () => {
+        if (this.$store.global.currentMode === "beautify") {
+          this.ensureSelectedPackageStillVisible();
+        }
+      });
+
+      this.$watch("$store.global.beautifyPlatformFilter", () => {
         if (this.$store.global.currentMode === "beautify") {
           this.ensureSelectedPackageStillVisible();
         }
@@ -317,9 +307,22 @@ export default function beautifyGrid() {
         if (!this.selectedPackageId && this.packages.length) {
           await this.selectPackage(this.packages[0].id);
         } else if (this.selectedPackageId) {
-          await this.selectPackage(this.selectedPackageId, {
+          const loaded = await this.selectPackage(this.selectedPackageId, {
             preserveSelection: true,
           });
+          if (!loaded) {
+            if (this.packages.length) {
+              await this.selectPackage(this.packages[0].id);
+            } else {
+              this.selectedPackageId = "";
+              this.$store.global.beautifyActiveDetail = null;
+              this.$store.global.beautifyActiveVariant = null;
+              this.$store.global.beautifyActiveWallpaper = null;
+              this.selectedVariantId = "";
+              this.selectedWallpaperId = "";
+              this.$store.global.beautifySelectedScreenshotId = "";
+            }
+          }
         }
       } catch (error) {
         this.$store.global.showToast(`加载美化库失败: ${error}`, 3000);
@@ -330,10 +333,10 @@ export default function beautifyGrid() {
 
     async selectPackage(packageId, options = {}) {
       const targetId = String(packageId || "").trim();
-      if (!targetId) return;
+      if (!targetId) return false;
       const res = await getBeautifyPackage(targetId);
       if (!res?.success || !res.item) {
-        return;
+        return false;
       }
 
       this.selectedPackageId = targetId;
@@ -361,6 +364,7 @@ export default function beautifyGrid() {
         nextScreenshotId && res.item.screenshots?.[nextScreenshotId]
           ? nextScreenshotId
           : Object.values(res.item.screenshots || {})[0]?.id || "";
+      return true;
     },
 
     resolveDefaultVariant(detail) {
@@ -400,13 +404,17 @@ export default function beautifyGrid() {
     resolveActiveWallpaper(variant) {
       const detail = this.activeDetail;
       if (!detail || !variant) return null;
+      const allowedWallpaperIds = Array.isArray(variant.wallpaper_ids)
+        ? variant.wallpaper_ids
+        : [];
       if (
         this.selectedWallpaperId &&
+        allowedWallpaperIds.includes(this.selectedWallpaperId) &&
         detail.wallpapers?.[this.selectedWallpaperId]
       ) {
         return detail.wallpapers[this.selectedWallpaperId];
       }
-      const nextWallpaperId = (variant.wallpaper_ids || [])[0];
+      const nextWallpaperId = allowedWallpaperIds[0];
       return nextWallpaperId
         ? detail.wallpapers?.[nextWallpaperId] || null
         : null;
@@ -425,13 +433,14 @@ export default function beautifyGrid() {
       const variant = this.findVariantByPlatform(platform);
       if (variant) {
         this.applyActiveVariant(variant);
+        this.selectedVariantPlatform = platform;
         return;
       }
 
       const dualVariant = this.findVariantByPlatform("dual");
-      if (dualVariant && (platform === "pc" || platform === "mobile")) {
+      if (dualVariant && ["pc", "mobile", "dual"].includes(platform)) {
         this.applyActiveVariant(dualVariant);
-        this.selectedVariantPlatform = platform;
+        this.selectedVariantPlatform = platform === "dual" ? "dual" : platform;
       }
     },
 
@@ -444,40 +453,26 @@ export default function beautifyGrid() {
     },
 
     isMobileFullscreenEnabled() {
-      return (
-        this.workspace !== "settings" &&
-        !!this.activePackage &&
-        this.isMobileBeautifyViewport()
-      );
+      return this.hasMobilePreviewContext() && this.isMobileBeautifyViewport();
     },
 
     openMobileFullscreen(mode = this.stageMode) {
       const nextMode = mode === "screenshot" ? "screenshot" : "preview";
       this.stageMode = nextMode;
       this.mobileFullscreenOpen = true;
-      this.mobileDrawerOpen = false;
-      this.mobileDrawerTab =
-        nextMode === "screenshot" ? "screenshots" : "variant";
     },
 
     closeMobileFullscreen() {
       this.mobileFullscreenOpen = false;
-      this.mobileDrawerOpen = false;
-    },
-
-    toggleMobileDrawer(force = null) {
-      this.mobileDrawerOpen =
-        typeof force === "boolean" ? force : !this.mobileDrawerOpen;
-    },
-
-    setMobileDrawerTab(tab) {
-      this.mobileDrawerTab = tab;
-      this.mobileDrawerOpen = true;
     },
 
     switchBeautifyWorkspace(workspace) {
+      if (this.mobileFullscreenOpen) {
+        this.closeMobilePreviewAndReset();
+      } else {
+        this.closeMobileFullscreen();
+      }
       this.workspace = workspace === "settings" ? "settings" : "packages";
-      this.closeMobileFullscreen();
       if (this.workspace === "settings") {
         this.stageMode = "preview";
         this.fetchGlobalSettings();
@@ -498,7 +493,6 @@ export default function beautifyGrid() {
       this.stageMode = "screenshot";
       if (this.isMobileFullscreenEnabled()) {
         this.mobileFullscreenOpen = true;
-        this.mobileDrawerTab = "screenshots";
       }
     },
 
@@ -885,7 +879,11 @@ export default function beautifyGrid() {
         if (!res?.success) {
           throw new Error(res?.error || "删除失败");
         }
-        this.closeMobileFullscreen();
+        if (this.mobileFullscreenOpen) {
+          this.closeMobilePreviewAndReset();
+        } else {
+          this.closeMobileFullscreen();
+        }
         this.selectedPackageId = "";
         this.$store.global.beautifyActiveDetail = null;
         this.$store.global.beautifyActiveVariant = null;

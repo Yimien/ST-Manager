@@ -52,11 +52,13 @@ export default function beautifyPreviewFrame() {
 
     init() {
       this.startPreviewHostObserver();
+      this.$watch("$store.global.beautifyPreviewResetToken", () => {
+        this.resetPreview();
+      });
       this.$watch("$store.global.beautifyActiveDetail", (detail) => {
         if (!detail) {
           if (this.$store.global.beautifyWorkspace !== "settings") {
-            this.isPreviewLoaded = false;
-            this.destroy();
+            this.resetPreview();
             return;
           }
           if (this.isPreviewLoaded) {
@@ -218,6 +220,11 @@ export default function beautifyPreviewFrame() {
         minHeight: resolvePreviewRenderMinHeight(state.platform),
         fillHostHeight: true,
       });
+    },
+
+    resetPreview() {
+      this.isPreviewLoaded = false;
+      this.destroy();
     },
 
     destroy() {

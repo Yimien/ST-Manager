@@ -103,7 +103,21 @@
           <div class="beautify-empty-copy">
             不会带入当前包的主题与覆盖，只显示全局默认效果。
           </div>
-          <template x-if="!isPreviewLoaded">
+          <template x-if="isMobileFullscreenEnabled() && !showMobileFullscreen">
+            <div
+              class="beautify-preview-unloaded-card beautify-settings-preview-card beautify-mobile-entry-card"
+            >
+              <button
+                type="button"
+                class="beautify-primary-btn"
+                @click="openMobileFullscreen('preview'); loadPreview()"
+              >
+                加载全局默认预览
+              </button>
+            </div>
+          </template>
+
+          <template x-if="!isMobileFullscreenEnabled() && !isPreviewLoaded">
             <div
               class="beautify-preview-unloaded-card beautify-settings-preview-card"
             >
@@ -116,7 +130,8 @@
               </button>
             </div>
           </template>
-          <template x-if="isPreviewLoaded">
+
+          <template x-if="!isMobileFullscreenEnabled() && isPreviewLoaded">
             <div
               class="beautify-preview-frame-shell beautify-settings-preview-shell"
               :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
@@ -209,9 +224,9 @@
             <button
               type="button"
               class="beautify-device-btn"
-              :class="activeVariant?.platform === 'dual' ? 'is-active' : ''"
+              :class="selectedVariantPlatform === 'dual' ? 'is-active' : ''"
               :disabled="stageMode === 'screenshot' || !hasDualVariant"
-              @click="previewPlatform('pc')"
+              @click="previewPlatform('dual')"
             >
               双端
             </button>
@@ -233,7 +248,27 @@
             <div class="beautify-preview-column">
               <template x-if="stageMode === 'preview'">
                 <div class="beautify-preview-stage">
-                  <template x-if="!isPreviewLoaded">
+                  <template x-if="isMobileFullscreenEnabled()">
+                    <div
+                      class="beautify-preview-unloaded-card beautify-mobile-entry-card"
+                    >
+                      <div class="beautify-detail-heading">原生 ST 预览</div>
+                      <div class="beautify-empty-copy">
+                        点击后进入全屏演示。返回时会自动销毁当前渲染内容。
+                      </div>
+                      <button
+                        type="button"
+                        class="beautify-primary-btn"
+                        @click="openMobileFullscreen('preview'); loadPreview()"
+                      >
+                        加载原生 ST 预览
+                      </button>
+                    </div>
+                  </template>
+
+                  <template
+                    x-if="!isMobileFullscreenEnabled() && !isPreviewLoaded"
+                  >
                     <div class="beautify-preview-unloaded-card">
                       <div class="beautify-detail-heading">原生 ST 预览</div>
                       <div class="beautify-empty-copy">
@@ -250,7 +285,9 @@
                     </div>
                   </template>
 
-                  <template x-if="isPreviewLoaded">
+                  <template
+                    x-if="!isMobileFullscreenEnabled() && isPreviewLoaded"
+                  >
                     <div
                       class="beautify-preview-frame-shell"
                       :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
@@ -267,7 +304,31 @@
                 </div>
               </template>
 
-              <template x-if="stageMode === 'screenshot'">
+              <template
+                x-if="stageMode === 'screenshot' && isMobileFullscreenEnabled()"
+              >
+                <div
+                  class="beautify-screenshot-stage beautify-mobile-entry-card"
+                >
+                  <div class="beautify-screenshot-stage-copy">
+                    <div class="beautify-detail-heading">截图查看</div>
+                    <div class="beautify-empty-copy">
+                      点击后进入全屏截图查看。返回后直接回到当前工作台。
+                    </div>
+                    <button
+                      type="button"
+                      class="beautify-primary-btn"
+                      @click="openMobileFullscreen('screenshot')"
+                    >
+                      进入截图全屏查看
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <template
+                x-if="stageMode === 'screenshot' && !isMobileFullscreenEnabled()"
+              >
                 <div class="beautify-screenshot-stage">
                   <template x-if="activeScreenshot">
                     <img
@@ -475,12 +536,18 @@
               <button
                 type="button"
                 class="beautify-soft-btn beautify-mobile-back-btn"
-                @click="closeMobileFullscreen()"
+                @click="closeMobilePreviewAndReset()"
               >
                 返回
               </button>
 
-              <template x-if="stageMode === 'preview'">
+              <template x-if="beautifyWorkspace === 'settings'">
+                <div class="beautify-detail-heading">全局默认预览</div>
+              </template>
+
+              <template
+                x-if="beautifyWorkspace !== 'settings' && stageMode === 'preview'"
+              >
                 <div class="beautify-mobile-topbar-actions">
                   <div
                     class="beautify-device-switches beautify-mobile-device-switches"
@@ -506,9 +573,9 @@
                     <button
                       type="button"
                       class="beautify-device-btn"
-                      :class="activeVariant?.platform === 'dual' ? 'is-active' : ''"
+                      :class="selectedVariantPlatform === 'dual' ? 'is-active' : ''"
                       :disabled="!hasDualVariant"
-                      @click="previewPlatform('pc')"
+                      @click="previewPlatform('dual')"
                     >
                       双端
                     </button>
@@ -524,7 +591,9 @@
                 </div>
               </template>
 
-              <template x-if="stageMode === 'screenshot'">
+              <template
+                x-if="beautifyWorkspace !== 'settings' && stageMode === 'screenshot'"
+              >
                 <div class="beautify-detail-heading">截图查看</div>
               </template>
             </div>
@@ -536,7 +605,11 @@
                 >
                   <template x-if="!isPreviewLoaded">
                     <div class="beautify-preview-unloaded-card">
-                      <div class="beautify-detail-heading">原生 ST 预览</div>
+                      <div class="beautify-detail-heading">
+                        <span
+                          x-text="beautifyWorkspace === 'settings' ? '全局默认预览' : '原生 ST 预览'"
+                        ></span>
+                      </div>
                       <div class="beautify-empty-copy">
                         预览默认不加载。点击后会按需加载原生 ST
                         样式、图标和相关资源。
@@ -546,7 +619,9 @@
                         class="beautify-primary-btn"
                         @click="loadPreview()"
                       >
-                        加载原生 ST 预览
+                        <span
+                          x-text="beautifyWorkspace === 'settings' ? '加载全局默认预览' : '加载原生 ST 预览'"
+                        ></span>
                       </button>
                     </div>
                   </template>
@@ -591,161 +666,6 @@
                   </template>
                 </div>
               </template>
-            </div>
-
-            <div
-              class="beautify-mobile-drawer"
-              :class="mobileDrawerOpen ? 'is-open' : ''"
-            >
-              <button
-                type="button"
-                class="beautify-mobile-drawer-handle"
-                @click="toggleMobileDrawer()"
-              >
-                <span class="beautify-mobile-drawer-pill"></span>
-                <span x-text="mobileDrawerSummary"></span>
-              </button>
-
-              <div
-                class="beautify-mobile-drawer-tabs"
-                x-show="mobileDrawerOpen"
-              >
-                <button
-                  type="button"
-                  class="beautify-device-btn"
-                  :class="mobileDrawerTab === 'variant' ? 'is-active' : ''"
-                  @click="setMobileDrawerTab('variant')"
-                >
-                  当前变体
-                </button>
-                <button
-                  type="button"
-                  class="beautify-device-btn"
-                  :class="mobileDrawerTab === 'wallpapers' ? 'is-active' : ''"
-                  @click="setMobileDrawerTab('wallpapers')"
-                >
-                  壁纸
-                </button>
-                <button
-                  type="button"
-                  class="beautify-device-btn"
-                  :class="mobileDrawerTab === 'screenshots' ? 'is-active' : ''"
-                  @click="setMobileDrawerTab('screenshots')"
-                >
-                  截图
-                </button>
-              </div>
-
-              <div
-                class="beautify-mobile-drawer-body custom-scrollbar"
-                x-show="mobileDrawerOpen"
-              >
-                <template x-if="mobileDrawerTab === 'variant'">
-                  <div class="beautify-detail-card">
-                    <div class="beautify-detail-heading">当前变体</div>
-                    <div class="beautify-detail-kv">
-                      <span>平台</span
-                      ><span x-text="activeVariant?.platform || '-' "></span>
-                    </div>
-                    <div class="beautify-detail-kv">
-                      <span>主题</span
-                      ><span x-text="activeVariant?.theme_name || '-' "></span>
-                    </div>
-                    <div class="beautify-detail-kv">
-                      <span>待确认</span>
-                      <span
-                        x-text="activeVariant?.preview_hint?.needs_platform_review ? '需要人工确认' : '已确认' "
-                      ></span>
-                    </div>
-                  </div>
-                </template>
-
-                <template x-if="mobileDrawerTab === 'wallpapers'">
-                  <div class="beautify-detail-card">
-                    <div class="beautify-detail-heading">壁纸</div>
-                    <div
-                      class="beautify-wallpaper-list"
-                      x-show="wallpaperOptions.length > 0"
-                    >
-                      <template
-                        x-for="wallpaper in wallpaperOptions"
-                        :key="wallpaper.id"
-                      >
-                        <button
-                          type="button"
-                          class="beautify-wallpaper-item cursor-pointer"
-                          :class="selectedWallpaperId === wallpaper.id ? 'is-active' : ''"
-                          @click="selectWallpaper(wallpaper.id)"
-                        >
-                          <span
-                            class="beautify-wallpaper-thumb"
-                            :style="`background-image:url('${wallpaperPreviewUrl(wallpaper.file)}')`"
-                          ></span>
-                          <span class="beautify-wallpaper-info">
-                            <span
-                              class="beautify-wallpaper-name"
-                              x-text="wallpaper.filename"
-                            ></span>
-                            <span
-                              class="beautify-wallpaper-size"
-                              x-text="`${wallpaper.width} × ${wallpaper.height}`"
-                            ></span>
-                          </span>
-                        </button>
-                      </template>
-                    </div>
-                    <div
-                      class="beautify-empty-inline"
-                      x-show="wallpaperOptions.length === 0"
-                    >
-                      当前变体还没有绑定壁纸。
-                    </div>
-                  </div>
-                </template>
-
-                <template x-if="mobileDrawerTab === 'screenshots'">
-                  <div class="beautify-detail-card">
-                    <div class="beautify-detail-heading">截图</div>
-                    <div
-                      class="beautify-screenshot-list"
-                      x-show="screenshotOptions.length > 0"
-                    >
-                      <template
-                        x-for="screenshot in screenshotOptions"
-                        :key="screenshot.id"
-                      >
-                        <button
-                          type="button"
-                          class="beautify-screenshot-item cursor-pointer"
-                          :class="activeScreenshot?.id === screenshot.id ? 'is-active' : ''"
-                          @click="selectScreenshot(screenshot.id)"
-                        >
-                          <span
-                            class="beautify-screenshot-thumb"
-                            :style="`background-image:url('${wallpaperPreviewUrl(screenshot.file)}')`"
-                          ></span>
-                          <span class="beautify-wallpaper-info">
-                            <span
-                              class="beautify-wallpaper-name"
-                              x-text="screenshot.filename"
-                            ></span>
-                            <span
-                              class="beautify-wallpaper-size"
-                              x-text="`${screenshot.width} × ${screenshot.height}`"
-                            ></span>
-                          </span>
-                        </button>
-                      </template>
-                    </div>
-                    <div
-                      class="beautify-empty-inline"
-                      x-show="screenshotOptions.length === 0"
-                    >
-                      还没有导入截图。
-                    </div>
-                  </div>
-                </template>
-              </div>
             </div>
           </div>
         </template>

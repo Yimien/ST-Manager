@@ -517,6 +517,98 @@ def test_beautify_grid_switching_to_settings_workspace_refetches_global_settings
     )
 
 
+def test_beautify_grid_reselects_first_visible_package_when_platform_filter_hides_current_selection():
+    run_beautify_grid_runtime_check(
+        '''
+        const watchers = new Map();
+        globalThis.__gridStubs = {
+          getBeautifyPackage: async (packageId) => ({
+            success: true,
+            item: {
+              id: packageId,
+              variants: {},
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+          }),
+        };
+        globalThis.window = {
+          addEventListener: () => {},
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            currentMode: 'cards',
+            beautifyList: [
+              { id: 'pkg_pc', name: 'PC Package', platforms: ['pc'] },
+              { id: 'pkg_mobile', name: 'Mobile Package', platforms: ['mobile'] },
+            ],
+            beautifyPlatformFilter: 'all',
+            beautifySelectedPackageId: 'pkg_pc',
+            showToast: () => {},
+          },
+        };
+        component.$watch = (key, callback) => watchers.set(key, callback);
+
+        component.init();
+
+        const platformWatcher = watchers.get('$store.global.beautifyPlatformFilter');
+        if (typeof platformWatcher !== 'function') {
+          throw new Error('expected platform filter watcher');
+        }
+
+        component.$store.global.currentMode = 'beautify';
+        component.$store.global.beautifyPlatformFilter = 'mobile';
+        platformWatcher('mobile');
+        await Promise.resolve();
+
+        if (component.$store.global.beautifySelectedPackageId !== 'pkg_mobile') {
+          throw new Error(`expected platform filter change to reselect first visible package, got ${component.$store.global.beautifySelectedPackageId}`);
+        }
+      '''
+    )
+
+
+def test_beautify_grid_switching_variant_rebinds_wallpaper_when_previous_selection_is_not_supported():
+    run_beautify_grid_runtime_check(
+        '''
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyActiveDetail: {
+              id: 'pkg_demo',
+              variants: {},
+              wallpapers: {
+                wall_old: { id: 'wall_old', file: 'old.png' },
+                wall_new: { id: 'wall_new', file: 'new.png' },
+              },
+              screenshots: {},
+              identity_overrides: {},
+            },
+            beautifySelectedWallpaperId: 'wall_old',
+            beautifyPreviewDevice: 'pc',
+            showToast: () => {},
+          },
+        };
+
+        component.applyActiveVariant({
+          id: 'variant_new',
+          platform: 'pc',
+          wallpaper_ids: ['wall_new'],
+        });
+
+        if (component.$store.global.beautifySelectedWallpaperId !== 'wall_new') {
+          throw new Error(`expected variant switch to fall back to first bound wallpaper, got ${component.$store.global.beautifySelectedWallpaperId}`);
+        }
+        if (component.$store.global.beautifyActiveWallpaper?.id !== 'wall_new') {
+          throw new Error('active wallpaper should follow the new variant wallpaper binding');
+        }
+        '''
+    )
+
+
 def test_beautify_grid_preserves_existing_screenshot_selection_when_importing_more_images():
     run_beautify_grid_runtime_check(
         '''
@@ -598,6 +690,89 @@ def test_beautify_grid_activates_first_imported_screenshot_when_none_was_selecte
 
         if (component.$store.global.beautifySelectedScreenshotId !== 'shot_new_1') {
           throw new Error(`expected first imported screenshot to become active, got ${component.$store.global.beautifySelectedScreenshotId}`);
+        }
+        '''
+    )
+
+
+def test_beautify_grid_fetch_packages_reselects_first_available_package_when_existing_selection_disappears():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.__gridStubs = {
+          listBeautifyPackages: async () => ({
+            success: true,
+            items: [
+              { id: 'pkg_fresh', name: 'Fresh Package', platforms: ['pc'] },
+            ],
+          }),
+          getBeautifyPackage: async (packageId) => {
+            if (packageId === 'pkg_missing') {
+              return { success: false, item: null };
+            }
+            if (packageId === 'pkg_fresh') {
+              return {
+                success: true,
+                item: {
+                  id: 'pkg_fresh',
+                  variants: {
+                    variant_pc: { id: 'variant_pc', platform: 'pc', wallpaper_ids: ['wall_fresh'] },
+                  },
+                  wallpapers: {
+                    wall_fresh: { id: 'wall_fresh', file: 'fresh.png' },
+                  },
+                  screenshots: {
+                    shot_fresh: { id: 'shot_fresh', file: 'fresh-shot.png' },
+                  },
+                  identity_overrides: {},
+                },
+              };
+            }
+            return { success: false, item: null };
+          },
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifySelectedPackageId: 'pkg_missing',
+            beautifySelectedVariantId: 'variant_stale',
+            beautifySelectedWallpaperId: 'wall_stale',
+            beautifySelectedScreenshotId: 'shot_stale',
+            beautifyActiveDetail: {
+              id: 'pkg_missing',
+              variants: {
+                variant_stale: { id: 'variant_stale', platform: 'pc', wallpaper_ids: ['wall_stale'] },
+              },
+              wallpapers: {
+                wall_stale: { id: 'wall_stale', file: 'stale.png' },
+              },
+              screenshots: {
+                shot_stale: { id: 'shot_stale', file: 'stale-shot.png' },
+              },
+              identity_overrides: {},
+            },
+            beautifyActiveVariant: { id: 'variant_stale', platform: 'pc', wallpaper_ids: ['wall_stale'] },
+            beautifyActiveWallpaper: { id: 'wall_stale', file: 'stale.png' },
+            showToast: () => {},
+          },
+        };
+
+        await component.fetchPackages();
+
+        if (component.$store.global.beautifySelectedPackageId !== 'pkg_fresh') {
+          throw new Error(`expected missing selection to fall back to first refreshed package, got ${component.$store.global.beautifySelectedPackageId}`);
+        }
+        if (component.$store.global.beautifyActiveDetail?.id !== 'pkg_fresh') {
+          throw new Error('active detail should be replaced by the refreshed fallback package');
+        }
+        if (component.$store.global.beautifyActiveVariant?.id !== 'variant_pc') {
+          throw new Error('fallback package should activate its default variant');
+        }
+        if (component.$store.global.beautifyActiveWallpaper?.id !== 'wall_fresh') {
+          throw new Error('fallback package should activate its default wallpaper');
+        }
+        if (component.$store.global.beautifySelectedScreenshotId !== 'shot_fresh') {
+          throw new Error(`fallback package should replace stale screenshot selection, got ${component.$store.global.beautifySelectedScreenshotId}`);
         }
         '''
     )
@@ -712,8 +887,15 @@ def test_state_js_keeps_mobile_beautify_fullscreen_store_keys():
     state_js = read_project_file('static/js/state.js')
 
     assert 'beautifyMobileFullscreenOpen: false' in state_js
-    assert 'beautifyMobileDrawerOpen: false' in state_js
-    assert 'beautifyMobileDrawerTab: "variant"' in state_js or "beautifyMobileDrawerTab: 'variant'" in state_js
+    assert 'beautifyMobileDrawerOpen: false' not in state_js
+    assert 'beautifyMobileDrawerTab: "variant"' not in state_js
+    assert "beautifyMobileDrawerTab: 'variant'" not in state_js
+
+
+def test_state_js_tracks_beautify_preview_reset_token():
+    state_js = read_project_file('static/js/state.js')
+
+    assert 'beautifyPreviewResetToken: 0' in state_js
 
 
 def test_header_js_binds_beautify_search_and_mobile_upload_mode():
@@ -733,18 +915,33 @@ def test_beautify_grid_source_tracks_mobile_fullscreen_methods():
     for token in (
         'get mobileFullscreenOpen()',
         'set mobileFullscreenOpen(val)',
-        'get mobileDrawerOpen()',
-        'set mobileDrawerOpen(val)',
-        'get mobileDrawerTab()',
-        'set mobileDrawerTab(val)',
         'get showMobileFullscreen()',
-        'get mobileDrawerSummary()',
         'isMobileBeautifyViewport()',
         'isMobileFullscreenEnabled()',
         'openMobileFullscreen(mode = this.stageMode)',
         'closeMobileFullscreen()',
+    ):
+        assert token in grid_source
+
+    for removed_token in (
+        'get mobileDrawerOpen()',
+        'set mobileDrawerOpen(val)',
+        'get mobileDrawerTab()',
+        'set mobileDrawerTab(val)',
+        'get mobileDrawerSummary()',
         'toggleMobileDrawer(force = null)',
         'setMobileDrawerTab(tab)',
+    ):
+        assert removed_token not in grid_source
+
+
+def test_beautify_grid_source_tracks_mobile_preview_reset_helpers():
+    grid_source = read_project_file('static/js/components/beautifyGrid.js')
+
+    for token in (
+        'hasMobilePreviewContext()',
+        'requestPreviewReset()',
+        'closeMobilePreviewAndReset()',
     ):
         assert token in grid_source
 
@@ -772,8 +969,6 @@ def test_beautify_grid_opens_mobile_fullscreen_for_stage_entry_and_screenshot_se
             beautifyStageMode: 'preview',
             beautifySelectedScreenshotId: '',
             beautifyMobileFullscreenOpen: false,
-            beautifyMobileDrawerOpen: true,
-            beautifyMobileDrawerTab: 'variant',
             showToast: () => {},
           },
         };
@@ -782,9 +977,6 @@ def test_beautify_grid_opens_mobile_fullscreen_for_stage_entry_and_screenshot_se
 
         if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
           throw new Error('preview stage entry should open mobile fullscreen');
-        }
-        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
-          throw new Error('stage entry should collapse the drawer');
         }
 
         component.selectScreenshot('shot_1');
@@ -798,8 +990,54 @@ def test_beautify_grid_opens_mobile_fullscreen_for_stage_entry_and_screenshot_se
         if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
           throw new Error('screenshot selection should keep mobile fullscreen open');
         }
-        if (component.$store.global.beautifyMobileDrawerTab !== 'screenshots') {
-          throw new Error('screenshot selection should focus the screenshot drawer tab');
+        if (component.$store.global.beautifyStageMode !== 'screenshot') {
+          throw new Error('mobile fullscreen should keep screenshot stage active');
+        }
+        '''
+    )
+
+
+def test_beautify_grid_supports_settings_fullscreen_and_resets_on_mobile_close():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = {
+          matchMedia: () => ({ matches: true }),
+          innerWidth: 390,
+          addEventListener: () => {},
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            currentMode: 'beautify',
+            beautifyWorkspace: 'settings',
+            beautifyStageMode: 'preview',
+            beautifyPreviewResetToken: 0,
+            beautifyMobileFullscreenOpen: false,
+            showToast: () => {},
+          },
+        };
+
+        if (component.isMobileFullscreenEnabled() !== true) {
+          throw new Error('settings workspace should allow mobile fullscreen preview');
+        }
+
+        component.openMobileFullscreen('preview');
+
+        if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
+          throw new Error('settings preview should open the mobile fullscreen shell');
+        }
+        if (component.$store.global.beautifyStageMode !== 'preview') {
+          throw new Error('settings preview should keep preview stage mode');
+        }
+
+        component.closeMobilePreviewAndReset();
+
+        if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
+          throw new Error('mobile fullscreen should close on reset');
+        }
+        if (component.$store.global.beautifyPreviewResetToken !== 1) {
+          throw new Error('closing mobile preview should increment the preview reset token');
         }
         '''
     )
@@ -821,7 +1059,6 @@ def test_beautify_grid_closes_mobile_fullscreen_when_switching_to_settings_works
           global: {
             beautifyWorkspace: 'packages',
             beautifyMobileFullscreenOpen: true,
-            beautifyMobileDrawerOpen: true,
             showToast: () => {},
           },
         };
@@ -834,9 +1071,6 @@ def test_beautify_grid_closes_mobile_fullscreen_when_switching_to_settings_works
         }
         if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
           throw new Error('fullscreen should close when entering settings workspace');
-        }
-        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
-          throw new Error('drawer should close when entering settings workspace');
         }
         if (settingsFetches !== 1) {
           throw new Error(`expected one settings refetch, got ${settingsFetches}`);
@@ -865,8 +1099,6 @@ def test_beautify_grid_opens_mobile_fullscreen_for_screenshot_empty_state_withou
             },
             beautifyStageMode: 'preview',
             beautifyMobileFullscreenOpen: false,
-            beautifyMobileDrawerOpen: true,
-            beautifyMobileDrawerTab: 'variant',
             showToast: () => {},
           },
         };
@@ -879,8 +1111,8 @@ def test_beautify_grid_opens_mobile_fullscreen_for_screenshot_empty_state_withou
         if (component.$store.global.beautifyMobileFullscreenOpen !== true) {
           throw new Error('mobile fullscreen should still open for screenshot empty state');
         }
-        if (component.$store.global.beautifyMobileDrawerTab !== 'screenshots') {
-          throw new Error('screenshot empty state should focus the screenshot drawer tab');
+        if (component.$store.global.beautifyStageMode !== 'screenshot') {
+          throw new Error('screenshot empty state should preserve screenshot mode');
         }
         '''
     )
@@ -900,7 +1132,6 @@ def test_beautify_grid_clears_mobile_fullscreen_when_leaving_beautify_mode():
             beautifyWorkspace: 'packages',
             beautifyActiveDetail: { id: 'pkg_demo', variants: {}, wallpapers: {}, screenshots: {} },
             beautifyMobileFullscreenOpen: true,
-            beautifyMobileDrawerOpen: true,
             showToast: () => {},
           },
         };
@@ -919,8 +1150,8 @@ def test_beautify_grid_clears_mobile_fullscreen_when_leaving_beautify_mode():
         if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
           throw new Error('fullscreen should clear when leaving beautify mode');
         }
-        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
-          throw new Error('drawer should clear when leaving beautify mode');
+        if (component.$store.global.beautifyPreviewResetToken !== 1) {
+          throw new Error('leaving beautify mode should trigger preview reset when fullscreen was open');
         }
         '''
     )
@@ -943,7 +1174,7 @@ def test_beautify_grid_clears_stale_mobile_fullscreen_on_desktop_resize():
             beautifyWorkspace: 'packages',
             beautifyActiveDetail: { id: 'pkg_demo', variants: {}, wallpapers: {}, screenshots: {} },
             beautifyMobileFullscreenOpen: true,
-            beautifyMobileDrawerOpen: true,
+            beautifyPreviewResetToken: 0,
             showToast: () => {},
           },
         };
@@ -961,8 +1192,8 @@ def test_beautify_grid_clears_stale_mobile_fullscreen_on_desktop_resize():
         if (component.$store.global.beautifyMobileFullscreenOpen !== false) {
           throw new Error('desktop resize should clear stale mobile fullscreen state');
         }
-        if (component.$store.global.beautifyMobileDrawerOpen !== false) {
-          throw new Error('desktop resize should also clear drawer state');
+        if (component.$store.global.beautifyPreviewResetToken !== 1) {
+          throw new Error('desktop resize should trigger preview reset when stale fullscreen closes');
         }
         '''
     )
@@ -1349,6 +1580,74 @@ def test_beautify_preview_frame_falls_back_to_dom_query_when_alpine_ref_is_unava
 
     assert 'this.$refs.previewHost' in source
     assert "querySelector('.beautify-preview-host')" in source or 'querySelector(".beautify-preview-host")' in source
+
+
+def test_beautify_preview_frame_source_tracks_reset_preview_signal():
+    source = read_project_file('static/js/components/beautifyPreviewFrame.js')
+
+    assert 'resetPreview() {' in source
+    assert_contains_any(
+        source,
+        (
+            'this.$watch("$store.global.beautifyPreviewResetToken", () => {',
+            "this.$watch('$store.global.beautifyPreviewResetToken', () => {",
+        ),
+    )
+    assert 'this.isPreviewLoaded = false;' in source
+    assert 'this.destroy();' in source
+
+
+def test_beautify_preview_frame_resets_loaded_runtime_when_preview_reset_token_changes():
+    run_beautify_preview_frame_runtime_check(
+        '''
+        const watchers = new Map();
+        const host = { innerHTML: '', __events: [] };
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'mobile',
+            beautifyPreviewResetToken: 0,
+            beautifyActiveDetail: { id: 'detail-1', identity_overrides: {} },
+            beautifyActiveVariant: { theme_data: {} },
+            beautifyActiveWallpaper: {},
+            beautifyGlobalSettings: { identities: {}, wallpaper: {} },
+          },
+        };
+        component.$refs = { previewHost: host };
+        component.$watch = (key, callback) => watchers.set(key, callback);
+        component.$nextTick = (callback) => callback();
+
+        component.init();
+        component.loadPreview();
+
+        const resetWatcher = watchers.get('$store.global.beautifyPreviewResetToken');
+        if (typeof resetWatcher !== 'function') {
+          throw new Error('expected preview reset watcher');
+        }
+
+        component.$store.global.beautifyPreviewResetToken = 1;
+        resetWatcher(1);
+
+        if (component.isPreviewLoaded !== false) {
+          throw new Error('reset should unload preview state');
+        }
+        if (!host.__events.some((entry) => entry.type === 'clear')) {
+          throw new Error('reset should clear the isolated runtime host');
+        }
+
+        const renderCountAfterReset = host.__events.filter((entry) => entry.type === 'render').length;
+        component.renderPreview();
+        if (host.__events.filter((entry) => entry.type === 'render').length !== renderCountAfterReset) {
+          throw new Error('renderPreview should no-op while preview is unloaded');
+        }
+
+        component.loadPreview();
+        if (host.__events.filter((entry) => entry.type === 'render').length !== renderCountAfterReset + 1) {
+          throw new Error('manual reload should render again after reset');
+        }
+        '''
+    )
 
 
 def test_beautify_preview_frame_does_not_render_until_load_preview_is_called():

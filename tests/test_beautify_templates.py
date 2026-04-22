@@ -150,6 +150,14 @@ def test_beautify_grid_template_disables_preview_only_controls_in_screenshot_mod
     assert ":disabled=\"stageMode === 'screenshot' || wallpaperOptions.length === 0\"" in template or ':disabled="stageMode === \"screenshot\" || wallpaperOptions.length === 0"' in template
 
 
+def test_beautify_grid_template_uses_unified_selected_variant_platform_for_dual_button_active_state():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert ":class=\"selectedVariantPlatform === 'dual' ? 'is-active' : ''\"" in template or ':class="selectedVariantPlatform === \"dual\" ? \'is-active\' : \'\'"' in template
+    assert "activeVariant?.platform === 'dual' ? 'is-active' : ''" not in template
+    assert 'activeVariant?.platform === "dual" ? "is-active" : ""' not in template
+
+
 def test_beautify_grid_template_removes_install_and_apply_actions_and_approximation_copy():
     template = read_project_file('templates/components/grid_beautify.html')
 
@@ -167,6 +175,23 @@ def test_beautify_grid_template_uses_manual_native_preview_trigger():
     assert '@click="loadPreview()"' in template or "@click='loadPreview()'" in template
     assert 'previewHost' in template
     assert 'previewApproximateNoticeVisible' not in template
+
+
+def test_beautify_grid_template_uses_combined_desktop_preview_conditions_for_package_stage():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert re.search(
+        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*!isPreviewLoaded\1''',
+        template,
+    )
+    assert re.search(
+        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*isPreviewLoaded\1''',
+        template,
+    )
+    assert not re.search(
+        r'''<template\s+x-if=(["'])!isMobileFullscreenEnabled\(\)\1>\s*<template\s+x-if=''',
+        template,
+    )
 
 
 def test_beautify_grid_template_wraps_package_preview_states_in_single_root():
@@ -195,32 +220,75 @@ def test_beautify_grid_template_uses_isolated_preview_host_instead_of_inline_pre
     assert 'customCssMarkup()' not in template
 
 
-def test_beautify_grid_template_adds_mobile_fullscreen_shell_and_drawer_tabs():
+def test_beautify_grid_template_uses_button_driven_mobile_preview_entries():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert 'beautify-mobile-entry-card' in template
+    assert "openMobileFullscreen('preview'); loadPreview()" in template or 'openMobileFullscreen("preview"); loadPreview()' in template
+    assert "openMobileFullscreen('screenshot')" in template or 'openMobileFullscreen("screenshot")' in template
+    assert '加载全局默认预览' in template
+    assert '加载原生 ST 预览' in template
+
+
+def test_beautify_grid_template_simplifies_mobile_fullscreen_shell_and_uses_resetting_back_action():
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert 'beautify-mobile-fullscreen' in template
     assert 'beautify-mobile-topbar' in template
     assert 'beautify-mobile-stage' in template
-    assert 'beautify-mobile-drawer' in template
-    assert '@click="closeMobileFullscreen()"' in template or "@click='closeMobileFullscreen()'" in template
-    assert '@click="toggleMobileDrawer()"' in template or "@click='toggleMobileDrawer()'" in template
-    assert "setMobileDrawerTab('variant')" in template or 'setMobileDrawerTab("variant")' in template
-    assert "setMobileDrawerTab('wallpapers')" in template or 'setMobileDrawerTab("wallpapers")' in template
-    assert "setMobileDrawerTab('screenshots')" in template or 'setMobileDrawerTab("screenshots")' in template
+    assert '@click="closeMobilePreviewAndReset()"' in template or "@click='closeMobilePreviewAndReset()'" in template
+    assert 'beautify-mobile-drawer' not in template
+    assert 'toggleMobileDrawer()' not in template
+    assert 'mobileDrawerSummary' not in template
 
 
-def test_beautify_grid_template_hides_mobile_drawer_tabs_and_body_until_opened():
-    template = read_project_file('templates/components/grid_beautify.html')
+def test_beautify_layout_css_keeps_mobile_fullscreen_stage_without_drawer_rules():
+    css = read_project_file('static/css/modules/view-beautify.css')
+    fullscreen_block = extract_css_block_for_selector(css, '.beautify-mobile-fullscreen')
+    stage_block = extract_css_block_for_selector(css, '.beautify-mobile-stage')
 
-    assert 'x-show="mobileDrawerOpen"' in template or "x-show='mobileDrawerOpen'" in template
+    assert_has_css_declaration(fullscreen_block, 'position', 'fixed')
+    assert_has_css_declaration(fullscreen_block, 'inset', '0')
+    assert_has_css_declaration(stage_block, 'flex', '1')
+    assert_has_css_declaration(stage_block, 'min-height', '0')
+    assert '.beautify-mobile-entry-card {' in css
+    assert '.beautify-mobile-drawer {' not in css
+    assert '.beautify-mobile-drawer-body {' not in css
+    assert 'padding-bottom: 5.5rem;' not in stage_block
 
 
-def test_beautify_grid_template_gates_inline_stage_markup_behind_show_mobile_fullscreen():
-    template = read_project_file('templates/components/grid_beautify.html')
-
-    assert 'x-if="!showMobileFullscreen"' in template or "x-if='!showMobileFullscreen'" in template
-    assert 'x-if="showMobileFullscreen"' in template or "x-if='showMobileFullscreen'" in template
-    assert 'x-text="mobileDrawerSummary"' in template or "x-text='mobileDrawerSummary'" in template
+def test_beautify_layout_css_removes_preview_shell_chrome_inside_mobile_fullscreen():
+    css = read_project_file('static/css/modules/view-beautify.css')
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\s*\{[^}]*block-size:\s*100%;',
+        css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\s*\{[^}]*border-radius:\s*0;',
+        css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\s*\{[^}]*border:\s*0;',
+        css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\s*\{[^}]*background:\s*transparent;',
+        css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\.is-mobile\s*\{[^}]*max-width:\s*none;',
+        css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\.is-mobile\s*\{[^}]*margin:\s*0;',
+        css,
+        re.DOTALL,
+    )
 
 
 def test_beautify_grid_template_keeps_screenshot_entry_available_without_imported_images():
@@ -309,26 +377,6 @@ def test_beautify_layout_css_styles_isolated_preview_host_shell():
     assert 'max-width: 420px;' in mobile_shell_block
     assert '.beautify-preview-chat-window {' not in css
     assert '.beautify-preview-inputbar {' not in css
-
-
-def test_beautify_layout_css_adds_mobile_fullscreen_overlay_and_drawer_rules():
-    css = read_project_file('static/css/modules/view-beautify.css')
-    fullscreen_block = extract_css_block_for_selector(css, '.beautify-mobile-fullscreen')
-    topbar_block = extract_css_block_for_selector(css, '.beautify-mobile-topbar')
-    drawer_block = extract_css_block_for_selector(css, '.beautify-mobile-drawer')
-    drawer_open_block = extract_css_block_for_selector(css, '.beautify-mobile-drawer.is-open')
-    drawer_body_block = extract_css_block_for_selector(css, '.beautify-mobile-drawer-body')
-
-    assert_has_css_declaration(fullscreen_block, 'position', 'fixed')
-    assert_has_css_declaration(fullscreen_block, 'inset', '0')
-    assert_has_css_declaration(fullscreen_block, 'z-index', '40')
-    assert_has_css_declaration(topbar_block, 'display', 'flex')
-    assert_has_css_declaration(topbar_block, 'justify-content', 'space-between')
-    assert_has_css_declaration(drawer_block, 'position', 'absolute')
-    assert_has_css_declaration(drawer_block, 'transform', 'translateY')
-    assert_has_css_declaration(drawer_open_block, 'transform', 'translateY(0)')
-    assert_has_css_declaration(drawer_body_block, 'overflow-y', 'auto')
-    assert '@media (max-width: 900px)' in css
 
 
 def test_beautify_layout_css_uses_theme_driven_stage_cards_and_active_states():
