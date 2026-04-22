@@ -10,6 +10,85 @@
     class="preset-reader-modal bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl shadow-2xl flex flex-col w-full max-w-7xl h-[90vh] overflow-hidden"
   >
     <div
+      class="preset-reader-mobile-header"
+      :class="($store.global.deviceType === 'mobile' && presetMobileHeaderHidden) ? 'is-mobile-hidden' : ''"
+      x-show="$store.global.deviceType === 'mobile'"
+      x-ref="presetReaderMobileHeader"
+    >
+      <div class="preset-reader-mobile-header-main">
+        <button
+          @click="toggleMobileSidebar()"
+          class="btn-secondary py-1.5 px-3 text-xs"
+        >
+          目录
+        </button>
+        <div class="preset-reader-mobile-title-block">
+          <div
+            class="preset-reader-mobile-title"
+            x-text="activePresetDetail?.name || '未命名预设'"
+          ></div>
+          <div
+            class="preset-reader-mobile-subtitle"
+            x-text="getMobileHeaderMetaLine()"
+          ></div>
+        </div>
+        <button
+          @click="openFullscreenEditor()"
+          class="btn-primary py-1.5 px-3 text-xs"
+        >
+          全屏编辑
+        </button>
+        <button
+          @click="closeModal()"
+          class="btn-secondary py-1.5 px-3 text-xs hover:text-red-300"
+        >
+          关闭
+        </button>
+      </div>
+      <div class="preset-reader-mobile-header-secondary">
+        <div
+          class="preset-reader-mobile-context"
+          x-text="getMobileHeaderContextLabel()"
+        ></div>
+        <div
+          class="preset-reader-mobile-count"
+          x-text="getMobileHeaderCountLabel()"
+        ></div>
+        <button
+          @click="toggleMobileMoreMenu()"
+          class="btn-secondary py-1 px-3 text-xs"
+        >
+          更多
+        </button>
+      </div>
+    </div>
+
+    <div
+      x-show="$store.global.deviceType === 'mobile' && showMobileMoreMenu"
+      x-cloak
+      class="preset-reader-mobile-more-menu"
+    >
+      <button
+        @click="toggleMobileRightPanel()"
+        class="btn-secondary py-1.5 px-3 text-xs"
+        x-text="showRightPanel ? '收起详情' : '打开详情'"
+      ></button>
+      <button
+        @click="exportActivePreset(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+      >
+        导出
+      </button>
+      <button
+        @click="openAdvancedExtensions(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+      >
+        编辑扩展
+      </button>
+    </div>
+
+    <div
+      x-show="$store.global.deviceType !== 'mobile'"
       class="border-b border-[var(--border-light)] px-4 py-3 bg-[var(--bg-sub)] flex items-center justify-between gap-3"
     >
       <div class="min-w-0 flex-1">
@@ -39,26 +118,14 @@
 
       <div class="flex items-center gap-2 flex-wrap justify-end">
         <button
-          x-show="$store.global.deviceType === 'mobile'"
-          @click="showMobileSidebar = !showMobileSidebar"
-          class="btn-secondary py-1.5 px-3 text-xs"
-        >
-          目录
-        </button>
-        <button
-          x-show="$store.global.deviceType === 'mobile'"
-          @click="showRightPanel = !showRightPanel"
-          class="btn-secondary py-1.5 px-3 text-xs"
-        >
-          详情
-        </button>
-        <button
+          x-show="$store.global.deviceType !== 'mobile'"
           @click="exportActivePreset()"
           class="btn-secondary py-1.5 px-3 text-xs"
         >
           导出
         </button>
         <button
+          x-show="$store.global.deviceType !== 'mobile'"
           @click="openAdvancedExtensions()"
           class="btn-secondary py-1.5 px-3 text-xs"
         >
@@ -99,7 +166,8 @@
           <aside
             class="w-full md:w-[260px] lg:w-[280px] flex-shrink-0 bg-[var(--bg-sub)] border-r border-[var(--border-light)] flex flex-col min-h-0 z-40"
             :class="{
-              'fixed left-0 top-0 bottom-0 max-w-[88vw] shadow-2xl': $store.global.deviceType === 'mobile',
+              'preset-reader-mobile-sidebar': true,
+              'fixed left-0 bottom-0 max-w-[88vw] shadow-2xl': $store.global.deviceType === 'mobile',
               'hidden md:flex': $store.global.deviceType !== 'mobile',
               'flex': $store.global.deviceType === 'mobile' && showMobileSidebar,
               'hidden': $store.global.deviceType === 'mobile' && !showMobileSidebar
@@ -331,6 +399,8 @@
             <div class="flex-1 min-h-0">
               <div
                 class="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-3"
+                x-ref="presetReaderContentScroll"
+                @scroll.passive="handleMobileContentScroll($event)"
               >
                 <template x-if="readerItems.length === 0">
                   <div
@@ -777,7 +847,8 @@
             x-show="showRightPanel || $store.global.deviceType !== 'mobile'"
             class="w-full lg:w-[340px] xl:w-[380px] flex-shrink-0 bg-[var(--bg-sub)] border-l border-[var(--border-light)] flex flex-col min-h-0"
             :class="{
-              'fixed right-0 top-0 bottom-0 z-40 max-w-[92vw] shadow-2xl': $store.global.deviceType === 'mobile',
+              'preset-reader-mobile-detail-panel': true,
+              'fixed right-0 bottom-0 z-40 max-w-[92vw] shadow-2xl': $store.global.deviceType === 'mobile',
               'hidden lg:flex': $store.global.deviceType !== 'mobile',
               'flex': $store.global.deviceType === 'mobile' && showRightPanel,
               'hidden': $store.global.deviceType === 'mobile' && !showRightPanel

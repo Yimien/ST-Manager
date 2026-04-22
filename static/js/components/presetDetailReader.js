@@ -76,6 +76,9 @@ export default function presetDetailReader() {
     uiFilter: "all",
     showRightPanel: true,
     showMobileSidebar: false,
+    presetMobileHeaderHidden: false,
+    presetLastScrollTop: 0,
+    showMobileMoreMenu: false,
     promptItemsCache: [],
     orderedPromptItemsCache: [],
     promptFilteredItemsCache: [],
@@ -87,6 +90,17 @@ export default function presetDetailReader() {
 
     init() {
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
+      this.$watch?.("$store.global.deviceType", (deviceType) => {
+        this.resetMobileHeaderState();
+        if (deviceType !== "mobile") {
+          this.showMobileSidebar = false;
+          this.showRightPanel = true;
+        } else {
+          this.showMobileSidebar = false;
+          this.showRightPanel = false;
+        }
+        this.updatePresetLayoutMetrics();
+      });
       window.addEventListener("open-preset-reader", (e) => {
         this.openPreset(e.detail || {});
       });
@@ -265,12 +279,136 @@ export default function presetDetailReader() {
       return UI_FILTERS;
     },
 
+    getMobileHeaderMetaLine() {
+      const kind = this.activePresetDetail?.preset_kind || "预设";
+      const source = this.getSourceLabel();
+      const family = this.readerView.family_label || "通用预设";
+      return source ? `${kind} · ${source} / ${family}` : `${kind} · ${family}`;
+    },
+
+    getMobileHeaderContextLabel() {
+      if (this.isPromptWorkspaceReader && this.activeWorkspace === "prompts") {
+        return "提示词列表";
+      }
+      return "内容流";
+    },
+
+    getMobileHeaderCountLabel() {
+      if (this.isPromptWorkspaceReader && this.activeWorkspace === "prompts") {
+        return `${this.promptFilteredItems.length} / ${this.orderedPromptItems.length}`;
+      }
+      if (this.isScalarWorkspaceReader) {
+        return `${this.readerStats.visible_count} / ${this.readerStats.total_count}`;
+      }
+      return `${this.filteredItems.length} / ${this.readerStats.total_count}`;
+    },
+
+    revealMobileHeader() {
+      const previousHidden = this.presetMobileHeaderHidden;
+      this.presetMobileHeaderHidden = false;
+      this.presetLastScrollTop = 0;
+      if (previousHidden) {
+        this.updatePresetLayoutMetrics();
+      }
+    },
+
+    resetMobileHeaderState() {
+      this.showMobileMoreMenu = false;
+      this.presetMobileHeaderHidden = false;
+      this.presetLastScrollTop = 0;
+    },
+
+    toggleMobileSidebar() {
+      this.revealMobileHeader();
+      this.showMobileMoreMenu = false;
+      this.showMobileSidebar = !this.showMobileSidebar;
+    },
+
+    toggleMobileRightPanel() {
+      this.revealMobileHeader();
+      this.showMobileMoreMenu = false;
+      this.showRightPanel = !this.showRightPanel;
+    },
+
+    toggleMobileMoreMenu() {
+      this.revealMobileHeader();
+      this.showMobileMoreMenu = !this.showMobileMoreMenu;
+    },
+
+    updatePresetLayoutMetrics() {
+      const applyMetrics = () => {
+        if (typeof document === "undefined") return;
+
+        const root = document.querySelector(".preset-reader-modal");
+        if (!root) return;
+
+        const header = root.querySelector(".preset-reader-mobile-header");
+        const headerHeight = header
+          ? Math.ceil(header.getBoundingClientRect().height)
+          : 0;
+        const effectiveHeaderHeight =
+          this.$store?.global?.deviceType === "mobile" &&
+          this.presetMobileHeaderHidden
+            ? 0
+            : headerHeight;
+        root.style.setProperty(
+          "--preset-reader-header-height",
+          `${effectiveHeaderHeight}px`,
+        );
+      };
+
+      if (typeof this.$nextTick === "function") {
+        this.$nextTick(() => {
+          applyMetrics();
+        });
+        return;
+      }
+
+      applyMetrics();
+    },
+
+    syncPresetMobileHeaderVisibility(container) {
+      if (
+        this.$store?.global?.deviceType !== "mobile" ||
+        typeof Element === "undefined" ||
+        !(container instanceof Element) ||
+        this.showMobileSidebar ||
+        this.showRightPanel ||
+        this.showMobileMoreMenu
+      ) {
+        return;
+      }
+
+      const previousHidden = this.presetMobileHeaderHidden;
+      const nextTop = Math.max(0, Number(container.scrollTop || 0));
+      const delta = nextTop - Number(this.presetLastScrollTop || 0);
+
+      if (nextTop <= 24 || delta < -14) {
+        this.presetMobileHeaderHidden = false;
+      } else if (delta > 18 && nextTop > 72) {
+        this.presetMobileHeaderHidden = true;
+      }
+
+      this.presetLastScrollTop = nextTop;
+      if (previousHidden !== this.presetMobileHeaderHidden) {
+        this.updatePresetLayoutMetrics();
+      }
+    },
+
+    handleMobileContentScroll(event) {
+      const container = event?.target;
+      if (typeof Element !== "undefined" && container instanceof Element) {
+        this.syncPresetMobileHeaderVisibility(container);
+      }
+    },
+
     async openPreset(item) {
       if (!item?.id) return;
       this.isLoading = true;
       this.showModal = true;
       this.showMobileSidebar = false;
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
+      this.resetMobileHeaderState();
       this.searchTerm = "";
       this.uiFilter = "all";
       this.activeWorkspace = "all";
@@ -278,6 +416,7 @@ export default function presetDetailReader() {
       this.activePromptId = "";
       this.activeItemId = "";
       this.refreshReaderCollections();
+      this.updatePresetLayoutMetrics();
 
       try {
         const res = await getPresetDetail(item.id);
@@ -297,6 +436,7 @@ export default function presetDetailReader() {
           },
         });
         this.initializeReaderState();
+        this.updatePresetLayoutMetrics();
       } catch (error) {
         console.error("Failed to load preset detail:", error);
         this.$store.global.showToast("获取详情失败", "error");
@@ -347,7 +487,9 @@ export default function presetDetailReader() {
       this.uiFilter = "all";
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
       this.showMobileSidebar = false;
+      this.resetMobileHeaderState();
       this.refreshReaderCollections();
+      this.updatePresetLayoutMetrics();
       clearActiveRuntimeContext("preset");
     },
 
@@ -355,6 +497,8 @@ export default function presetDetailReader() {
       this.activeGroup = groupId || "all";
       this.activeItemId = "";
       this.refreshReaderCollections();
+      this.resetMobileHeaderState();
+      this.updatePresetLayoutMetrics();
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
@@ -376,6 +520,8 @@ export default function presetDetailReader() {
       }
       this.refreshReaderCollections();
       this.showRightPanel = true;
+      this.resetMobileHeaderState();
+      this.updatePresetLayoutMetrics();
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
@@ -385,6 +531,8 @@ export default function presetDetailReader() {
       this.activeItemId = itemId || "";
       this.syncActiveReaderSelections();
       this.showRightPanel = true;
+      this.resetMobileHeaderState();
+      this.updatePresetLayoutMetrics();
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
@@ -395,6 +543,8 @@ export default function presetDetailReader() {
       this.activePromptId = itemId || "";
       this.refreshReaderCollections();
       this.showRightPanel = true;
+      this.resetMobileHeaderState();
+      this.updatePresetLayoutMetrics();
       if (this.$store?.global?.deviceType === "mobile") {
         this.showMobileSidebar = false;
       }
@@ -536,9 +686,9 @@ export default function presetDetailReader() {
     },
 
     getSourceLabel() {
-      return this.activePresetDetail?.type === "global"
-        ? "全局预设"
-        : "资源预设";
+      const source =
+        this.activePresetDetail?.source || this.activePresetDetail?.type;
+      return source === "global" ? "全局" : "资源";
     },
 
     getItemGroupLabel(item) {
