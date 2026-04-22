@@ -540,6 +540,412 @@ def test_preset_detail_reader_runtime_clears_mobile_header_state_on_close():
     )
 
 
+def test_preset_detail_reader_runtime_advanced_extensions_apply_updates_detail_state_without_persisting():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        const saveCalls = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.savePresetExtensions = async (extensions) => {
+          saveCalls.push(JSON.parse(JSON.stringify(extensions)));
+          return true;
+        };
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'alpha' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        const payload = events[0].detail;
+
+        if (payload.editorCommitMode !== 'buffered') {
+          throw new Error(`expected open payload to use buffered mode, got ${payload.editorCommitMode}`);
+        }
+        if (payload.showPersistButton !== true) {
+          throw new Error(`expected open payload to show persist button, got ${payload.showPersistButton}`);
+        }
+        if (payload.extensions === reader.activePresetDetail.extensions) {
+          throw new Error('expected open payload extensions to be detached from activePresetDetail');
+        }
+        if (payload.extensions.regex_scripts === reader.activePresetDetail.extensions.regex_scripts) {
+          throw new Error('expected regex scripts payload to be detached from activePresetDetail');
+        }
+        if (payload.extensions.tavern_helper === reader.activePresetDetail.extensions.tavern_helper) {
+          throw new Error('expected tavern helper payload to be detached from activePresetDetail');
+        }
+
+        payload.extensions.regex_scripts.push({ script: 'beta' });
+
+        await listeners['advanced-editor-apply'][0]();
+
+        if (saveCalls.length !== 0) {
+          throw new Error(`expected apply to avoid persistence, got ${saveCalls.length}`);
+        }
+        if (JSON.stringify(reader.activePresetDetail.extensions.regex_scripts) !== JSON.stringify([{ script: 'alpha' }, { script: 'beta' }])) {
+          throw new Error(`expected apply to update activePresetDetail extensions, got ${JSON.stringify(reader.activePresetDetail.extensions.regex_scripts)}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_persist_calls_save_with_updated_extensions():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        const saveCalls = [];
+        let closeEventCount = 0;
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            if (event.type === 'advanced-editor-close') {
+              closeEventCount += 1;
+            }
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.savePresetExtensions = async (extensions) => {
+          saveCalls.push(JSON.parse(JSON.stringify(extensions)));
+          return true;
+        };
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        events[0].detail.extensions.regex_scripts.push({ script: 'persisted' });
+
+        await listeners['advanced-editor-persist'][0]();
+
+        if (saveCalls.length !== 1) {
+          throw new Error(`expected persist to call savePresetExtensions once, got ${saveCalls.length}`);
+        }
+        if (JSON.stringify(saveCalls[0].regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'persisted' }])) {
+          throw new Error(`expected persist payload to include updated extensions, got ${JSON.stringify(saveCalls[0])}`);
+        }
+        if (JSON.stringify(reader.activePresetDetail.extensions.regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'persisted' }])) {
+          throw new Error(`expected persist to update activePresetDetail extensions, got ${JSON.stringify(reader.activePresetDetail.extensions.regex_scripts)}`);
+        }
+        if (closeEventCount !== 1) {
+          throw new Error(`expected persist success to close advanced editor once, got ${closeEventCount}`);
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_close_modal_clears_pending_advanced_editor_handlers():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { deviceType: 'desktop', showToast() {} } };
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        reader.closeModal();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected closeModal to clear apply listeners, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected closeModal to clear persist listeners, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (reader.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected closeModal to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (reader.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected closeModal to clear pendingAdvancedEditorPersistHandler reference');
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_reopen_replaces_stale_apply_and_persist_listeners():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        const firstApplyHandler = listeners['advanced-editor-apply'][0];
+        const firstPersistHandler = listeners['advanced-editor-persist'][0];
+
+        reader.openAdvancedExtensions();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 1) {
+          throw new Error(`expected reopen to keep one apply listener, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 1) {
+          throw new Error(`expected reopen to keep one persist listener, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (listeners['advanced-editor-apply'][0] === firstApplyHandler) {
+          throw new Error('expected reopen to replace stale apply listener');
+        }
+        if (listeners['advanced-editor-persist'][0] === firstPersistHandler) {
+          throw new Error('expected reopen to replace stale persist listener');
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_apply_cleans_both_session_listeners():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        await listeners['advanced-editor-apply'][0]();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected apply to clear apply listeners, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected apply to clear persist listeners, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (reader.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected apply to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (reader.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected apply to clear pendingAdvancedEditorPersistHandler reference');
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_persist_cleans_both_session_listeners():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.savePresetExtensions = async () => true;
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        await listeners['advanced-editor-persist'][0]();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected persist to clear apply listeners, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected persist to clear persist listeners, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (reader.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected persist to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (reader.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected persist to clear pendingAdvancedEditorPersistHandler reference');
+        }
+        """
+    )
+
+
+def test_preset_detail_reader_runtime_advanced_extensions_persist_failure_keeps_editor_open():
+    run_preset_detail_reader_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        let closeEventCount = 0;
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+          dispatchEvent(event) {
+            events.push(event);
+            if (event.type === 'advanced-editor-close') {
+              closeEventCount += 1;
+            }
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(name, options = {}) {
+            this.type = name;
+            this.detail = options.detail;
+          }
+        };
+
+        reader.$store = { global: { showToast() {} } };
+        reader.savePresetExtensions = async () => false;
+        reader.activePresetDetail = {
+          id: 'preset-1',
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+
+        reader.openAdvancedExtensions();
+        events[0].detail.extensions.regex_scripts.push({ script: 'failed-save' });
+
+        await listeners['advanced-editor-persist'][0]();
+
+        if (JSON.stringify(reader.activePresetDetail.extensions.regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'failed-save' }])) {
+          throw new Error(`expected persist failure to keep in-memory update, got ${JSON.stringify(reader.activePresetDetail.extensions.regex_scripts)}`);
+        }
+        if (closeEventCount !== 0) {
+          throw new Error(`expected persist failure to avoid closing advanced editor, got ${closeEventCount}`);
+        }
+        """
+    )
+
+
 def test_preset_detail_reader_runtime_mobile_prompt_selection_enters_detail_view_and_returns_to_list():
     run_preset_detail_reader_runtime_check(
         """

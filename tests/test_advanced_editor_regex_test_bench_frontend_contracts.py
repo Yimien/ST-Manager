@@ -235,3 +235,170 @@ def test_advanced_editor_run_regex_test_formats_regex_errors():
     )
 
     run_advanced_editor_runtime_check(script_body)
+
+
+def test_advanced_editor_runtime_tracks_buffered_mode_and_dispatches_apply_and_persist_events():
+    script_body = textwrap.dedent(
+        '''
+        const events = [];
+        const listeners = {};
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = handler;
+          },
+          removeEventListener() {},
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+
+        component.$store = { global: { deviceType: 'desktop', showToast() {} } };
+        component.$nextTick = (fn) => { if (typeof fn === 'function') fn(); };
+        component.$watch = () => {};
+        component.mountScriptRuntimeHost = () => {};
+        component.syncRuntimeContext = () => {};
+        component.getTavernScripts = () => [];
+        component._normalizeScript = () => {};
+        component.init();
+
+        listeners['open-advanced-editor']({
+          detail: {
+            extensions: {
+              regex_scripts: [{ scriptName: 'alpha' }],
+              tavern_helper: { scripts: [] },
+            },
+            editorCommitMode: 'buffered',
+            showPersistButton: true,
+          },
+        });
+
+        if (component.isFileMode !== false) {
+          throw new Error('expected buffered editor open to stay out of file mode');
+        }
+        if (component.showPersistButton !== true) {
+          throw new Error(`expected buffered editor to expose persist button, got ${component.showPersistButton}`);
+        }
+
+        component.applyChangesAndClose();
+        if (events[0]?.type !== 'advanced-editor-apply') {
+          throw new Error(`expected apply event, got ${events[0]?.type}`);
+        }
+        if (component.showAdvancedModal !== false) {
+          throw new Error('expected apply to close advanced modal');
+        }
+
+        component.showAdvancedModal = true;
+        component.persistChanges();
+        if (events[1]?.type !== 'advanced-editor-persist') {
+          throw new Error(`expected persist event, got ${events[1]?.type}`);
+        }
+        if (component.showAdvancedModal !== true) {
+          throw new Error('expected persist to keep advanced modal open until save succeeds');
+        }
+
+        listeners['advanced-editor-close']();
+        if (component.showAdvancedModal !== false) {
+          throw new Error('expected advanced-editor-close acknowledgement to close modal');
+        }
+        '''
+    )
+
+    run_advanced_editor_runtime_check(script_body)
+
+
+def test_advanced_editor_runtime_blocks_unmanaged_close_paths_while_buffered_persist_is_pending():
+    script_body = textwrap.dedent(
+        '''
+        const listeners = {};
+        const events = [];
+        globalThis.window = {
+          addEventListener(type, handler) {
+            listeners[type] = handler;
+          },
+          removeEventListener() {},
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+
+        component.$store = { global: { deviceType: 'desktop', showToast() {} } };
+        component.$nextTick = (fn) => { if (typeof fn === 'function') fn(); };
+        component.$watch = () => {};
+        component.mountScriptRuntimeHost = () => {};
+        component.syncRuntimeContext = () => {};
+        component.getTavernScripts = () => [];
+        component._normalizeScript = () => {};
+        component.init();
+
+        listeners['open-advanced-editor']({
+          detail: {
+            extensions: {
+              regex_scripts: [{ scriptName: 'alpha' }],
+              tavern_helper: { scripts: [] },
+            },
+            editorCommitMode: 'buffered',
+            showPersistButton: true,
+          },
+        });
+
+        component.requestClose();
+        if (component.showAdvancedModal !== false) {
+          throw new Error('expected buffered mode requestClose to close normally before persist starts');
+        }
+
+        listeners['open-advanced-editor']({
+          detail: {
+            extensions: {
+              regex_scripts: [{ scriptName: 'alpha' }],
+              tavern_helper: { scripts: [] },
+            },
+            editorCommitMode: 'buffered',
+            showPersistButton: true,
+          },
+        });
+
+        component.persistChanges();
+        if (events[0]?.type !== 'advanced-editor-persist') {
+          throw new Error(`expected persist event before close gating, got ${events[0]?.type}`);
+        }
+
+        component.requestClose();
+        if (component.showAdvancedModal !== true) {
+          throw new Error('expected buffered mode requestClose to stay blocked while persist is pending');
+        }
+
+        listeners['advanced-editor-close']();
+        if (component.showAdvancedModal !== false) {
+          throw new Error('expected advanced-editor-close acknowledgement to bypass buffered close gate');
+        }
+
+        listeners['open-script-file-editor']({
+          detail: {
+            fileData: { scriptName: 'file-alpha' },
+            filePath: 'extensions/alpha.json',
+            type: 'regex',
+          },
+        });
+
+        component.requestClose();
+        if (component.showAdvancedModal !== false) {
+          throw new Error('expected file mode requestClose to remain unmanaged and close immediately');
+        }
+        '''
+    )
+
+    run_advanced_editor_runtime_check(script_body)

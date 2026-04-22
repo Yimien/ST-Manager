@@ -22,7 +22,10 @@ def test_dom_utils_exposes_pretext_backed_intrinsic_size_helpers():
 
     assert 'export function applyPretextIntrinsicSize(' in source
     assert 'export function estimatePretextBlockHeight(' in source
-    assert "import('../vendor/pretext/layout.js')" in source
+    assert (
+        "import('../vendor/pretext/layout.js')" in source
+        or 'import("../vendor/pretext/layout.js")' in source
+    )
     assert 'module.prepare(' in source
     assert 'module.layout(' in source
     assert 'containIntrinsicSize' in source
@@ -41,7 +44,10 @@ def test_chat_reader_skips_pretext_for_page_mode_full_render_hot_path():
     source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'shouldApplyReaderPretextIntrinsicSize(variant, message) {' in source
-    assert "variant !== 'simple'" in source, 'expected simple-only pretext gating to remain in the reader path'
+    assert (
+        "variant !== 'simple'" in source
+        or 'variant !== "simple"' in source
+    ), 'expected simple-only pretext gating to remain in the reader path'
     assert 'this.isReaderPageMode' in source, 'expected page-mode bypass to remain in the reader path'
 
 
@@ -112,6 +118,20 @@ def test_preview_entrypoints_continue_using_shared_dom_renderers_with_unified_pr
     assert "renderMode: 'markdown'" in detail_preview_block
     assert 'applyDisplayRules: true' in detail_preview_block
     assert 'config: buildPreviewRegexConfig()' in detail_preview_block
+
+
+def test_advanced_editor_footer_distinguishes_file_mode_from_buffered_apply_and_persist_actions():
+    advanced_editor_template = read_project_file('templates/modals/advanced_editor.html')
+
+    assert 'x-show="isFileMode" @click="saveFileChanges()"' in advanced_editor_template
+    assert 'x-show="!isFileMode && showPersistButton" @click="persistChanges()"' in advanced_editor_template
+    assert 'x-show="!isFileMode" @click="applyChangesAndClose()"' in advanced_editor_template
+    assert '保存文件' in advanced_editor_template
+    assert '>\n                保存\n            </button>' in advanced_editor_template
+    assert '>\n                完成\n            </button>' in advanced_editor_template
+    assert '完成：仅返回当前编辑界面' in advanced_editor_template
+    assert '保存：直接写入原文件' in advanced_editor_template
+    assert 'advanced-editor-save' not in advanced_editor_template
 
 
 def test_chat_reader_css_enables_content_visibility_and_intrinsic_size_placeholder_strategy():

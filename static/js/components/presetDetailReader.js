@@ -88,6 +88,8 @@ export default function presetDetailReader() {
     activeItemCache: null,
     activeContextItemCache: null,
     readerStatsCache: { total_count: 0, visible_count: 0 },
+    pendingAdvancedEditorApplyHandler: null,
+    pendingAdvancedEditorPersistHandler: null,
 
     init() {
       this.showRightPanel = this.$store?.global?.deviceType !== "mobile";
@@ -501,6 +503,7 @@ export default function presetDetailReader() {
     },
 
     closeModal() {
+      this.cleanupAdvancedEditorHandlers();
       this.showModal = false;
       this.activePresetDetail = null;
       this.activeWorkspace = "all";
@@ -516,6 +519,23 @@ export default function presetDetailReader() {
       this.refreshReaderCollections();
       this.updatePresetLayoutMetrics();
       clearActiveRuntimeContext("preset");
+    },
+
+    cleanupAdvancedEditorHandlers() {
+      if (this.pendingAdvancedEditorApplyHandler) {
+        window.removeEventListener(
+          "advanced-editor-apply",
+          this.pendingAdvancedEditorApplyHandler,
+        );
+        this.pendingAdvancedEditorApplyHandler = null;
+      }
+      if (this.pendingAdvancedEditorPersistHandler) {
+        window.removeEventListener(
+          "advanced-editor-persist",
+          this.pendingAdvancedEditorPersistHandler,
+        );
+        this.pendingAdvancedEditorPersistHandler = null;
+      }
     },
 
     selectGroup(groupId) {
@@ -957,14 +977,20 @@ export default function presetDetailReader() {
     openAdvancedExtensions() {
       if (!this.activePresetDetail) return;
 
+      this.cleanupAdvancedEditorHandlers();
+
       const extensions = this.activePresetDetail.extensions || {};
       const editingData = {
         extensions: {
           regex_scripts: Array.isArray(extensions.regex_scripts)
-            ? extensions.regex_scripts
+            ? JSON.parse(JSON.stringify(extensions.regex_scripts))
             : [],
-          tavern_helper: extensions.tavern_helper || { scripts: [] },
+          tavern_helper: JSON.parse(
+            JSON.stringify(extensions.tavern_helper || { scripts: [] }),
+          ),
         },
+        editorCommitMode: "buffered",
+        showPersistButton: true,
       };
 
       window.dispatchEvent(
@@ -973,12 +999,30 @@ export default function presetDetailReader() {
         }),
       );
 
-      const saveHandler = async (e) => {
-        window.removeEventListener("advanced-editor-save", saveHandler);
-        const nextExtensions = e?.detail?.extensions || editingData.extensions;
-        await this.savePresetExtensions(nextExtensions);
+      const applyHandler = async () => {
+        this.cleanupAdvancedEditorHandlers();
+        this.activePresetDetail.extensions = JSON.parse(
+          JSON.stringify(editingData.extensions),
+        );
       };
-      window.addEventListener("advanced-editor-save", saveHandler);
+
+      const persistHandler = async () => {
+        this.cleanupAdvancedEditorHandlers();
+        this.activePresetDetail.extensions = JSON.parse(
+          JSON.stringify(editingData.extensions),
+        );
+        const didSave = await this.savePresetExtensions(
+          this.activePresetDetail.extensions,
+        );
+        if (didSave) {
+          window.dispatchEvent(new CustomEvent("advanced-editor-close"));
+        }
+      };
+
+      this.pendingAdvancedEditorApplyHandler = applyHandler;
+      this.pendingAdvancedEditorPersistHandler = persistHandler;
+      window.addEventListener("advanced-editor-apply", applyHandler);
+      window.addEventListener("advanced-editor-persist", persistHandler);
     },
 
     async savePresetExtensions(extensions) {
@@ -990,13 +1034,15 @@ export default function presetDetailReader() {
         });
         if (!res.success) {
           this.$store.global.showToast(res.msg || "保存失败", "error");
-          return;
+          return false;
         }
         this.$store.global.showToast("扩展已保存");
         await this.openPreset({ id: this.activePresetDetail.id });
+        return true;
       } catch (error) {
         console.error("Failed to save preset extensions:", error);
         this.$store.global.showToast("保存失败", "error");
+        return false;
       }
     },
 

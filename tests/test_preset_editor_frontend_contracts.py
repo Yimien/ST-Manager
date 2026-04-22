@@ -1214,7 +1214,7 @@ def test_preset_editor_runtime_large_editor_external_write_marks_dirty_and_refre
     )
 
 
-def test_preset_editor_runtime_advanced_extensions_external_write_marks_dirty_after_save():
+def test_preset_editor_runtime_advanced_extensions_apply_and_persist_follow_buffered_dual_save_flow():
     run_preset_editor_runtime_check(
         """
         const listeners = {};
@@ -1263,16 +1263,42 @@ def test_preset_editor_runtime_advanced_extensions_external_write_marks_dirty_af
           throw new Error(`expected live extensions state to stay unchanged before save, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
         }
 
-        if (!listeners['advanced-editor-save']) {
-          throw new Error('expected advanced editor save listener to be registered');
+        if (!listeners['advanced-editor-apply']) {
+          throw new Error('expected advanced editor apply listener to be registered');
         }
-        await listeners['advanced-editor-save']();
+        if (!listeners['advanced-editor-persist']) {
+          throw new Error('expected advanced editor persist listener to be registered');
+        }
+
+        let saveExtensionsCalls = 0;
+        editor.saveExtensions = async () => {
+          saveExtensionsCalls += 1;
+        };
+
+        await listeners['advanced-editor-apply']();
 
         if (!editor.isDirty) {
-          throw new Error('expected advanced editor save to mark editor dirty');
+          throw new Error('expected advanced editor apply to mark editor dirty');
         }
         if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'alpha' }, { script: 'beta' }])) {
-          throw new Error(`expected advanced editor save to apply detached extensions payload, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+          throw new Error(`expected advanced editor apply to update detached extensions payload, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+        }
+        if (saveExtensionsCalls !== 0) {
+          throw new Error(`expected advanced editor apply to avoid saving immediately, got ${saveExtensionsCalls}`);
+        }
+
+        editor.openAdvancedExtensions();
+        events[events.length - 1].detail.extensions.regex_scripts.push({ script: 'gamma' });
+        await listeners['advanced-editor-persist']();
+
+        if (saveExtensionsCalls !== 1) {
+          throw new Error(`expected advanced editor persist to save once, got ${saveExtensionsCalls}`);
+        }
+        if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'alpha' }, { script: 'beta' }, { script: 'gamma' }])) {
+          throw new Error(`expected advanced editor persist to update detached extensions payload, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
+        }
+        if (events[events.length - 1]?.type !== 'advanced-editor-close') {
+          throw new Error(`expected advanced editor persist to request close after save, got ${events[events.length - 1]?.type}`);
         }
         """
     )
@@ -1331,7 +1357,7 @@ def test_preset_editor_runtime_reopening_large_editor_replaces_stale_save_listen
     )
 
 
-def test_preset_editor_runtime_reopening_advanced_editor_replaces_stale_save_listener():
+def test_preset_editor_runtime_reopening_advanced_editor_replaces_stale_apply_and_persist_listeners():
     run_preset_editor_runtime_check(
         """
         const listeners = {};
@@ -1374,10 +1400,13 @@ def test_preset_editor_runtime_reopening_advanced_editor_replaces_stale_save_lis
         const secondPayload = events[1].detail;
         secondPayload.extensions.regex_scripts.push({ script: 'fresh' });
 
-        if ((listeners['advanced-editor-save'] || []).length !== 1) {
-          throw new Error(`expected stale advanced editor listener cleanup, got ${(listeners['advanced-editor-save'] || []).length}`);
+        if ((listeners['advanced-editor-apply'] || []).length !== 1) {
+          throw new Error(`expected stale advanced editor apply listener cleanup, got ${(listeners['advanced-editor-apply'] || []).length}`);
         }
-        await listeners['advanced-editor-save'][0]();
+        if ((listeners['advanced-editor-persist'] || []).length !== 1) {
+          throw new Error(`expected stale advanced editor persist listener cleanup, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        await listeners['advanced-editor-apply'][0]();
 
         if (JSON.stringify(editor.editingData.extensions.regex_scripts) !== JSON.stringify([{ script: 'base' }, { script: 'fresh' }])) {
           throw new Error(`expected reopened advanced editor to ignore stale snapshot, got ${JSON.stringify(editor.editingData.extensions.regex_scripts)}`);
@@ -1438,7 +1467,7 @@ def test_preset_editor_runtime_close_editor_clears_pending_large_editor_save_lis
     )
 
 
-def test_preset_editor_runtime_close_editor_clears_pending_advanced_editor_save_listener():
+def test_preset_editor_runtime_close_editor_clears_pending_advanced_editor_apply_and_persist_listeners():
     run_preset_editor_runtime_check(
         """
         const listeners = {};
@@ -1474,17 +1503,131 @@ def test_preset_editor_runtime_close_editor_clears_pending_advanced_editor_save_
         editor.markClean();
 
         editor.openAdvancedExtensions();
-        if ((listeners['advanced-editor-save'] || []).length !== 1) {
-          throw new Error(`expected pending advanced editor save listener, got ${(listeners['advanced-editor-save'] || []).length}`);
+        if ((listeners['advanced-editor-apply'] || []).length !== 1) {
+          throw new Error(`expected pending advanced editor apply listener, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 1) {
+          throw new Error(`expected pending advanced editor persist listener, got ${(listeners['advanced-editor-persist'] || []).length}`);
         }
 
         editor.closeEditor();
 
-        if ((listeners['advanced-editor-save'] || []).length !== 0) {
-          throw new Error(`expected closeEditor to remove pending advanced editor save listener, got ${(listeners['advanced-editor-save'] || []).length}`);
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected closeEditor to remove pending advanced editor apply listener, got ${(listeners['advanced-editor-apply'] || []).length}`);
         }
-        if (editor.pendingAdvancedEditorSaveHandler !== null) {
-          throw new Error('expected closeEditor to clear pendingAdvancedEditorSaveHandler reference');
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected closeEditor to remove pending advanced editor persist listener, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (editor.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected closeEditor to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (editor.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected closeEditor to clear pendingAdvancedEditorPersistHandler reference');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_advanced_editor_apply_cleans_both_session_listeners():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+        };
+        editor.$store = { global: { showToast() {} } };
+        editor.editingData = {
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+        editor.editingPresetFile = { id: 'preset-1' };
+
+        editor.openAdvancedExtensions();
+        await listeners['advanced-editor-apply'][0]();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected apply to clear apply listeners, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected apply to clear persist listeners, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (editor.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected apply to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (editor.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected apply to clear pendingAdvancedEditorPersistHandler reference');
+        }
+        """
+    )
+
+
+def test_preset_editor_runtime_advanced_editor_persist_cleans_both_session_listeners():
+    run_preset_editor_runtime_check(
+        """
+        const listeners = {};
+        const events = [];
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, init = {}) {
+            this.type = type;
+            this.detail = init.detail;
+          }
+        };
+        globalThis.window = {
+          dispatchEvent(event) {
+            events.push(event);
+            return true;
+          },
+          addEventListener(type, handler) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(handler);
+          },
+          removeEventListener(type, handler) {
+            listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+          },
+        };
+        editor.$store = { global: { showToast() {} } };
+        editor.editingData = {
+          extensions: {
+            regex_scripts: [{ script: 'base' }],
+            tavern_helper: { scripts: [] },
+          },
+        };
+        editor.editingPresetFile = { id: 'preset-1' };
+        editor.saveExtensions = async () => true;
+
+        editor.openAdvancedExtensions();
+        await listeners['advanced-editor-persist'][0]();
+
+        if ((listeners['advanced-editor-apply'] || []).length !== 0) {
+          throw new Error(`expected persist to clear apply listeners, got ${(listeners['advanced-editor-apply'] || []).length}`);
+        }
+        if ((listeners['advanced-editor-persist'] || []).length !== 0) {
+          throw new Error(`expected persist to clear persist listeners, got ${(listeners['advanced-editor-persist'] || []).length}`);
+        }
+        if (editor.pendingAdvancedEditorApplyHandler !== null) {
+          throw new Error('expected persist to clear pendingAdvancedEditorApplyHandler reference');
+        }
+        if (editor.pendingAdvancedEditorPersistHandler !== null) {
+          throw new Error('expected persist to clear pendingAdvancedEditorPersistHandler reference');
         }
         """
     )

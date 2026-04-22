@@ -154,7 +154,8 @@ export default function presetEditor() {
     cacheActiveItemId: "",
     cacheActiveGenericItemId: "",
     pendingLargeEditorSaveHandler: null,
-    pendingAdvancedEditorSaveHandler: null,
+    pendingAdvancedEditorApplyHandler: null,
+    pendingAdvancedEditorPersistHandler: null,
     draftState: { savedAt: "", restored: false },
     sectionLabels: SECTION_LABELS,
     promptRoleOptions: PROMPT_ROLE_OPTIONS,
@@ -1855,13 +1856,7 @@ export default function presetEditor() {
         );
         this.pendingLargeEditorSaveHandler = null;
       }
-      if (this.pendingAdvancedEditorSaveHandler) {
-        window.removeEventListener(
-          "advanced-editor-save",
-          this.pendingAdvancedEditorSaveHandler,
-        );
-        this.pendingAdvancedEditorSaveHandler = null;
-      }
+      this.cleanupAdvancedEditorListeners();
       this.activeWorkspace = "all";
       this.activeGroup = "all";
       this.activePromptId = "";
@@ -2036,13 +2031,7 @@ export default function presetEditor() {
 
     openAdvancedExtensions() {
       if (!this.editingData) return;
-      if (this.pendingAdvancedEditorSaveHandler) {
-        window.removeEventListener(
-          "advanced-editor-save",
-          this.pendingAdvancedEditorSaveHandler,
-        );
-        this.pendingAdvancedEditorSaveHandler = null;
-      }
+      this.cleanupAdvancedEditorListeners();
       const editingData = {
         extensions: deepClone(
           this.editingData.extensions || {
@@ -2050,15 +2039,16 @@ export default function presetEditor() {
             tavern_helper: { scripts: [] },
           },
         ),
+        editorCommitMode: "buffered",
+        showPersistButton: true,
       };
       window.dispatchEvent(
         new CustomEvent("open-advanced-editor", {
           detail: editingData,
         }),
       );
-      const saveHandler = async () => {
-        window.removeEventListener("advanced-editor-save", saveHandler);
-        this.pendingAdvancedEditorSaveHandler = null;
+      const applyHandler = async () => {
+        this.cleanupAdvancedEditorListeners();
         this.setByPath(
           "extensions",
           deepClone(
@@ -2068,10 +2058,45 @@ export default function presetEditor() {
             },
           ),
         );
-        await this.saveExtensions();
+        this.markDirty("extensions");
       };
-      this.pendingAdvancedEditorSaveHandler = saveHandler;
-      window.addEventListener("advanced-editor-save", saveHandler);
+      const persistHandler = async () => {
+        this.cleanupAdvancedEditorListeners();
+        this.setByPath(
+          "extensions",
+          deepClone(
+            editingData.extensions || {
+              regex_scripts: [],
+              tavern_helper: { scripts: [] },
+            },
+          ),
+        );
+        this.markDirty("extensions");
+        const saveResult = await this.saveExtensions();
+        if (saveResult === false) return;
+        window.dispatchEvent(new CustomEvent("advanced-editor-close"));
+      };
+      this.pendingAdvancedEditorApplyHandler = applyHandler;
+      this.pendingAdvancedEditorPersistHandler = persistHandler;
+      window.addEventListener("advanced-editor-apply", applyHandler);
+      window.addEventListener("advanced-editor-persist", persistHandler);
+    },
+
+    cleanupAdvancedEditorListeners() {
+      if (this.pendingAdvancedEditorApplyHandler) {
+        window.removeEventListener(
+          "advanced-editor-apply",
+          this.pendingAdvancedEditorApplyHandler,
+        );
+        this.pendingAdvancedEditorApplyHandler = null;
+      }
+      if (this.pendingAdvancedEditorPersistHandler) {
+        window.removeEventListener(
+          "advanced-editor-persist",
+          this.pendingAdvancedEditorPersistHandler,
+        );
+        this.pendingAdvancedEditorPersistHandler = null;
+      }
     },
 
     async saveExtensions() {
@@ -2083,13 +2108,15 @@ export default function presetEditor() {
         });
         if (!res.success) {
           this.$store.global.showToast(res.msg || "保存扩展失败", "error");
-          return;
+          return false;
         }
         this.$store.global.showToast("扩展已保存");
         await this.reloadFromDisk();
+        return true;
       } catch (error) {
         console.error(error);
         this.$store.global.showToast("保存扩展失败", "error");
+        return false;
       }
     },
 

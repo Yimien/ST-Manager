@@ -67,6 +67,9 @@ export default function advancedEditor() {
     isFileMode: false,
     currentFilePath: null,
     fileType: null, // 'regex' | 'script'
+    editorCommitMode: "apply-only",
+    showPersistButton: false,
+    isPersistPending: false,
 
     updateShadowContent,
     renderUnifiedPreviewHost:
@@ -85,10 +88,17 @@ export default function advancedEditor() {
       // 监听打开事件
       // detailModal 或者 HTML 中的按钮需要触发此事件，并传递 editingData 的引用
       window.addEventListener("open-advanced-editor", (e) => {
+        const detail = e.detail || {};
         this.activeRegexIndex = -1;
         this.activeScriptIndex = -1;
+        this.activeQrIndex = -1;
         this.isFileMode = false;
-        this.editingData = e.detail; // 接收引用，实现响应式同步
+        this.currentFilePath = null;
+        this.fileType = null;
+        this.editorCommitMode = detail.editorCommitMode || "apply-only";
+        this.showPersistButton = detail.showPersistButton === true;
+        this.isPersistPending = false;
+        this.editingData = detail; // 接收引用，实现响应式同步
         this.showAdvancedModal = true;
         this.activeTab = "regex";
         this.activeRegexIndex = -1;
@@ -119,6 +129,9 @@ export default function advancedEditor() {
         this.activeScriptIndex = -1;
         this.activeQrIndex = -1;
         this.isFileMode = true;
+        this.editorCommitMode = "file";
+        this.showPersistButton = false;
+        this.isPersistPending = false;
         this.currentFilePath = filePath;
         this.fileType = type; // 'regex' or 'script'
         // 立即清洗数据，防止 Alpine 渲染报错
@@ -159,6 +172,15 @@ export default function advancedEditor() {
           this.syncRuntimeContext();
         });
       });
+
+      this._closeAdvancedEditorHandler = () => {
+        this.isPersistPending = false;
+        this.showAdvancedModal = false;
+      };
+      window.addEventListener(
+        "advanced-editor-close",
+        this._closeAdvancedEditorHandler,
+      );
 
       this.$watch("activeScriptIndex", (idx) => {
         if (idx > -1) {
@@ -849,6 +871,37 @@ export default function advancedEditor() {
       }
     },
 
+    applyChangesAndClose() {
+      if (this.isFileMode) return;
+      this.isPersistPending = false;
+      window.dispatchEvent(
+        new CustomEvent("advanced-editor-apply", { detail: this.editingData }),
+      );
+      this.showAdvancedModal = false;
+    },
+
+    persistChanges() {
+      if (this.isFileMode || !this.showPersistButton) return;
+      this.isPersistPending = true;
+      window.dispatchEvent(
+        new CustomEvent("advanced-editor-persist", {
+          detail: this.editingData,
+        }),
+      );
+    },
+
+    requestClose() {
+      if (
+        !this.isFileMode &&
+        this.editorCommitMode === "buffered" &&
+        this.showPersistButton &&
+        this.isPersistPending
+      ) {
+        return;
+      }
+      this.showAdvancedModal = false;
+    },
+
     destroy() {
       this.stopScriptRuntime();
       if (this.scriptRuntime) {
@@ -858,6 +911,13 @@ export default function advancedEditor() {
       if (this._runtimeManagerUnsubscribe) {
         this._runtimeManagerUnsubscribe();
         this._runtimeManagerUnsubscribe = null;
+      }
+      if (this._closeAdvancedEditorHandler) {
+        window.removeEventListener(
+          "advanced-editor-close",
+          this._closeAdvancedEditorHandler,
+        );
+        this._closeAdvancedEditorHandler = null;
       }
     },
   };
