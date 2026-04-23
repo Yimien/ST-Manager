@@ -69,7 +69,7 @@ from core import config as config_module
 from core.data import db_session
 
 
-def test_init_database_creates_index_tables(monkeypatch, tmp_path):
+def test_init_database_does_not_create_legacy_index_tables(monkeypatch, tmp_path):
     db_path = tmp_path / 'cards_metadata.db'
     cards_dir = tmp_path / 'cards'
     cards_dir.mkdir()
@@ -86,17 +86,16 @@ def test_init_database_creates_index_tables(monkeypatch, tmp_path):
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
 
-    assert 'index_meta' in names
-    assert 'index_entities' in names
-    assert 'index_entity_tags' in names
-    assert 'index_search_fast' in names
-    assert 'index_search_full' in names
-    assert 'index_category_stats' in names
-    assert 'index_facet_stats' in names
-    assert 'index_jobs' in names
+    assert 'index_meta' not in names
+    assert 'index_entities' not in names
+    assert 'index_entity_tags' not in names
+    assert 'index_search_fast' not in names
+    assert 'index_search_full' not in names
+    assert 'index_category_stats' not in names
+    assert 'index_facet_stats' not in names
 
 
-def test_init_database_seeds_index_meta_defaults(monkeypatch, tmp_path):
+def test_init_database_does_not_seed_legacy_index_meta_defaults(monkeypatch, tmp_path):
     db_path = tmp_path / 'cards_metadata.db'
     cards_dir = tmp_path / 'cards'
     cards_dir.mkdir()
@@ -109,13 +108,10 @@ def test_init_database_seeds_index_meta_defaults(monkeypatch, tmp_path):
 
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            'SELECT value FROM index_meta WHERE key = ?',
-            ('build_state',),
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = 'index_meta'"
         ).fetchone()
 
-    payload = json.loads(row[0])
-    assert payload['state'] == 'empty'
-    assert payload['scope'] == 'cards'
+    assert row is None
 
 
 def test_default_config_exposes_index_flags():

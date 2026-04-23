@@ -12,7 +12,6 @@ if str(ROOT) not in sys.path:
 from core.services import index_service
 from core.services.worldinfo_index_query_service import query_worldinfo_index
 from core.data.index_runtime_store import ensure_index_runtime_schema
-from core.data.index_store import ensure_index_schema
 
 
 def _write_json(path: Path, payload):
@@ -49,19 +48,23 @@ def test_rebuild_worldinfo_index_writes_global_resource_and_embedded_rows(monkey
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL)"
+            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL, wi_metadata_scanned INTEGER DEFAULT 0)"
         )
         conn.execute(
-            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified) VALUES (?, ?, ?, ?, ?, ?)",
-            ('cards/lucy.png', 'Lucy', '科幻', 1, 'Embedded Book', 100.0),
+            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified, wi_metadata_scanned) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('cards/lucy.png', 'Lucy', '科幻', 1, 'Embedded Book', 100.0, 0),
         )
         conn.commit()
 
     index_service.rebuild_worldinfo_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'worldinfo'"
+        ).fetchone()[0]
         rows = conn.execute(
-            "SELECT entity_type, name, display_category, category_mode, owner_entity_id FROM index_entities WHERE entity_type LIKE 'world_%' ORDER BY entity_type"
+            "SELECT entity_type, name, display_category, category_mode, owner_entity_id FROM index_entities_v2 WHERE generation = ? AND entity_type LIKE 'world_%' ORDER BY entity_type",
+            (generation,),
         ).fetchall()
 
     assert rows == [
@@ -93,19 +96,23 @@ def test_rebuild_worldinfo_index_preserves_resource_override_category(monkeypatc
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL)"
+            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL, wi_metadata_scanned INTEGER DEFAULT 0)"
         )
         conn.execute(
-            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified) VALUES (?, ?, ?, ?, ?, ?)",
-            ('cards/lucy.png', 'Lucy', '原始分类', 0, '', 100.0),
+            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified, wi_metadata_scanned) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('cards/lucy.png', 'Lucy', '原始分类', 0, '', 100.0, 0),
         )
         conn.commit()
 
     index_service.rebuild_worldinfo_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'worldinfo'"
+        ).fetchone()[0]
         row = conn.execute(
-            "SELECT display_category, category_mode FROM index_entities WHERE entity_type = 'world_resource'"
+            "SELECT display_category, category_mode FROM index_entities_v2 WHERE generation = ? AND entity_type = 'world_resource'",
+            (generation,),
         ).fetchone()
 
     assert row == ('自定义分类', 'override')
@@ -129,15 +136,19 @@ def test_rebuild_worldinfo_index_skips_bad_files_without_erasing_valid_rows(monk
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL)"
+            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL, wi_metadata_scanned INTEGER DEFAULT 0)"
         )
         conn.commit()
 
     index_service.rebuild_worldinfo_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'worldinfo'"
+        ).fetchone()[0]
         rows = conn.execute(
-            "SELECT entity_type, name FROM index_entities WHERE entity_type LIKE 'world_%' ORDER BY entity_type, name"
+            "SELECT entity_type, name FROM index_entities_v2 WHERE generation = ? AND entity_type LIKE 'world_%' ORDER BY entity_type, name",
+            (generation,),
         ).fetchall()
 
     assert rows == [('world_global', 'Dragon Lore')]
@@ -174,19 +185,23 @@ def test_rebuild_worldinfo_index_uses_configured_cards_dir_for_embedded_books(mo
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL)"
+            "CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, has_character_book INTEGER, character_book_name TEXT, last_modified REAL, wi_metadata_scanned INTEGER DEFAULT 0)"
         )
         conn.execute(
-            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified) VALUES (?, ?, ?, ?, ?, ?)",
-            ('cards/lucy.png', 'Lucy', '科幻', 1, 'Embedded Book', 100.0),
+            "INSERT INTO card_metadata (id, char_name, category, has_character_book, character_book_name, last_modified, wi_metadata_scanned) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('cards/lucy.png', 'Lucy', '科幻', 1, 'Embedded Book', 100.0, 0),
         )
         conn.commit()
 
     index_service.rebuild_worldinfo_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'worldinfo'"
+        ).fetchone()[0]
         row = conn.execute(
-            "SELECT entity_type, name, source_path FROM index_entities WHERE entity_type = 'world_embedded'"
+            "SELECT entity_type, name, source_path FROM index_entities_v2 WHERE generation = ? AND entity_type = 'world_embedded'",
+            (generation,),
         ).fetchone()
 
     assert seen_paths == [str(configured_cards_dir / 'cards' / 'lucy.png')]

@@ -101,12 +101,9 @@ def test_recovery_keeps_old_active_generation_when_build_generation_exists(monke
 def test_legacy_index_table_policy_explicitly_keeps_runtime_compatibility():
     policy = index_upgrade_service.get_legacy_index_table_policy()
 
-    assert policy['decision'] == 'keep'
-    assert 'still used' in policy['reason']
-    assert policy['runtime_callers'] == (
-        'core.data.db_session.ensure_index_schema',
-        'core.services.index_service',
-    )
+    assert policy['decision'] == 'stop_creating'
+    assert 'runtime v2 tables only' in policy['reason']
+    assert policy['runtime_callers'] == ()
 
 
 def test_backfill_embedded_worldinfo_marks_rows_scanned(monkeypatch, tmp_path):

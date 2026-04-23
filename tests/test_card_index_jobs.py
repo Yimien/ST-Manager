@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
 from core.api.v1 import system as system_api
 from core.context import ctx
 from core.data.index_runtime_store import activate_generation, allocate_build_generation, ensure_index_runtime_schema
-from core.data.index_store import ensure_index_schema
 from core.data import ui_store as ui_store_module
 from core.services import cache_service
 from core.services import index_build_service
@@ -34,7 +33,6 @@ def _make_test_app():
 
 def _init_index_db(db_path: Path):
     with sqlite3.connect(db_path) as conn:
-        ensure_index_schema(conn)
         ensure_index_runtime_schema(conn)
 
 
@@ -53,7 +51,7 @@ def test_rebuild_cards_writes_projection_rows(monkeypatch, tmp_path):
     monkeypatch.setattr(index_service, 'DEFAULT_DB_PATH', str(db_path))
 
     with sqlite3.connect(db_path) as conn:
-        ensure_index_schema(conn)
+        ensure_index_runtime_schema(conn)
         conn.execute(
             'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
         )
@@ -68,13 +66,16 @@ def test_rebuild_cards_writes_projection_rows(monkeypatch, tmp_path):
     index_service.rebuild_card_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'cards'"
+        ).fetchone()[0]
         row = conn.execute(
-            'SELECT entity_type, name, display_category, favorite, summary_preview, token_count FROM index_entities WHERE entity_id = ?',
-            ('card::cards/hero.png',),
+            'SELECT entity_type, name, display_category, favorite, summary_preview, token_count FROM index_entities_v2 WHERE generation = ? AND entity_id = ?',
+            (generation, 'card::cards/hero.png'),
         ).fetchone()
         tags = conn.execute(
-            'SELECT tag FROM index_entity_tags WHERE entity_id = ? ORDER BY tag',
-            ('card::cards/hero.png',),
+            'SELECT tag FROM index_entity_tags_v2 WHERE generation = ? AND entity_id = ? ORDER BY tag',
+            (generation, 'card::cards/hero.png'),
         ).fetchall()
 
     assert row == ('card', 'Hero', 'SciFi', 1, 'pilot note', 4567)
@@ -163,7 +164,7 @@ def test_rebuild_cards_uses_real_card_path_for_source_revision(monkeypatch, tmp_
     monkeypatch.setattr(index_service, 'load_config', lambda: {'cards_dir': str(cards_dir)}, raising=False)
 
     with sqlite3.connect(db_path) as conn:
-        ensure_index_schema(conn)
+        ensure_index_runtime_schema(conn)
         conn.execute(
             'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
         )
@@ -178,9 +179,12 @@ def test_rebuild_cards_uses_real_card_path_for_source_revision(monkeypatch, tmp_
     index_service.rebuild_card_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'cards'"
+        ).fetchone()[0]
         source_revision = conn.execute(
-            'SELECT source_revision FROM index_entities WHERE entity_id = ?',
-            ('card::hero.png',),
+            'SELECT source_revision FROM index_entities_v2 WHERE generation = ? AND entity_id = ?',
+            (generation, 'card::hero.png'),
         ).fetchone()[0]
 
     assert source_revision
@@ -198,7 +202,7 @@ def test_rebuild_cards_uses_relative_cards_dir_from_base_dir(monkeypatch, tmp_pa
     monkeypatch.setattr(index_service, 'load_config', lambda: {'cards_dir': 'data/library/characters'}, raising=False)
 
     with sqlite3.connect(db_path) as conn:
-        ensure_index_schema(conn)
+        ensure_index_runtime_schema(conn)
         conn.execute(
             'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
         )
@@ -213,9 +217,12 @@ def test_rebuild_cards_uses_relative_cards_dir_from_base_dir(monkeypatch, tmp_pa
     index_service.rebuild_card_index()
 
     with sqlite3.connect(db_path) as conn:
+        generation = conn.execute(
+            "SELECT active_generation FROM index_build_state WHERE scope = 'cards'"
+        ).fetchone()[0]
         source_path, source_revision = conn.execute(
-            'SELECT source_path, source_revision FROM index_entities WHERE entity_id = ?',
-            ('card::hero.png',),
+            'SELECT source_path, source_revision FROM index_entities_v2 WHERE generation = ? AND entity_id = ?',
+            (generation, 'card::hero.png'),
         ).fetchone()
 
     assert source_path == str(card_path)

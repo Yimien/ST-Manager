@@ -622,7 +622,6 @@ def build_worldinfo_generation(conn, generation: int, inspected_books=None):
         '''
         SELECT id, char_name, category, character_book_name, last_modified, has_character_book
         FROM card_metadata
-        WHERE has_character_book = 1
         '''
     ).fetchall()
     inspected_books = inspected_books or {}

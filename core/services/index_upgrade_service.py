@@ -26,12 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 LEGACY_INDEX_TABLE_POLICY = {
-    'decision': 'keep',
-    'reason': 'legacy index tables are still used by runtime callers and cannot be removed safely yet',
-    'runtime_callers': (
-        'core.data.db_session.ensure_index_schema',
-        'core.services.index_service',
-    ),
+    'decision': 'stop_creating',
+    'reason': 'new databases now use runtime v2 tables only; legacy tables remain only for pre-existing database compatibility',
+    'runtime_callers': (),
 }
 
 
