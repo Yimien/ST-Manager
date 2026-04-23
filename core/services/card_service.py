@@ -17,6 +17,7 @@ from core.data.ui_store import load_ui_data, save_ui_data, VERSION_REMARKS_KEY, 
 
 # === 服务依赖 ===
 from core.services.cache_service import update_card_cache
+from core.services.index_job_worker import enqueue_index_job
 from core.services.scan_service import suppress_fs_events
 
 # === 工具函数 ===
@@ -1180,12 +1181,15 @@ def modify_card_attributes_internal(card_id, add_tags=None, remove_tags=None, se
                 else: info = data_block # V2 write back
                 
                 suppress_fs_events(2.5)
-                write_card_metadata(full_path, info)
+                if not write_card_metadata(full_path, info):
+                    return False
                 
                 # Update DB
                 conn = get_db()
                 conn.execute("UPDATE card_metadata SET tags = ? WHERE id = ?", (json.dumps(new_tags), card_id))
                 conn.commit()
+
+                enqueue_index_job('upsert_card', entity_id=card_id, source_path=full_path)
                 
                 # Update Cache
                 if ctx.cache: ctx.cache.update_tags_update(card_id, new_tags)

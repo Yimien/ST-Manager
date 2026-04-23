@@ -563,6 +563,17 @@ def _enqueue_worldinfo_note_refresh(source_type: str, file_path: str = '', card_
         enqueue_index_job('upsert_world_embedded', entity_id=card_id, source_path='')
 
 
+def _enqueue_worldinfo_file_refresh(file_path: str, cfg: dict):
+    if not file_path or not _is_valid_wi_file(file_path, cfg):
+        return
+
+    if _is_resource_worldinfo_path(file_path, cfg):
+        _enqueue_resource_worldinfo_owner_refresh(file_path)
+        return
+
+    enqueue_index_job('upsert_worldinfo_path', source_path=file_path)
+
+
 def _enqueue_resource_worldinfo_owner_refresh(file_path: str):
     for owner_card_id in resolve_resource_worldinfo_owner_card_ids(file_path):
         enqueue_index_job('upsert_world_owner', entity_id=owner_card_id, source_path=file_path)
@@ -1753,6 +1764,8 @@ def api_save_world_info():
             else:
                 final_path = os.path.normpath(final_path)
             cfg = load_config()
+            if _is_under_base(final_path, str(CARDS_FOLDER)):
+                return jsonify({"success": False, "msg": "内嵌世界书请通过卡片保存流程更新"})
             if not _is_valid_wi_file(final_path, cfg):
                 return jsonify({"success": False, "msg": "非法路径"})
             requested_revision = str(req.get('source_revision') or '').strip()
@@ -1815,6 +1828,7 @@ def api_save_world_info():
             )
         
         invalidate_wi_list_cache()
+        _enqueue_worldinfo_file_refresh(final_path, load_config())
         return jsonify({
             "success": True,
             "new_path": final_path,
@@ -2115,6 +2129,7 @@ def api_delete_world_info():
                     save_ui_data(ui_data)
             # 刷新列表缓存
             invalidate_wi_list_cache()
+            _enqueue_worldinfo_file_refresh(file_path, cfg)
             return jsonify({"success": True})
         else:
             return jsonify({"success": False, "msg": "移动到回收站失败"})

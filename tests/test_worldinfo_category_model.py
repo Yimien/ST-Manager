@@ -1886,6 +1886,159 @@ def test_worldinfo_save_rejects_new_resource_mode_safely(monkeypatch, tmp_path):
     assert 'resource' in payload['msg'].lower()
 
 
+def test_worldinfo_save_overwrite_enqueues_incremental_index_repair_for_global_and_resource_files(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    resource_file = resources_dir / 'lucy' / 'lorebooks' / 'companion.json'
+
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+    _write_json(resource_file, {'name': 'Companion Lore', 'entries': {}})
+
+    job_calls = []
+
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'invalidate_wi_list_cache', lambda: None)
+    monkeypatch.setattr(world_info_api, 'resolve_resource_worldinfo_owner_card_ids', lambda _path: ['cards/lucy.png', 'cards/zeta.png'], raising=False)
+    monkeypatch.setattr(world_info_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+
+    client = _make_test_app().test_client()
+
+    global_res = client.post(
+        '/api/world_info/save',
+        json={
+            'save_mode': 'overwrite',
+            'file_path': str(global_file),
+            'name': 'Dragon Lore',
+            'content': {'name': 'Dragon Lore', 'entries': {}},
+            'source_revision': world_info_api.build_file_source_revision(str(global_file)),
+        },
+    )
+    assert global_res.status_code == 200
+    assert global_res.get_json()['success'] is True
+
+    resource_res = client.post(
+        '/api/world_info/save',
+        json={
+            'save_mode': 'overwrite',
+            'file_path': str(resource_file),
+            'name': 'Companion Lore',
+            'content': {'name': 'Companion Lore', 'entries': {}},
+            'source_revision': world_info_api.build_file_source_revision(str(resource_file)),
+        },
+    )
+    assert resource_res.status_code == 200
+    assert resource_res.get_json()['success'] is True
+
+    assert job_calls == [
+        ('upsert_worldinfo_path', {'source_path': str(global_file)}),
+        ('upsert_world_owner', {'entity_id': 'cards/lucy.png', 'source_path': str(resource_file)}),
+        ('upsert_world_owner', {'entity_id': 'cards/zeta.png', 'source_path': str(resource_file)}),
+    ]
+
+
+def test_worldinfo_save_new_global_enqueues_incremental_index_repair(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    job_calls = []
+
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'invalidate_wi_list_cache', lambda: None)
+    monkeypatch.setattr(world_info_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/save',
+        json={
+            'save_mode': 'new_global',
+            'name': 'Dragon Lore',
+            'content': {'name': 'Dragon Lore', 'entries': {}},
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['new_path']
+    assert job_calls == [
+        ('upsert_worldinfo_path', {'source_path': payload['new_path']}),
+    ]
+
+
+def test_worldinfo_save_rejects_embedded_paths_without_enqueuing_repair(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    cards_dir = tmp_path / 'cards'
+    card_file = cards_dir / 'lucy.json'
+    _write_json(card_file, {'name': 'Lucy', 'entries': {}})
+
+    job_calls = []
+
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(cards_dir), raising=False)
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/save',
+        json={
+            'save_mode': 'overwrite',
+            'file_path': str(card_file),
+            'name': 'Lucy',
+            'content': {'name': 'Lucy', 'entries': {}},
+            'source_revision': 'ignored-for-invalid-path',
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert '内嵌' in payload['msg'] or 'embedded' in payload['msg'].lower()
+    assert job_calls == []
+
+
+def test_worldinfo_save_does_not_enqueue_repair_when_write_fails(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+
+    job_calls = []
+
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'invalidate_wi_list_cache', lambda: None)
+    monkeypatch.setattr(world_info_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+
+    def _boom(*_args, **_kwargs):
+        raise OSError('disk full')
+
+    monkeypatch.setattr('builtins.open', _boom)
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/save',
+        json={
+            'save_mode': 'overwrite',
+            'file_path': str(global_file),
+            'name': 'Dragon Lore',
+            'content': {'name': 'Dragon Lore', 'entries': {}},
+            'source_revision': world_info_api.build_file_source_revision(str(global_file)),
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert job_calls == []
+
+
 def test_worldinfo_save_returns_controlled_error_for_missing_json(monkeypatch, tmp_path):
     monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
     monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(tmp_path / 'lorebooks'), 'resources_dir': str(tmp_path / 'resources')})
@@ -1926,6 +2079,60 @@ def test_move_worldinfo_global_item_moves_file_to_target_category(monkeypatch, t
     assert payload['success'] is True
     assert source_file.exists() is False
     assert (lorebooks_dir / '奇幻' / '巨龙' / 'dragon.json').exists()
+
+
+def test_worldinfo_delete_enqueues_incremental_index_repair_for_global_and_resource_files(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    global_file = lorebooks_dir / 'dragon.json'
+    resource_file = resources_dir / 'lucy' / 'lorebooks' / 'companion.json'
+    ui_path = tmp_path / 'ui_data.json'
+
+    _write_json(global_file, {'name': 'Dragon Lore', 'entries': {}})
+    _write_json(resource_file, {'name': 'Companion Lore', 'entries': {}})
+    ui_path.write_text(
+        json.dumps(
+            {
+                '_worldinfo_notes_v1': {
+                    f"global::{str(global_file).replace('\\', '/').lower()}": {'summary': 'global note'},
+                    f"resource::{str(resource_file).replace('\\', '/').lower()}": {'summary': 'resource note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    job_calls = []
+
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'invalidate_wi_list_cache', lambda: None)
+    monkeypatch.setattr(world_info_api, 'resolve_resource_worldinfo_owner_card_ids', lambda _path: ['cards/lucy.png', 'cards/zeta.png'], raising=False)
+    monkeypatch.setattr(world_info_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+    monkeypatch.setattr(world_info_api, 'safe_move_to_trash', lambda path, _trash: Path(path).unlink() or True)
+
+    client = _make_test_app().test_client()
+
+    global_res = client.post('/api/world_info/delete', json={'file_path': str(global_file), 'source_type': 'global'})
+    assert global_res.status_code == 200
+    assert global_res.get_json()['success'] is True
+
+    resource_res = client.post('/api/world_info/delete', json={'file_path': str(resource_file), 'source_type': 'resource'})
+    assert resource_res.status_code == 200
+    assert resource_res.get_json()['success'] is True
+
+    embedded_res = client.post('/api/world_info/delete', json={'source_type': 'embedded', 'card_id': 'cards/lucy.png'})
+    assert embedded_res.status_code == 200
+    assert embedded_res.get_json()['success'] is False
+
+    assert job_calls == [
+        ('upsert_worldinfo_path', {'source_path': str(global_file)}),
+        ('upsert_world_owner', {'entity_id': 'cards/lucy.png', 'source_path': str(resource_file)}),
+        ('upsert_world_owner', {'entity_id': 'cards/zeta.png', 'source_path': str(resource_file)}),
+    ]
 
 
 def test_move_worldinfo_resource_item_sets_override_without_moving_file(monkeypatch, tmp_path):

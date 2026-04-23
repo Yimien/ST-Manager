@@ -2012,6 +2012,88 @@ def test_modify_card_attributes_internal_suppresses_fs_events_before_delayed_tag
     assert fake_cache.updated == [('folder/demo.json', ['existing', 'new-tag'])]
 
 
+def test_modify_card_attributes_internal_enqueues_incremental_index_repair_after_delayed_tag_write(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    card_dir = cards_root / 'folder'
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card_path = card_dir / 'demo.json'
+    card_path.write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    class _FakeConn:
+        def execute(self, _sql, _params):
+            return self
+
+        def commit(self):
+            return None
+
+    job_calls = []
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda _path: {'data': {'tags': ['existing']}})
+    monkeypatch.setattr(card_service, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'write_card_metadata', lambda _path, _info: True)
+    monkeypatch.setattr(card_service, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+    monkeypatch.setattr(
+        card_service.ctx,
+        'cache',
+        SimpleNamespace(update_tags_update=lambda *args, **kwargs: None),
+        raising=False,
+    )
+
+    ok = card_service.modify_card_attributes_internal('folder/demo.json', add_tags={'new-tag'})
+
+    assert ok is True
+    assert job_calls == [
+        ('upsert_card', {'entity_id': 'folder/demo.json', 'source_path': str(card_path)}),
+    ]
+
+
+def test_modify_card_attributes_internal_skips_db_cache_and_index_when_delayed_tag_write_fails(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    card_dir = cards_root / 'folder'
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card_path = card_dir / 'demo.json'
+    card_path.write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    class _FakeConn:
+        def __init__(self):
+            self.executed = []
+            self.committed = 0
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            return self
+
+        def commit(self):
+            self.committed += 1
+
+    fake_conn = _FakeConn()
+    fake_cache = SimpleNamespace(updated=[])
+    fake_cache.update_tags_update = lambda card_id, tags: fake_cache.updated.append((card_id, tags))
+    job_calls = []
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda _path: {'data': {'tags': ['existing']}})
+    monkeypatch.setattr(card_service, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'write_card_metadata', lambda _path, _info: False)
+    monkeypatch.setattr(card_service, 'get_db', lambda: fake_conn)
+    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+    monkeypatch.setattr(card_service.ctx, 'cache', fake_cache, raising=False)
+
+    ok = card_service.modify_card_attributes_internal('folder/demo.json', add_tags={'new-tag'})
+
+    assert ok is False
+    assert fake_conn.executed == []
+    assert fake_conn.committed == 0
+    assert fake_cache.updated == []
+    assert job_calls == []
+
+
 def test_rule_manager_save_ruleset_preserves_group_condition_and_action_order(monkeypatch, tmp_path):
     rules_dir = tmp_path / 'automation'
     rules_dir.mkdir(parents=True, exist_ok=True)
