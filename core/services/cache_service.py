@@ -62,7 +62,7 @@ def force_reload(reason: str = ""):
             ctx.reload_timer = None
     _do_reload_now()
 
-def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, file_size=None, mtime=None):
+def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, file_size=None, mtime=None, remove_entity_ids=None):
     """
     [数据库写操作] 更新单个卡片的数据库记录。
     通常由 API 路由或扫描器调用。
@@ -134,7 +134,12 @@ def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, f
             
             conn.commit()
             try:
-                enqueue_index_job('upsert_card', entity_id=card_id, source_path=full_path)
+                payload = {}
+                cleanup_ids = [str(value).strip() for value in (remove_entity_ids or []) if str(value).strip()]
+                if cleanup_ids:
+                    payload['remove_entity_ids'] = cleanup_ids
+
+                enqueue_index_job('upsert_card', entity_id=card_id, source_path=full_path, payload=payload)
                 if has_wi or previous_has_wi:
                     enqueue_index_job('upsert_world_embedded', entity_id=card_id, source_path=full_path)
             except Exception as e:

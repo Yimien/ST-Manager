@@ -1,6 +1,8 @@
 import sqlite3
 import sys
 import json
+import threading
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from core.api.v1 import system as system_api
 from core.context import ctx
 from core.data.index_runtime_store import activate_generation, allocate_build_generation, ensure_index_runtime_schema
 from core.data.index_store import ensure_index_schema
+from core.data import ui_store as ui_store_module
 from core.services import cache_service
 from core.services import index_build_service
 from core.services import index_job_worker
@@ -33,6 +36,12 @@ def _init_index_db(db_path: Path):
     with sqlite3.connect(db_path) as conn:
         ensure_index_schema(conn)
         ensure_index_runtime_schema(conn)
+
+
+def _create_card_metadata_table(conn):
+    conn.execute(
+        'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
+    )
 
 
 class _StopWorkerLoop(Exception):
@@ -381,13 +390,73 @@ def test_worker_loop_processes_upsert_card_job(monkeypatch, tmp_path):
     cards_dir.mkdir()
     card_path.write_bytes(b'hero')
 
+    _init_index_db(db_path)
     monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
 
     with sqlite3.connect(db_path) as conn:
-        ensure_index_schema(conn)
+        _create_card_metadata_table(conn)
+        conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
         conn.execute(
-            'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('hero.png', 'Hero', json.dumps(['blue']), 'SciFi', 123.0, 4567, 1, 0, '', '', '', '', '', '', '', 0),
         )
+        conn.execute(
+            'INSERT INTO index_jobs(job_type, entity_id, source_path, payload_json) VALUES (?, ?, ?, ?)',
+            ('upsert_card', 'hero.png', str(card_path), '{}'),
+        )
+        conn.commit()
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_state.update({'state': 'empty', 'scope': 'cards', 'progress': 0, 'message': '', 'pending_jobs': 0})
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as conn:
+        job_row = conn.execute(
+            'SELECT status, error_msg FROM index_jobs WHERE job_type = ?',
+            ('upsert_card',),
+        ).fetchone()
+        entity_row = conn.execute(
+            "SELECT entity_id, name, display_category, favorite, token_count FROM index_entities_v2 WHERE generation = 1 AND entity_id = 'card::hero.png'"
+        ).fetchone()
+        tags = conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 1 AND entity_id = 'card::hero.png' ORDER BY tag"
+        ).fetchall()
+
+    assert job_row == ('done', '')
+    assert entity_row == ('card::hero.png', 'Hero', 'SciFi', 1, 4567)
+    assert tags == [('blue',)]
+    assert calls == []
+
+
+def test_worker_loop_marks_upsert_card_failed_when_cards_generation_missing(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    cards_dir = tmp_path / 'cards'
+    card_path = cards_dir / 'hero.png'
+    cards_dir.mkdir()
+    card_path.write_bytes(b'hero')
+
+    _init_index_db(db_path)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        _create_card_metadata_table(conn)
         conn.execute(
             'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             ('hero.png', 'Hero', json.dumps(['blue']), 'SciFi', 123.0, 4567, 1, 0, '', '', '', '', '', '', '', 0),
@@ -425,8 +494,239 @@ def test_worker_loop_processes_upsert_card_job(monkeypatch, tmp_path):
             ('upsert_card',),
         ).fetchone()
 
+    assert job_row[0] == 'failed'
+    assert 'cards active generation missing' in job_row[1]
+    assert calls == []
+
+
+def test_worker_loop_upserts_card_into_active_generation_without_cards_rebuild(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    cards_dir = tmp_path / 'cards'
+    card_path = cards_dir / 'hero.png'
+    cards_dir.mkdir()
+    card_path.write_bytes(b'hero')
+
+    _init_index_db(db_path)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        _create_card_metadata_table(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('hero.png', 'Hero Updated', json.dumps(['blue', 'fast']), 'SciFi', 456.0, 987, 1, 0, '', '', '', '', '', '', '', 0),
+        )
+        conn.execute("UPDATE index_build_state SET active_generation = 2, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (2, 'card::hero.png', 'card', str(card_path), '', 'Old Hero', 'hero.png', 'OldCat', 'OldCat', 'physical', 0, 'old summary', 1.0, 0.0, 123, 'old hero', 1.0, '', '1:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (2, 'card::hero.png', 'stale-tag'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (2, 'card::hero.png', 'stale search'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (2, 'card::hero.png', 'stale search'),
+        )
+        conn.execute(
+            'INSERT INTO index_jobs(job_type, entity_id, source_path, payload_json) VALUES (?, ?, ?, ?)',
+            ('upsert_card', 'hero.png', str(card_path), '{}'),
+        )
+        conn.commit()
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'load_ui_data', lambda: {'hero.png': {'summary': 'fresh summary'}}, raising=False)
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_state.update({'state': 'empty', 'scope': 'cards', 'progress': 0, 'message': '', 'pending_jobs': 0})
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as conn:
+        entity_row = conn.execute(
+            "SELECT generation, entity_id, name, display_category, favorite, summary_preview, token_count FROM index_entities_v2 WHERE generation = 2 AND entity_id = 'card::hero.png'"
+        ).fetchone()
+        tags = conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 2 AND entity_id = 'card::hero.png' ORDER BY tag"
+        ).fetchall()
+        fast_rows = conn.execute(
+            "SELECT content FROM index_search_fast_v2 WHERE generation = 2 AND entity_id = 'card::hero.png'"
+        ).fetchall()
+        full_rows = conn.execute(
+            "SELECT content FROM index_search_full_v2 WHERE generation = 2 AND entity_id = 'card::hero.png'"
+        ).fetchall()
+        job_row = conn.execute(
+            'SELECT status, error_msg FROM index_jobs WHERE job_type = ?',
+            ('upsert_card',),
+        ).fetchone()
+
+    assert entity_row == (2, 'card::hero.png', 'Hero Updated', 'SciFi', 1, 'fresh summary', 987)
+    assert [tag[0] for tag in tags] == ['blue', 'fast']
+    assert fast_rows == [('Hero Updated hero.png SciFi fresh summary blue fast',)]
+    assert full_rows == [('Hero Updated hero.png SciFi fresh summary blue fast',)]
     assert job_row == ('done', '')
-    assert calls == [('cards', 'incremental_reconcile')]
+    assert calls == []
+
+
+def test_worker_loop_upsert_card_removes_stale_old_id_rows_from_active_generation(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    cards_dir = tmp_path / 'cards'
+    old_card_path = cards_dir / 'old-name.json'
+    new_card_path = cards_dir / 'new-name.png'
+    cards_dir.mkdir()
+    old_card_path.write_text('{"name": "Old"}', encoding='utf-8')
+    new_card_path.write_bytes(b'new')
+
+    _init_index_db(db_path)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        _create_card_metadata_table(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('new-name.png', 'Renamed Hero', json.dumps(['renamed']), 'SciFi', 789.0, 654, 0, 0, '', '', '', '', '', '', '', 0),
+        )
+        conn.execute("UPDATE index_build_state SET active_generation = 3, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (3, 'card::old-name.json', 'card', str(old_card_path), '', 'Old Hero', 'old-name.json', 'SciFi', 'SciFi', 'physical', 0, 'old summary', 1.0, 0.0, 111, 'old hero', 1.0, '', '1:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (3, 'card::old-name.json', 'stale-tag'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (3, 'card::old-name.json', 'old search'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (3, 'card::old-name.json', 'old search'),
+        )
+        conn.execute(
+            'INSERT INTO index_jobs(job_type, entity_id, source_path, payload_json) VALUES (?, ?, ?, ?)',
+            ('upsert_card', 'new-name.png', str(new_card_path), '{"remove_entity_ids": ["old-name.json"]}'),
+        )
+        conn.commit()
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'load_ui_data', lambda: {'new-name.png': {'summary': 'renamed summary'}}, raising=False)
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_state.update({'state': 'empty', 'scope': 'cards', 'progress': 0, 'message': '', 'pending_jobs': 0})
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as conn:
+        entity_ids = conn.execute(
+            'SELECT entity_id FROM index_entities_v2 WHERE generation = 3 ORDER BY entity_id'
+        ).fetchall()
+        stale_tags = conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 3 AND entity_id = 'card::old-name.json'"
+        ).fetchall()
+        stale_fast = conn.execute(
+            "SELECT content FROM index_search_fast_v2 WHERE generation = 3 AND entity_id = 'card::old-name.json'"
+        ).fetchall()
+        stale_full = conn.execute(
+            "SELECT content FROM index_search_full_v2 WHERE generation = 3 AND entity_id = 'card::old-name.json'"
+        ).fetchall()
+        new_row = conn.execute(
+            "SELECT name, filename, summary_preview FROM index_entities_v2 WHERE generation = 3 AND entity_id = 'card::new-name.png'"
+        ).fetchone()
+
+    assert entity_ids == [('card::new-name.png',)]
+    assert stale_tags == []
+    assert stale_fast == []
+    assert stale_full == []
+    assert new_row == ('Renamed Hero', 'new-name.png', 'renamed summary')
+    assert calls == []
+
+
+def test_apply_card_increment_removes_deleted_card_rows_from_active_generation(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+
+    _init_index_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        _create_card_metadata_table(conn)
+        conn.execute("UPDATE index_build_state SET active_generation = 4, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (4, 'card::deleted.png', 'card', str(tmp_path / 'deleted.png'), '', 'Deleted Hero', 'deleted.png', 'SciFi', 'SciFi', 'physical', 0, 'old summary', 1.0, 0.0, 111, 'deleted hero', 1.0, '', '1:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (4, 'card::deleted.png', 'stale-tag'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (4, 'card::deleted.png', 'old search'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (4, 'card::deleted.png', 'old search'),
+        )
+        conn.commit()
+
+    monkeypatch.setattr(index_build_service, 'DEFAULT_DB_PATH', str(db_path), raising=False)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        assert index_build_service.apply_card_increment(conn, 'deleted.png') is True
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT entity_id FROM index_entities_v2 WHERE generation = 4 AND entity_id = 'card::deleted.png'"
+        ).fetchall()
+        stale_tags = conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 4 AND entity_id = 'card::deleted.png'"
+        ).fetchall()
+        stale_fast = conn.execute(
+            "SELECT content FROM index_search_fast_v2 WHERE generation = 4 AND entity_id = 'card::deleted.png'"
+        ).fetchall()
+        stale_full = conn.execute(
+            "SELECT content FROM index_search_full_v2 WHERE generation = 4 AND entity_id = 'card::deleted.png'"
+        ).fetchall()
+
+    assert rows == []
+    assert stale_tags == []
+    assert stale_fast == []
+    assert stale_full == []
 
 
 def test_worker_loop_coalesces_multiple_worldinfo_reconcile_jobs(monkeypatch, tmp_path):
@@ -707,6 +1007,428 @@ def test_worker_loop_updates_owner_worldinfo_in_active_generation_without_full_r
     ]
     assert job_row == ('done', '')
     assert calls == []
+
+
+def test_worker_loop_upsert_world_owner_removes_stale_old_owner_rows(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    cards_dir = tmp_path / 'cards'
+    resources_dir = tmp_path / 'resources'
+    cards_dir.mkdir()
+    old_card_path = cards_dir / 'old-hero.json'
+    new_card_path = cards_dir / 'new-hero.png'
+    old_card_path.write_text('{"name": "Old Hero"}', encoding='utf-8')
+    new_card_path.write_bytes(b'new')
+    lore_dir = resources_dir / 'hero-assets' / 'lorebooks'
+    lore_dir.mkdir(parents=True)
+    resource_book = lore_dir / 'resource-book.json'
+    resource_book.write_text(json.dumps({'name': 'Resource Book', 'entries': {}}, ensure_ascii=False), encoding='utf-8')
+
+    _init_index_db(db_path)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, category TEXT, last_modified REAL, has_character_book INTEGER, character_book_name TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, category, last_modified, has_character_book, character_book_name) VALUES (?, ?, ?, ?, ?, ?)',
+            ('new-hero.png', 'Hero', 'fantasy', 12.0, 1, 'Embedded New'),
+        )
+        conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'worldinfo'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 'world::embedded::old-hero.json', 'world_embedded', str(old_card_path), 'card::old-hero.json', 'Old Embedded', 'old-hero.json', 'fantasy', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old embedded', 10.0, '', '10:1'),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 'world::resource::old-hero.json::resource-book.json', 'world_resource', str(resource_book), 'card::old-hero.json', 'Old Resource', 'resource-book.json', 'old-cat', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old resource', 10.0, '', '10:1'),
+        )
+        conn.execute(
+            'INSERT INTO index_jobs(job_type, entity_id, source_path, payload_json) VALUES (?, ?, ?, ?)',
+            ('upsert_world_owner', 'new-hero.png', str(new_card_path), '{"remove_owner_ids": ["old-hero.json"]}'),
+        )
+        conn.commit()
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': str(tmp_path / 'global-lorebooks'), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(index_build_service, 'extract_card_info', lambda _path: {'data': {'character_book': {'name': 'Embedded New', 'entries': {'0': {'content': 'hello'}}}}})
+    monkeypatch.setattr(index_build_service, 'load_ui_data', lambda: {'new-hero.png': {'resource_folder': 'hero-assets', 'summary': 'embedded summary'}})
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_state.update({'state': 'empty', 'scope': 'cards', 'progress': 0, 'message': '', 'pending_jobs': 0})
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT entity_id, owner_entity_id, name FROM index_entities_v2 WHERE generation = 1 AND entity_type LIKE 'world_%' ORDER BY entity_id"
+        ).fetchall()
+        job_row = conn.execute(
+            'SELECT status, error_msg FROM index_jobs WHERE job_type = ?',
+            ('upsert_world_owner',),
+        ).fetchone()
+
+    assert rows == [
+        ('world::embedded::new-hero.png', 'card::new-hero.png', 'Embedded New'),
+        ('world::resource::new-hero.png::resource-book.json', 'card::new-hero.png', 'Resource Book'),
+    ]
+    assert job_row == ('done', '')
+    assert calls == []
+
+
+def test_update_card_route_real_save_updates_runtime_projections_without_cards_rebuild(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    db_path = tmp_path / 'cards_metadata.db'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    resources_dir = tmp_path / 'resources'
+    card_rel = 'cards/lucy.png'
+    card_path = cards_dir / card_rel
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'fake-card')
+    resource_file = resources_dir / 'keep-folder' / 'lorebooks' / 'companion.json'
+    resource_file.parent.mkdir(parents=True, exist_ok=True)
+    resource_file.write_text(json.dumps({'name': 'Fresh Resource', 'entries': {}}, ensure_ascii=False), encoding='utf-8')
+    ui_path.write_text(
+        json.dumps({card_rel: {'summary': 'old note', 'link': 'old-link', 'resource_folder': 'keep-folder'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    _init_index_db(db_path)
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    _create_card_metadata_table(conn)
+    conn.execute(
+        'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (card_rel, 'Old Lucy', json.dumps(['old']), 'fantasy', 10.0, 11, 0, 1, 'Old Embedded', '', '', '', '', '', 'old-hash', 1),
+    )
+    conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+    conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'worldinfo'")
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'card::{card_rel}', 'card', str(card_path), '', 'Old Lucy', 'lucy.png', 'fantasy', 'fantasy', 'physical', 0, 'old note', 10.0, 0.0, 11, 'old lucy', 10.0, '', '10:1'),
+    )
+    conn.execute(
+        'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+        (1, f'card::{card_rel}', 'old'),
+    )
+    conn.execute(
+        'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (1, f'card::{card_rel}', 'Old Lucy lucy.png fantasy old old note'),
+    )
+    conn.execute(
+        'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (1, f'card::{card_rel}', 'Old Lucy lucy.png fantasy old old note'),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'world::embedded::{card_rel}', 'world_embedded', str(card_path), f'card::{card_rel}', 'Old Embedded', 'lucy.png', 'fantasy', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old embedded', 10.0, '', '10:1'),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'world::resource::{card_rel}::companion.json', 'world_resource', str(resource_file), f'card::{card_rel}', 'Stale Resource', 'companion.json', 'fantasy', '', 'inherited', 0, '', 10.0, 0.0, 0, 'stale resource', 10.0, '', '10:1'),
+    )
+    conn.commit()
+
+    info = {
+        'data': {
+            'name': 'Lucy',
+            'description': 'new description',
+            'first_mes': 'hello',
+            'mes_example': 'example',
+            'personality': 'calm',
+            'scenario': 'lab',
+            'creator_notes': 'creator',
+            'system_prompt': 'system',
+            'post_history_instructions': 'post',
+            'creator': 'tester',
+            'character_version': 'v2',
+            'tags': ['fresh'],
+            'extensions': {},
+            'alternate_greetings': [],
+            'character_book': {'name': 'Fresh Embedded', 'entries': {'0': {'content': 'hello'}}},
+        }
+    }
+
+    class _FakeCache:
+        def __init__(self):
+            self.id_map = {}
+            self.bundle_map = {}
+            self.lock = threading.Lock()
+
+        def update_card_data(self, card_id, payload):
+            card = {
+                'id': card_id,
+                'image_url': f'/cards_file/{card_id}',
+                **payload,
+            }
+            self.id_map[card_id] = card
+            return card
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: info)
+    monkeypatch.setattr(index_build_service, 'extract_card_info', lambda _path: info)
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 42)
+    monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
+    monkeypatch.setattr(cards_api, 'get_last_sent_to_st', lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(cards_api, 'auto_run_forum_tags_on_link_update', lambda _card_id: None)
+    monkeypatch.setattr(cards_api, 'append_entry_history_records', lambda **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path: True)
+    monkeypatch.setattr(cards_api, '_is_safe_filename', lambda _name: True)
+    monkeypatch.setattr(cache_service, 'get_db', lambda: conn)
+    monkeypatch.setattr(cache_service, 'get_file_hash_and_size', lambda _path: ('new-hash', 12))
+    monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 42)
+    monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (True, 'Fresh Embedded'))
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': str(tmp_path / 'global-lorebooks'), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+    client = app.test_client()
+
+    res = client.post('/api/update_card', json={
+        'id': card_rel,
+        'char_name': 'Lucy',
+        'description': 'new description',
+        'first_mes': 'hello',
+        'mes_example': 'example',
+        'personality': 'calm',
+        'scenario': 'lab',
+        'creator_notes': 'creator',
+        'system_prompt': 'system',
+        'post_history_instructions': 'post',
+        'creator': 'tester',
+        'character_version': 'v2',
+        'tags': ['fresh'],
+        'extensions': {},
+        'alternate_greetings': [],
+        'character_book': {'name': 'Fresh Embedded', 'entries': {'0': {'content': 'hello'}}},
+        'ui_summary': 'old note',
+        'source_link': 'old-link',
+        'resource_folder': 'keep-folder',
+    })
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as verify_conn:
+        card_row = verify_conn.execute(
+            "SELECT name, summary_preview, token_count FROM index_entities_v2 WHERE generation = 1 AND entity_id = ?",
+            (f'card::{card_rel}',),
+        ).fetchone()
+        tags = verify_conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 1 AND entity_id = ? ORDER BY tag",
+            (f'card::{card_rel}',),
+        ).fetchall()
+        world_rows = verify_conn.execute(
+            "SELECT entity_id, entity_type, name FROM index_entities_v2 WHERE generation = 1 AND entity_type LIKE 'world_%' ORDER BY entity_id",
+        ).fetchall()
+
+    assert card_row == ('Lucy', 'old note', 42)
+    assert tags == [('fresh',)]
+    assert world_rows == [
+        (f'world::embedded::{card_rel}', 'world_embedded', 'Fresh Embedded'),
+        (f'world::resource::{card_rel}::companion.json', 'world_resource', 'Fresh Resource'),
+    ]
+    assert calls == []
+    conn.close()
+
+
+def test_change_image_route_rename_cleans_old_card_and_worldinfo_projections(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    db_path = tmp_path / 'cards_metadata.db'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    resources_dir = tmp_path / 'resources'
+    old_id = 'hero.json'
+    new_id = 'hero.png'
+    old_card_path = cards_dir / old_id
+    old_card_path.parent.mkdir(parents=True, exist_ok=True)
+    old_card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': []}}, ensure_ascii=False), encoding='utf-8')
+    resource_file = resources_dir / 'keep-folder' / 'lorebooks' / 'companion.json'
+    resource_file.parent.mkdir(parents=True, exist_ok=True)
+    resource_file.write_text(json.dumps({'name': 'Fresh Resource', 'entries': {}}, ensure_ascii=False), encoding='utf-8')
+    ui_path.write_text(
+        json.dumps({old_id: {'summary': 'old note', 'link': 'old-link', 'resource_folder': 'keep-folder'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    _init_index_db(db_path)
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    _create_card_metadata_table(conn)
+    conn.execute(
+        'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (old_id, 'Old Hero', json.dumps(['old']), '', 10.0, 11, 0, 1, 'Old Embedded', '', '', '', '', '', 'old-hash', 1),
+    )
+    conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+    conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'worldinfo'")
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'card::{old_id}', 'card', str(old_card_path), '', 'Old Hero', 'hero.json', '', '', 'physical', 0, 'old note', 10.0, 0.0, 11, 'old hero', 10.0, '', '10:1'),
+    )
+    conn.execute(
+        'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+        (1, f'card::{old_id}', 'old'),
+    )
+    conn.execute(
+        'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (1, f'card::{old_id}', 'Old Hero hero.json old old note'),
+    )
+    conn.execute(
+        'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (1, f'card::{old_id}', 'Old Hero hero.json old old note'),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'world::embedded::{old_id}', 'world_embedded', str(old_card_path), f'card::{old_id}', 'Old Embedded', 'hero.json', '', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old embedded', 10.0, '', '10:1'),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'world::resource::{old_id}::companion.json', 'world_resource', str(resource_file), f'card::{old_id}', 'Old Resource', 'companion.json', '', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old resource', 10.0, '', '10:1'),
+    )
+    conn.commit()
+
+    info = {'data': {'name': 'Hero', 'tags': ['fresh'], 'character_book': {'name': 'Fresh Embedded', 'entries': {'0': {'content': 'hello'}}}}}
+
+    class _FakeCache:
+        initialized = True
+        category_counts = {}
+
+        def __init__(self):
+            self.id_map = {}
+            self.cards = []
+            self.bundle_map = {}
+
+        def delete_card_update(self, card_id):
+            return card_id
+
+        def add_card_update(self, payload):
+            self.id_map[payload['id']] = payload
+            return payload
+
+        def update_card_data(self, card_id, payload):
+            self.id_map.setdefault(card_id, {}).update(payload)
+            return self.id_map[card_id]
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: info)
+    monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: info)
+    monkeypatch.setattr(index_build_service, 'extract_card_info', lambda _path: info)
+    monkeypatch.setattr(cards_api, 'resize_image_if_needed', lambda image: image)
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cards_api, 'clean_sidecar_images', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'clean_thumbnail_cache', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cache_service, 'get_db', lambda: conn)
+    monkeypatch.setattr(cache_service, 'get_file_hash_and_size', lambda _path: ('new-hash', 12))
+    monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 42)
+    monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (True, 'Fresh Embedded'))
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 42)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': str(tmp_path / 'global-lorebooks'), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    image_bytes = BytesIO()
+    from PIL import Image
+    Image.new('RGBA', (1, 1), (255, 0, 0, 255)).save(image_bytes, format='PNG')
+    image_bytes.seek(0)
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+    client = app.test_client()
+
+    res = client.post(
+        '/api/change_image',
+        data={'id': old_id, 'image': (image_bytes, 'cover.png')},
+        content_type='multipart/form-data',
+    )
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert res.get_json()['new_id'] == new_id
+
+    calls = []
+
+    def fake_rebuild_scope_generation(scope='cards', reason='bootstrap'):
+        calls.append((scope, reason))
+
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'rebuild_scope_generation', fake_rebuild_scope_generation)
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    with sqlite3.connect(db_path) as verify_conn:
+        card_rows = verify_conn.execute(
+            "SELECT entity_id FROM index_entities_v2 WHERE generation = 1 AND entity_type = 'card' ORDER BY entity_id"
+        ).fetchall()
+        world_rows = verify_conn.execute(
+            "SELECT entity_id, owner_entity_id, name FROM index_entities_v2 WHERE generation = 1 AND entity_type LIKE 'world_%' ORDER BY entity_id"
+        ).fetchall()
+
+    assert card_rows == [(f'card::{new_id}',)]
+    assert world_rows == [
+        (f'world::embedded::{new_id}', f'card::{new_id}', 'Fresh Embedded'),
+        (f'world::resource::{new_id}::companion.json', f'card::{new_id}', 'Fresh Resource'),
+    ]
+    assert calls == []
+    conn.close()
 
 
 def test_worker_loop_marks_unknown_job_failed(monkeypatch, tmp_path):

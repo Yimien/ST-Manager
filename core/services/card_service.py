@@ -383,14 +383,21 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
 
     # 4. 数据库写回 (Upsert)
     file_hash, file_size = get_file_hash_and_size(target_save_path)
-    update_card_cache(
+    cache_updated = update_card_cache(
         final_rel_id,
         target_save_path,
         parsed_info=final_info,
         file_hash=file_hash,
         file_size=file_size,
-        mtime=new_mtime
+        mtime=new_mtime,
+        remove_entity_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
     )
+    if cache_updated:
+        owner_payload = {'remove_owner_ids': [card_id]} if card_id != final_rel_id and not is_bundle_update else None
+        if owner_payload:
+            enqueue_index_job('upsert_world_owner', entity_id=final_rel_id, source_path=target_save_path, payload=owner_payload)
+        else:
+            enqueue_index_job('upsert_world_owner', entity_id=final_rel_id, source_path=target_save_path)
     
     # 5. 内存缓存更新
     updated_card_obj = None
@@ -910,7 +917,19 @@ def sync_card_names_internal(
         except Exception:
             current_mtime = time.time()
 
-        update_card_cache(new_id, new_full_path, parsed_info=info, mtime=current_mtime)
+        cache_updated = update_card_cache(
+            new_id,
+            new_full_path,
+            parsed_info=info,
+            mtime=current_mtime,
+            remove_entity_ids=[old_id] if new_id != old_id else None,
+        )
+        if cache_updated:
+            owner_payload = {'remove_owner_ids': [old_id]} if new_id != old_id else None
+            if owner_payload:
+                enqueue_index_job('upsert_world_owner', entity_id=new_id, source_path=new_full_path, payload=owner_payload)
+            else:
+                enqueue_index_job('upsert_world_owner', entity_id=new_id, source_path=new_full_path)
 
         cache_payload = {
             'last_modified': current_mtime,

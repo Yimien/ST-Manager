@@ -1407,12 +1407,22 @@ def api_update_card():
         should_refresh_card_cache = bool(file_content_modified or is_renamed or force_set_cover)
 
         if should_refresh_card_cache:
-            cache_updated = update_card_cache(final_rel_path_id, current_full_path, parsed_info=info, mtime=current_mtime)
+            cache_updated = update_card_cache(
+                final_rel_path_id,
+                current_full_path,
+                parsed_info=info,
+                mtime=current_mtime,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
 
         should_enqueue_world_owner = bool(resource_folder_changed or cache_updated)
 
         if should_enqueue_world_owner:
-            enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)
+            owner_payload = {'remove_owner_ids': [raw_id]} if raw_id != final_rel_path_id else None
+            if owner_payload:
+                enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path, payload=owner_payload)
+            else:
+                enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)
 
         if raw_id != final_rel_path_id:
             try:
@@ -2514,9 +2524,17 @@ def api_change_image():
             save_ui_data(ui_data_for_import_time)
         
         # 3. 更新数据库记录 (Upsert)
-        cache_updated = update_card_cache(final_id, target_save_path)
+        cache_updated = update_card_cache(
+            final_id,
+            target_save_path,
+            remove_entity_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+        )
         if cache_updated:
-            enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path)
+            owner_payload = {'remove_owner_ids': [raw_id]} if is_format_conversion and raw_id != final_id else None
+            if owner_payload:
+                enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path, payload=owner_payload)
+            else:
+                enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path)
         
         # 4. [增量更新] 内存缓存
         # 我们需要构造一个符合 ctx.cache 格式的对象

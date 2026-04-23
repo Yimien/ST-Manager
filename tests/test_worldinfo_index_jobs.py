@@ -71,6 +71,48 @@ def test_update_card_cache_enqueues_embedded_owner_refresh(monkeypatch):
     assert 'upsert_world_embedded' in job_names
 
 
+def test_update_card_cache_enqueues_single_upsert_card_with_stale_cleanup_payload(monkeypatch):
+    calls = []
+
+    class _FakeConn:
+        def cursor(self):
+            return self
+
+        def execute(self, *_args, **_kwargs):
+            return self
+
+        def fetchone(self):
+            return {'is_favorite': 0, 'has_character_book': 0}
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(cache_service, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(cache_service, 'get_file_hash_and_size', lambda _path: ('h', 12))
+    monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': ['blue']}})
+    monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
+    monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (False, ''))
+    monkeypatch.setattr(cache_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    cache_service.update_card_cache(
+        'cards/hero-renamed.png',
+        'D:/cards/hero-renamed.png',
+        mtime=123.0,
+        remove_entity_ids=['cards/hero.json'],
+    )
+
+    assert calls == [
+        (
+            ('upsert_card',),
+            {
+                'entity_id': 'cards/hero-renamed.png',
+                'source_path': 'D:/cards/hero-renamed.png',
+                'payload': {'remove_entity_ids': ['cards/hero.json']},
+            },
+        )
+    ]
+
+
 def test_update_card_cache_enqueues_embedded_owner_refresh_when_worldinfo_removed(monkeypatch):
     calls = []
 
@@ -332,10 +374,11 @@ def test_update_card_cache_returns_false_when_cache_write_fails(monkeypatch):
 def test_cards_api_worldinfo_owner_enqueue_is_gated_by_update_card_cache_success_contract():
     source = (ROOT / 'core/api/v1/cards.py').read_text(encoding='utf-8')
 
-    assert "cache_updated = update_card_cache(final_rel_path_id, current_full_path, parsed_info=info, mtime=current_mtime)" in source
+    assert "remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None" in source
     assert "should_enqueue_world_owner = bool(resource_folder_changed or cache_updated)" in source
-    assert "if should_enqueue_world_owner:\n            enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)" in source
-    assert "update_card_cache(final_rel_path_id, current_full_path, parsed_info=info, mtime=current_mtime)\n        enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)" not in source
+    assert "if should_enqueue_world_owner:" in source
+    assert "enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)" in source
+    assert "enqueue_index_job(\n                    'upsert_card'" not in source
     assert "enqueue_index_job('upsert_world_embedded', entity_id=final_rel_path_id, source_path=current_full_path)" not in source
 
 

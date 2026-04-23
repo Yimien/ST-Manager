@@ -8,6 +8,7 @@ from core.config import DEFAULT_DB_PATH
 from core.context import ctx
 from core.data.index_runtime_store import ensure_index_runtime_schema
 from core.services.index_build_service import (
+    apply_card_increment,
     apply_worldinfo_embedded_increment,
     apply_worldinfo_owner_increment,
     apply_worldinfo_path_increment,
@@ -143,7 +144,13 @@ def worker_loop():
                 if row['job_type'] == 'rebuild_scope':
                     rebuild_scope_generation(payload.get('scope') or 'cards', reason='manual_rebuild')
                 elif row['job_type'] == 'upsert_card':
-                    rebuild_scope_generation('cards', reason='incremental_reconcile')
+                    with _connect() as conn:
+                        apply_card_increment(
+                            conn,
+                            row['entity_id'],
+                            row['source_path'],
+                            remove_entity_ids=payload.get('remove_entity_ids') or [],
+                        )
                 elif row['job_type'] == 'upsert_worldinfo_path':
                     try:
                         with _connect() as conn:
@@ -177,7 +184,12 @@ def worker_loop():
                 elif row['job_type'] == 'upsert_world_owner':
                     try:
                         with _connect() as conn:
-                            apply_worldinfo_owner_increment(conn, row['entity_id'], row['source_path'])
+                            apply_worldinfo_owner_increment(
+                                conn,
+                                row['entity_id'],
+                                row['source_path'],
+                                remove_owner_ids=payload.get('remove_owner_ids') or [],
+                            )
                     except RuntimeError as exc:
                         if 'active generation missing' not in str(exc):
                             raise

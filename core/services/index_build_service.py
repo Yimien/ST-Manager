@@ -64,6 +64,25 @@ def _insert_worldinfo_search(conn, generation: int, entity_id: str, *parts):
     )
 
 
+def _delete_card_entity_rows(conn, generation: int, entity_id: str):
+    conn.execute(
+        'DELETE FROM index_entities_v2 WHERE generation = ? AND entity_id = ?',
+        (generation, entity_id),
+    )
+    conn.execute(
+        'DELETE FROM index_entity_tags_v2 WHERE generation = ? AND entity_id = ?',
+        (generation, entity_id),
+    )
+    conn.execute(
+        'DELETE FROM index_search_fast_v2 WHERE generation = ? AND entity_id = ?',
+        (generation, entity_id),
+    )
+    conn.execute(
+        'DELETE FROM index_search_full_v2 WHERE generation = ? AND entity_id = ?',
+        (generation, entity_id),
+    )
+
+
 def _resolve_runtime_dir(raw_path: str, default: str) -> str:
     value = str(raw_path or default or '').strip()
     if not value:
@@ -177,6 +196,18 @@ def _delete_worldinfo_entity_rows(conn, generation: int, entity_id: str):
         'DELETE FROM index_search_full_v2 WHERE generation = ? AND entity_id = ?',
         (generation, entity_id),
     )
+
+
+def _delete_worldinfo_owner_rows(conn, generation: int, card_id: str):
+    owner_entity_id = f'card::{card_id}'
+    _delete_worldinfo_entity_rows(conn, generation, f'world::embedded::{card_id}')
+
+    existing_rows = conn.execute(
+        'SELECT entity_id FROM index_entities_v2 WHERE generation = ? AND entity_type = ? AND owner_entity_id = ?',
+        (generation, 'world_resource', owner_entity_id),
+    ).fetchall()
+    for existing_row in existing_rows:
+        _delete_worldinfo_entity_rows(conn, generation, str(existing_row['entity_id'] or ''))
 
 
 def apply_worldinfo_path_increment(conn, source_path: str) -> bool:
@@ -311,10 +342,16 @@ def apply_worldinfo_embedded_increment(conn, card_id: str, source_path: str = ''
     return True
 
 
-def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '') -> bool:
+def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '', *, remove_owner_ids: list[str] | None = None) -> bool:
     generation = get_active_generation(conn, 'worldinfo')
     if generation <= 0:
         raise RuntimeError('worldinfo active generation missing')
+
+    for stale_card_id in remove_owner_ids or []:
+        stale_value = str(stale_card_id or '').strip()
+        if not stale_value:
+            continue
+        _delete_worldinfo_owner_rows(conn, generation, stale_value)
 
     row = conn.execute(
         'SELECT id, char_name, category, last_modified, has_character_book, character_book_name FROM card_metadata WHERE id = ?',
@@ -323,19 +360,13 @@ def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '') -
     if row is None:
         raise RuntimeError(f'worldinfo owner card missing: {card_id}')
 
+    _delete_worldinfo_owner_rows(conn, generation, card_id)
     apply_worldinfo_embedded_increment(conn, card_id, source_path)
 
     cfg = load_config()
     ui_data = load_ui_data()
     resources_dir = str(cfg.get('resources_dir') or '')
     owner_entity_id = f'card::{card_id}'
-
-    existing_rows = conn.execute(
-        'SELECT entity_id FROM index_entities_v2 WHERE generation = ? AND entity_type = ? AND owner_entity_id = ?',
-        (generation, 'world_resource', owner_entity_id),
-    ).fetchall()
-    for existing_row in existing_rows:
-        _delete_worldinfo_entity_rows(conn, generation, str(existing_row['entity_id'] or ''))
 
     resource_folder = str((ui_data.get(card_id) or {}).get('resource_folder', '')).strip()
     resource_item_categories = ((ui_data.get('_resource_item_categories_v1') or {}).get('worldinfo') or {})
@@ -414,6 +445,93 @@ def connect_index_db(db_path=None):
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=NORMAL;')
     return conn
+
+
+def apply_card_increment(conn, card_id: str, source_path: str = '', *, remove_entity_ids: list[str] | None = None) -> bool:
+    generation = get_active_generation(conn, 'cards')
+    if generation <= 0:
+        raise RuntimeError('cards active generation missing')
+
+    remove_entity_ids = remove_entity_ids or []
+    for stale_card_id in remove_entity_ids:
+        stale_value = str(stale_card_id or '').strip()
+        if not stale_value:
+            continue
+        _delete_card_entity_rows(conn, generation, f'card::{stale_value}')
+
+    row = conn.execute(
+        'SELECT id, char_name, tags, category, last_modified, token_count, is_favorite FROM card_metadata WHERE id = ?',
+        (card_id,),
+    ).fetchone()
+    entity_id = f'card::{card_id}'
+    _delete_card_entity_rows(conn, generation, entity_id)
+
+    if row is None:
+        conn.commit()
+        return True
+
+    ui_data = load_ui_data()
+    tags = json.loads(row['tags'] or '[]') if row['tags'] else []
+    summary = str((ui_data.get(card_id) or {}).get('summary', ''))
+    resolved_source_path = str(source_path or os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep)))
+    filename = str(card_id).split('/')[-1]
+    conn.execute(
+        '''
+        INSERT OR REPLACE INTO index_entities_v2(
+            generation, entity_id, entity_type, source_path, owner_entity_id, name, filename,
+            display_category, physical_category, category_mode, favorite, summary_preview,
+            updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        (
+            generation,
+            entity_id,
+            'card',
+            resolved_source_path,
+            '',
+            row['char_name'] or '',
+            filename,
+            row['category'] or '',
+            row['category'] or '',
+            'physical',
+            int(row['is_favorite'] or 0),
+            summary,
+            float(row['last_modified'] or 0),
+            0,
+            int(row['token_count'] or 0),
+            str(row['char_name'] or '').lower(),
+            float(row['last_modified'] or 0),
+            '',
+            build_file_source_revision(resolved_source_path),
+        ),
+    )
+
+    for tag in tags:
+        normalized_tag = str(tag).strip()
+        if not normalized_tag:
+            continue
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (generation, entity_id, normalized_tag),
+        )
+
+    content = ' '.join([
+        str(row['char_name'] or ''),
+        filename,
+        str(row['category'] or ''),
+        summary,
+        ' '.join(str(tag) for tag in tags),
+    ]).strip()
+    conn.execute(
+        'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (generation, entity_id, content),
+    )
+    conn.execute(
+        'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+        (generation, entity_id, content),
+    )
+    conn.commit()
+    return True
 
 
 def build_cards_generation(conn, generation: int):

@@ -1,5 +1,6 @@
 import json
 import sys
+from io import BytesIO
 from threading import RLock
 from pathlib import Path
 
@@ -141,3 +142,81 @@ def test_update_card_success_returns_refreshed_source_revision(monkeypatch, tmp_
     payload = res.get_json()
     assert payload['success'] is True
     assert payload['updated_card']['source_revision'] == refreshed_revision
+
+
+def test_change_image_json_to_png_enqueues_stale_cleanup_with_raw_id(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    cards_dir.mkdir()
+    card_path = cards_dir / 'hero.json'
+    card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': []}}, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': []}})
+    monkeypatch.setattr(cards_api, 'resize_image_if_needed', lambda image: image)
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cards_api, 'clean_sidecar_images', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'clean_thumbnail_cache', lambda *_args, **_kwargs: None)
+    cache_calls = []
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)) or True)
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(cards_api, 'save_ui_data', lambda _payload: None)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 0))
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
+
+    enqueued = []
+    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda *args, **kwargs: enqueued.append((args, kwargs)))
+
+    class _FakeCache:
+        initialized = True
+        id_map = {}
+        cards = []
+        bundle_map = {}
+        category_counts = {}
+
+        def delete_card_update(self, card_id):
+            assert card_id == 'hero.json'
+
+        def add_card_update(self, payload):
+            return payload
+
+        def update_card_data(self, _card_id, payload):
+            return payload
+
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    image_bytes = BytesIO()
+    from PIL import Image
+    Image.new('RGBA', (1, 1), (255, 0, 0, 255)).save(image_bytes, format='PNG')
+    image_bytes.seek(0)
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/change_image',
+        data={
+            'id': 'hero.json',
+            'image': (image_bytes, 'cover.png'),
+        },
+        content_type='multipart/form-data',
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['new_id'] == 'hero.png'
+    assert cache_calls == [
+        (
+            ('hero.png', str(cards_dir / 'hero.png')),
+            {'remove_entity_ids': ['hero.json']},
+        )
+    ]
+    assert enqueued == [
+        (
+            ('upsert_world_owner',),
+            {
+                'entity_id': 'hero.png',
+                'source_path': str(cards_dir / 'hero.png'),
+                'payload': {'remove_owner_ids': ['hero.json']},
+            },
+        ),
+    ]
