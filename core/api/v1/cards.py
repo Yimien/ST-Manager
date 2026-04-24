@@ -49,7 +49,8 @@ from core.services.index_service import enqueue_index_job
 from core.services.card_index_sync_service import sync_card_index_jobs
 from core.services.index_build_service import apply_card_increment, connect_index_db
 from core.services.card_index_query_service import query_indexed_cards
-from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover, move_card_internal
+from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover, move_card_internal, sync_folder_prefix_after_fs_move, cleanup_deleted_cards_after_fs_delete
+from core.services.card_service import sync_exact_card_after_fs_move
 from core.services.tag_management_service import build_governance_feedback, build_known_tag_set, filter_governed_tags
 from core.services.automation_service import (
     auto_run_rules_on_card,
@@ -3650,66 +3651,20 @@ def api_rename_folder():
         # 计算新的相对路径
         new_rel_path = os.path.relpath(new_path, CARDS_FOLDER).replace('\\', '/')
         
-        # 2. [UI Data 更新] (保持原逻辑)
+        # 2. [数据库 / UI / 缓存增量同步]
         ui_data = load_ui_data()
-        ui_changed = False
-        old_prefix = old_path + "/"
-        
-        keys_to_move = []
-        for key in ui_data.keys():
-            if key == old_path or key.startswith(old_prefix):
-                keys_to_move.append(key)
-        
-        for key in keys_to_move:
-            if key == old_path:
-                new_key = new_rel_path
-            else:
-                new_key = key.replace(old_path, new_rel_path, 1)
-            
-            ui_data[new_key] = ui_data[key]
-            del ui_data[key]
-            ui_changed = True
-            
-        if ui_changed:
-            save_ui_data(ui_data)
-            
-        # 3. [数据库更新]
         try:
             db_path = DEFAULT_DB_PATH
             with sqlite3.connect(db_path, timeout=30) as conn:
-                cursor = conn.cursor()
-
-                # === 转义 SQL 通配符 ===
-                # 如果文件夹名包含 _ 或 %，必须转义，否则 LIKE 会匹配错误
-                # 例如: old_path="char_v1", 不转义 LIKE 'char_v1/%' 会匹配 "char_v10/img.png"
-                escaped_old_path = old_path.replace('_', r'\_').replace('%', r'\%')
-
-                # A. 查找所有子文件 (ID 以 old_path/ 开头)
-                # 使用 ESCAPE '\' 语法
-                cursor.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_path,))
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    curr_id = row[0]
-                    # Python 字符串替换不需要转义，直接替换前缀
-                    new_id_val = curr_id.replace(old_path, new_rel_path, 1)
-                    
-                    # 更新 id 和 category
-                    cursor.execute("""
-                        UPDATE card_metadata 
-                        SET id = ?, 
-                            category = REPLACE(category, ?, ?) 
-                        WHERE id = ?
-                    """, (new_id_val, old_path, new_rel_path, curr_id))
-                
-                conn.commit()
-
-            # 4. [内存增量更新]
-            ctx.cache.rename_folder_update(old_path, new_rel_path)
-            
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=old_path,
+                    new_path=new_rel_path,
+                )
         except Exception as e:
-            # 如果数据库更新失败，记录错误并触发全量重载，保证数据最终一致性
-            logger.error(f"DB update failed after file rename: {e}")
+            # 如果增量同步失败，记录错误并触发全量重载，保证数据最终一致性
+            logger.error(f"Folder sync failed after file rename: {e}")
             schedule_reload(reason="rename_folder:fallback")
             return jsonify({
                 "success": True, 
@@ -3775,6 +3730,12 @@ def api_delete_folder():
             cursor = conn.cursor()
             escaped_old_prefix = folder_path.replace('_', r'\_').replace('%', r'\%')
             cursor.execute(
+                "SELECT id FROM card_metadata WHERE id = ? OR id LIKE ? || '/%' ESCAPE '\\' ORDER BY id",
+                (folder_path, escaped_old_prefix),
+            )
+            deleted_card_ids = [row[0] for row in cursor.fetchall()]
+            source_paths_by_card_id = {card_id: card_id for card_id in deleted_card_ids}
+            cursor.execute(
                 "SELECT COUNT(*) FROM card_metadata WHERE id = ? OR id LIKE ? || '/%' ESCAPE '\\'",
                 (folder_path, escaped_old_prefix),
             )
@@ -3790,9 +3751,14 @@ def api_delete_folder():
             ui_data = load_ui_data()
             prefix = folder_path + '/'
             keys_to_remove = [k for k in ui_data.keys() if k == folder_path or k.startswith(prefix)]
+            ui_changed = False
             if keys_to_remove:
                 for k in keys_to_remove:
                     del ui_data[k]
+                ui_changed = True
+            if delete_worldinfo_notes_for_card_prefix(ui_data, folder_path):
+                ui_changed = True
+            if ui_changed:
                 save_ui_data(ui_data)
 
             # 4) 内存增量（可见文件夹列表）
@@ -3806,22 +3772,33 @@ def api_delete_folder():
             # 5) 触发刷新（这里必须强制同步重载：前端会立即请求 list_cards 读取 ctx.cache）
             force_reload(reason="delete_folder:delete_children")
 
+            cleanup_result = cleanup_deleted_cards_after_fs_delete(
+                deleted_card_ids=deleted_card_ids,
+                source_paths_by_card_id=source_paths_by_card_id,
+            )
+            cleanup_warnings = []
+            if isinstance(cleanup_result, dict):
+                reported_warnings = cleanup_result.get('warnings')
+                if isinstance(reported_warnings, list):
+                    cleanup_warnings = [str(item) for item in reported_warnings if item]
+
             if dir_is_empty:
                 msg = f"文件夹已删除。{deleted_cards} 个项目在索引中已移除。"
             else:
                 msg = f"文件夹及其子内容已删除并移动到回收站（可恢复）。{deleted_cards} 个项目已移除。"
 
-            return jsonify({
+            response = {
                 "success": True,
                 "deleted_children": True,
                 "deleted_count": deleted_cards,
                 "msg": msg,
-            })
+            }
+            if cleanup_warnings:
+                response['warning'] = '\n'.join(cleanup_warnings)
+            return jsonify(response)
 
-        ui_data = load_ui_data()
-        ui_changed = False
         conn = get_db()
-        cursor = conn.cursor()
+        ui_data = load_ui_data()
 
         # === 核心逻辑：将 target_dir 下的所有内容（文件和文件夹）移动到 parent_dir ===
         
@@ -3832,6 +3809,8 @@ def api_delete_folder():
             return jsonify({"success": False, "msg": f"无法读取目录: {e}"})
 
         moved_count = 0
+        exact_card_moves = []
+        folder_prefix_moves = []
 
         file_groups = {}
         dirs = []
@@ -3889,20 +3868,16 @@ def api_delete_folder():
                         parent_rel = os.path.dirname(folder_path)
                         # 注意：parent_rel 为空时，ID 就是 filename
                         new_rel_id = f"{parent_rel}/{new_filename}" if parent_rel else new_filename
-                        
-                        # 更新 DB
-                        cursor.execute("UPDATE card_metadata SET id = ?, category = ? WHERE id = ?", 
-                                      (new_rel_id, parent_rel, old_rel_id))
-                        
-                        # 更新 UI Data
-                        if old_rel_id in ui_data:
-                            ui_data[new_rel_id] = ui_data[old_rel_id]
-                            del ui_data[old_rel_id]
-                            ui_changed = True
-                            
-                        # 更新缓存 (单卡)
-                        ctx.cache.move_card_update(old_rel_id, new_rel_id, folder_path, parent_rel, new_filename, dst_path)
-                        
+                        exact_card_moves.append(
+                            {
+                                'old_card_id': old_rel_id,
+                                'new_card_id': new_rel_id,
+                                'dst_full_path': dst_path,
+                                'final_name': new_filename,
+                                'old_category': folder_path,
+                            }
+                        )
+
                 except Exception as e:
                     logger.error(f"Error moving file {original_filename}: {e}")
 
@@ -3931,34 +3906,34 @@ def api_delete_folder():
                 old_prefix = f"{folder_path}/{dir_name}"
                 parent_rel = os.path.dirname(folder_path)
                 new_prefix = f"{parent_rel}/{final_dir_name}" if parent_rel else final_dir_name
-                
-                escaped_old_prefix = old_prefix.replace('_', r'\_').replace('%', r'\%')
-                
-                cursor.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_prefix,))
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    curr_id = row[0]
-                    new_id = curr_id.replace(old_prefix, new_prefix, 1)
-                    
-                    cursor.execute("UPDATE card_metadata SET id = ? WHERE id = ?", (new_id, curr_id))
-                    cursor.execute("UPDATE card_metadata SET category = REPLACE(category, ?, ?) WHERE id = ?", 
-                                  (old_prefix, new_prefix, new_id))
-                
-                # Bundle UI Data 更新
-                if old_prefix in ui_data:
-                    ui_data[new_prefix] = ui_data[old_prefix]
-                    del ui_data[old_prefix]
-                    ui_changed = True
-                
-                # 缓存更新
-                ctx.cache.move_folder_update(old_prefix, new_prefix)
-                
+                folder_prefix_moves.append((old_prefix, new_prefix))
+
             except Exception as e:
                 logger.error(f"Error moving subfolder {dir_name}: {e}")
 
-        conn.commit()
-        if ui_changed: save_ui_data(ui_data)
+        try:
+            for move in exact_card_moves:
+                sync_exact_card_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_card_id=move['old_card_id'],
+                    new_card_id=move['new_card_id'],
+                    dst_full_path=move['dst_full_path'],
+                    final_name=move['final_name'],
+                    old_category=move['old_category'],
+                )
+
+            for old_prefix, new_prefix in folder_prefix_moves:
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=old_prefix,
+                    new_path=new_prefix,
+                )
+        except Exception as e:
+            logger.error(f"Delete folder sync failed after filesystem moves: {e}")
+            schedule_reload(reason="delete_folder:fallback")
+            return jsonify({"success": False, "msg": str(e)})
 
         # 4. 删除原空文件夹
         try:
@@ -4040,15 +4015,26 @@ def api_move_folder():
         # === 场景 A: 目标不存在，直接整文件夹移动 (最快) ===
         if not os.path.exists(target_full_path):
             shutil.move(source_full_path, target_full_path)
-            
-            # 更新数据
-            ui_data = load_ui_data()
-            rename_folder_in_db(source_path, new_path_prefix) # 见下方辅助函数说明或直接写SQL
-            rename_folder_in_ui(ui_data, source_path, new_path_prefix)
-            save_ui_data(ui_data)
-            
-            # 内存增量更新
-            ctx.cache.move_folder_update(source_path, new_path_prefix)
+
+            try:
+                ui_data = load_ui_data()
+                conn = get_db()
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=source_path,
+                    new_path=new_path_prefix,
+                )
+            except Exception as e:
+                logger.error(f"Folder sync failed after folder move: {e}")
+                schedule_reload(reason="move_folder:fallback")
+                return jsonify({
+                    "success": True,
+                    "new_path": new_path_prefix,
+                    "mode": "move",
+                    "warning": "文件夹已移动，但数据库索引更新遇到问题，系统将自动修复。",
+                    "category_counts": ctx.cache.category_counts,
+                })
             
             return jsonify({
                 "success": True, 

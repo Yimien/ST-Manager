@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 from flask import Flask
@@ -15,6 +16,7 @@ from core.api.v1 import cards as cards_api
 from core.data import db_session as db_session_module
 from core.data import ui_store as ui_store_module
 from core.context import ctx
+from core.services import card_service
 
 
 def _make_test_app():
@@ -144,6 +146,157 @@ def test_delete_folder_dissolve_moves_children(monkeypatch, folder_fixture):
     assert 'sub' in ui_after
 
 
+def test_delete_folder_dissolve_delegates_post_move_sync(monkeypatch, folder_fixture):
+    cards_dir = folder_fixture['cards_dir']
+    trash_dir = folder_fixture['trash_dir']
+    db_path = folder_fixture['db_path']
+    ui_path = folder_fixture['ui_path']
+
+    exact_sync_calls = []
+    folder_sync_calls = []
+    update_cache_calls = []
+    sync_index_calls = []
+
+    def _record_exact_sync(**kwargs):
+        exact_sync_calls.append(kwargs.copy())
+        return card_service.sync_exact_card_after_fs_move(**kwargs)
+
+    def _record_folder_sync(**kwargs):
+        folder_sync_calls.append(kwargs.copy())
+        return card_service.sync_folder_prefix_after_fs_move(**kwargs)
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_dir), raising=False)
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(db_session_module, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'force_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'sync_exact_card_after_fs_move', _record_exact_sync, raising=False)
+    monkeypatch.setattr(cards_api, 'sync_folder_prefix_after_fs_move', _record_folder_sync, raising=False)
+    monkeypatch.setattr(
+        card_service,
+        'update_card_cache',
+        lambda card_id, full_path, **kwargs: update_cache_calls.append(
+            {'card_id': card_id, 'full_path': full_path, 'kwargs': kwargs}
+        ) or {
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        },
+    )
+    monkeypatch.setattr(
+        card_service,
+        'sync_card_index_jobs',
+        lambda **kwargs: sync_index_calls.append(kwargs) or {},
+    )
+
+    ctx.cache.visible_folders = ['testA']
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/delete_folder', json={'folder_path': 'testA'})
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert exact_sync_calls == [
+        {
+            'conn': ANY,
+            'ui_data': ANY,
+            'old_card_id': 'testA/a.png',
+            'new_card_id': 'a.png',
+            'dst_full_path': str(cards_dir / 'a.png'),
+            'final_name': 'a.png',
+            'old_category': 'testA',
+        }
+    ]
+    assert folder_sync_calls == [
+        {
+            'conn': ANY,
+            'ui_data': ANY,
+            'old_path': 'testA/sub',
+            'new_path': 'sub',
+        }
+    ]
+
+    assert update_cache_calls == [
+        {
+            'card_id': 'a.png',
+            'full_path': str(cards_dir / 'a.png'),
+            'kwargs': {'remove_entity_ids': ['testA/a.png']},
+        },
+        {
+            'card_id': 'sub/b.png',
+            'full_path': str(cards_dir / 'sub' / 'b.png'),
+            'kwargs': {'remove_entity_ids': ['testA/sub/b.png']},
+        },
+    ]
+    assert sync_index_calls == [
+        {
+            'card_id': 'a.png',
+            'source_path': str(cards_dir / 'a.png'),
+            'file_content_changed': False,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': ['testA/a.png'],
+            'remove_owner_ids': ['testA/a.png'],
+        },
+        {
+            'card_id': 'sub/b.png',
+            'source_path': str(cards_dir / 'sub' / 'b.png'),
+            'file_content_changed': False,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': ['testA/sub/b.png'],
+            'remove_owner_ids': ['testA/sub/b.png'],
+        },
+    ]
+
+
+def test_delete_folder_dissolve_schedules_fallback_reload_when_shared_sync_fails(monkeypatch, folder_fixture):
+    cards_dir = folder_fixture['cards_dir']
+    trash_dir = folder_fixture['trash_dir']
+    db_path = folder_fixture['db_path']
+    ui_path = folder_fixture['ui_path']
+
+    schedule_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(db_session_module, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+
+    monkeypatch.setattr(cards_api, 'force_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda **kwargs: schedule_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError('sync failed')),
+        raising=False,
+    )
+
+    ctx.cache.visible_folders = ['testA']
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/delete_folder', json={'folder_path': 'testA'})
+
+    assert res.status_code == 200
+    assert res.get_json() == {'success': False, 'msg': 'sync failed'}
+    assert schedule_calls == [{'reason': 'delete_folder:fallback'}]
+    assert (cards_dir / 'a.png').exists()
+    assert (cards_dir / 'sub').is_dir()
+    assert (cards_dir / 'sub' / 'b.png').exists()
+    assert (cards_dir / 'testA').is_dir()
+    assert list((cards_dir / 'testA').iterdir()) == []
+
+
 def test_delete_folder_delete_children_recursive(monkeypatch, folder_fixture):
     cards_dir = folder_fixture['cards_dir']
     trash_dir = folder_fixture['trash_dir']
@@ -187,6 +340,84 @@ def test_delete_folder_delete_children_recursive(monkeypatch, folder_fixture):
     # ui_data: 目录下的所有 UI keys 被删除
     ui_after = _read_ui_data(ui_path)
     assert ui_after == {}
+
+
+def test_delete_folder_delete_children_dispatches_cleanup_and_clears_embedded_notes(monkeypatch, folder_fixture):
+    cards_dir = folder_fixture['cards_dir']
+    trash_dir = folder_fixture['trash_dir']
+    db_path = folder_fixture['db_path']
+    ui_path = folder_fixture['ui_path']
+
+    ui_path.write_text(
+        json.dumps(
+            {
+                'testA/a.png': {'summary': 'a'},
+                'testA/sub/b.png': {'summary': 'b'},
+                '_worldinfo_notes_v1': {
+                    'embedded::testA/a.png': {'summary': 'embedded-a'},
+                    'embedded::testA/sub/b.png': {'summary': 'embedded-b'},
+                    'embedded::elsewhere/c.png': {'summary': 'keep-me'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    cleanup_calls = []
+
+    def _cleanup_deleted_cards_after_fs_delete(*args, **kwargs):
+        cleanup_calls.append(
+            {
+                'deleted_cards': args,
+                'args': args,
+                'kwargs': kwargs,
+            }
+        )
+        return {'warnings': []}
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(db_session_module, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'force_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        cards_api,
+        'cleanup_deleted_cards_after_fs_delete',
+        _cleanup_deleted_cards_after_fs_delete,
+        raising=False,
+    )
+
+    ctx.cache.visible_folders = ['testA', 'testA/sub']
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/delete_folder', json={'folder_path': 'testA', 'delete_children': True})
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['deleted_children'] is True
+    assert payload['deleted_count'] == 2
+    assert cleanup_calls == [
+        {
+            'deleted_cards': (),
+            'args': (),
+            'kwargs': {
+                'deleted_card_ids': ['testA/a.png', 'testA/sub/b.png'],
+                'source_paths_by_card_id': {
+                    'testA/a.png': 'testA/a.png',
+                    'testA/sub/b.png': 'testA/sub/b.png',
+                },
+            },
+        }
+    ]
+
+    ui_after = _read_ui_data(ui_path)
+    assert set(ui_after['_worldinfo_notes_v1'].keys()) == {'embedded::elsewhere/c.png'}
+    assert ui_after['_worldinfo_notes_v1']['embedded::elsewhere/c.png']['summary'] == 'keep-me'
 
 
 def test_delete_cards_cleans_embedded_worldinfo_notes(monkeypatch, tmp_path):

@@ -45,6 +45,7 @@ def sync_card_index_jobs(
         summary_changed
         or favorite_changed
         or tags_changed
+        or cleanup_entity_ids
         or ((file_content_changed or rename_changed or force_set_cover) and cache_updated)
     )
     if should_upsert_card:

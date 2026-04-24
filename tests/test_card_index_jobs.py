@@ -289,6 +289,39 @@ def test_sync_card_index_jobs_propagates_remove_entity_ids_payload(monkeypatch):
     ]
 
 
+def test_sync_card_index_jobs_cleanup_only_entity_ids_still_enqueue_upsert_card(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='deleted.png',
+        source_path='D:/cards/deleted.png',
+        remove_entity_ids=['deleted.png'],
+    )
+
+    assert result == {
+        'upsert_card': True,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': False,
+        'jobs_enqueued': ['upsert_card'],
+    }
+    assert calls == [
+        (
+            ('upsert_card',),
+            {
+                'entity_id': 'deleted.png',
+                'source_path': 'D:/cards/deleted.png',
+                'payload': {'remove_entity_ids': ['deleted.png']},
+            },
+        )
+    ]
+
+
 def test_cache_move_folder_update_migrates_bundle_map_and_version_ids():
     from core.data.cache import GlobalMetadataCache
 

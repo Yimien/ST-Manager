@@ -13,7 +13,14 @@ from urllib.parse import quote
 from core.config import CARDS_FOLDER, DEFAULT_DB_PATH, THUMB_FOLDER, BASE_DIR, load_config
 from core.context import ctx
 from core.data.db_session import get_db
-from core.data.ui_store import load_ui_data, save_ui_data, VERSION_REMARKS_KEY, ensure_import_time, get_import_time
+from core.data.ui_store import (
+    load_ui_data,
+    save_ui_data,
+    VERSION_REMARKS_KEY,
+    ensure_import_time,
+    get_import_time,
+    rename_embedded_worldinfo_note_card_prefix,
+)
 
 # === 服务依赖 ===
 from core.services.cache_service import update_card_cache
@@ -753,6 +760,119 @@ def rename_folder_in_ui(ui_data, old_path, new_path):
         changed = True
 
     return changed
+
+
+def sync_exact_card_after_fs_move(
+    *,
+    conn,
+    ui_data,
+    old_card_id,
+    new_card_id,
+    dst_full_path,
+    final_name,
+    old_category,
+):
+    target_category = new_card_id.rsplit('/', 1)[0] if '/' in new_card_id else ''
+    conn.execute(
+        'UPDATE card_metadata SET id = ?, category = ? WHERE id = ?',
+        (new_card_id, target_category, old_card_id),
+    )
+    conn.commit()
+
+    ui_changed = False
+    if old_card_id in ui_data:
+        ui_data[new_card_id] = ui_data[old_card_id]
+        del ui_data[old_card_id]
+        ui_changed = True
+
+    if _rename_prefixed_version_remark_ids(ui_data, old_card_id, new_card_id):
+        ui_changed = True
+
+    if rename_embedded_worldinfo_note_card_prefix(ui_data, old_card_id, new_card_id):
+        ui_changed = True
+
+    if ctx.cache:
+        ctx.cache.move_card_update(
+            old_card_id,
+            new_card_id,
+            old_category,
+            target_category,
+            final_name,
+            dst_full_path,
+        )
+
+    if ui_changed:
+        save_ui_data(ui_data)
+
+    remove_ids = [old_card_id] if new_card_id != old_card_id else None
+    cache_result = update_card_cache(
+        new_card_id,
+        dst_full_path,
+        remove_entity_ids=remove_ids,
+    )
+    sync_card_index_jobs(
+        card_id=new_card_id,
+        source_path=dst_full_path,
+        file_content_changed=False,
+        rename_changed=bool(new_card_id != old_card_id),
+        cache_updated=bool(cache_result.get('cache_updated')),
+        has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+        previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        remove_entity_ids=remove_ids,
+        remove_owner_ids=remove_ids,
+    )
+
+
+def sync_folder_prefix_after_fs_move(*, conn, ui_data, old_path, new_path):
+    moved_ids = _rename_prefixed_card_rows(conn, old_path, new_path)
+    conn.commit()
+    ui_changed = False
+
+    if rename_folder_in_ui(ui_data, old_path, new_path):
+        ui_changed = True
+
+    if rename_embedded_worldinfo_note_card_prefix(ui_data, old_path, new_path):
+        ui_changed = True
+
+    if ctx.cache:
+        ctx.cache.move_folder_update(old_path, new_path)
+
+    if ui_changed:
+        save_ui_data(ui_data)
+
+    for old_sub_id, new_sub_id in moved_ids:
+        new_sub_full_path = os.path.join(CARDS_FOLDER, new_sub_id.replace('/', os.sep))
+        remove_ids = [old_sub_id] if new_sub_id != old_sub_id else None
+        cache_result = update_card_cache(
+            new_sub_id,
+            new_sub_full_path,
+            remove_entity_ids=remove_ids,
+        )
+        sync_card_index_jobs(
+            card_id=new_sub_id,
+            source_path=new_sub_full_path,
+            file_content_changed=False,
+            rename_changed=bool(new_sub_id != old_sub_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=remove_ids,
+            remove_owner_ids=remove_ids,
+        )
+
+    return moved_ids
+
+
+def cleanup_deleted_cards_after_fs_delete(*, deleted_card_ids, source_paths_by_card_id=None):
+    source_paths_by_card_id = source_paths_by_card_id or {}
+
+    for card_id in deleted_card_ids or []:
+        sync_card_index_jobs(
+            card_id=card_id,
+            source_path=source_paths_by_card_id.get(card_id, ''),
+            remove_entity_ids=[card_id],
+            remove_owner_ids=[card_id],
+        )
 
 def sync_card_names_internal(
     card_id,

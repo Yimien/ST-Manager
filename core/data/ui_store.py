@@ -812,6 +812,43 @@ def delete_worldinfo_notes_for_card_prefix(ui_data, card_prefix):
     return True
 
 
+def rename_embedded_worldinfo_note_card_prefix(ui_data, old_card_prefix, new_card_prefix):
+    if not isinstance(ui_data, dict):
+        return False
+
+    normalized_old = _normalize_worldinfo_note_card_id(old_card_prefix)
+    normalized_new = _normalize_worldinfo_note_card_id(new_card_prefix)
+    if not normalized_old or not normalized_new or normalized_old == normalized_new:
+        return False
+
+    raw_notes = ui_data.get(WORLDINFO_NOTES_KEY)
+    if not isinstance(raw_notes, dict):
+        return False
+
+    changed = False
+    remapped = {}
+    exact_old_key = build_worldinfo_note_key('embedded', card_id=normalized_old)
+    nested_old_prefix = f'embedded::{normalized_old}/'
+
+    for note_key, note_value in raw_notes.items():
+        if note_key == exact_old_key:
+            remapped[build_worldinfo_note_key('embedded', card_id=normalized_new)] = note_value
+            changed = True
+            continue
+        if note_key.startswith(nested_old_prefix):
+            suffix = note_key[len(exact_old_key):]
+            remapped[f'embedded::{normalized_new}{suffix}'] = note_value
+            changed = True
+            continue
+        remapped[note_key] = note_value
+
+    if not changed:
+        return False
+
+    ui_data[WORLDINFO_NOTES_KEY] = remapped
+    return True
+
+
 def set_resource_item_categories(ui_data, payload):
     if not isinstance(ui_data, dict):
         return False
