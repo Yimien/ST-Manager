@@ -1269,6 +1269,7 @@ def api_create_world_info():
             json.dump(payload, f, ensure_ascii=False, separators=(',', ':'))
 
         invalidate_wi_list_cache()
+        _enqueue_worldinfo_file_refresh(final_path, load_config())
 
         rel = os.path.relpath(final_path, _resolve_wi_dir(cfg)).replace('\\', '/')
         file_name = os.path.basename(final_path)
@@ -1321,6 +1322,7 @@ def api_move_world_info_category():
         suppress_fs_events(3.0)
         new_path = _move_global_worldinfo_file(file_path, target_category, cfg)
         invalidate_wi_list_cache()
+        _enqueue_worldinfo_file_refresh(new_path, load_config())
         return jsonify({'success': True, 'msg': '世界书已移动', 'path': new_path})
     except ValueError as e:
         return jsonify({'success': False, 'msg': str(e)})

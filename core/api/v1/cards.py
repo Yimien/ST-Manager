@@ -49,7 +49,7 @@ from core.services.index_service import enqueue_index_job
 from core.services.card_index_sync_service import sync_card_index_jobs
 from core.services.index_build_service import apply_card_increment, connect_index_db
 from core.services.card_index_query_service import query_indexed_cards
-from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover
+from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover, move_card_internal
 from core.services.tag_management_service import build_governance_feedback, build_known_tag_set, filter_governed_tags
 from core.services.automation_service import (
     auto_run_rules_on_card,
@@ -1463,6 +1463,14 @@ def api_update_card():
                 remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
             )
 
+        if resource_folder_changed and not should_refresh_card_cache:
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                resource_folder_changed=True,
+                remove_owner_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+
         if summary_changed:
             sync_card_index_jobs(
                 card_id=final_rel_path_id,
@@ -1785,206 +1793,30 @@ def api_move_card():
             if not _is_safe_rel_path(cid):
                 return jsonify({"success": False, "msg": "非法卡片路径"}), 400
         
-        # 目标基础目录
-        dst_base_dir = os.path.join(CARDS_FOLDER, target_cat)
-        if not os.path.exists(dst_base_dir): os.makedirs(dst_base_dir)
-        
         moved_details = []
-        ui_data = load_ui_data()
-        ui_changed = False
-
-        # 准备数据库连接，用于实时更新
-        db_path = DEFAULT_DB_PATH
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # 使用缓存查找卡片属性
-        cache_map = ctx.cache.id_map
         
         for cid in card_ids:
             try:
-                card_info = cache_map.get(cid)
-                if not card_info: continue # 找不到卡片，跳过
+                success, new_id, msg = move_card_internal(cid, target_cat)
+                if not success:
+                    logger.warning('Move card skipped for %s: %s', cid, msg)
+                    continue
 
-                old_category = card_info['category']
-                is_bundle = card_info.get('is_bundle', False)
+                new_filename = os.path.basename(new_id)
+                new_category = new_id.rsplit('/', 1)[0] if '/' in new_id else ''
+                cache_item = (ctx.cache.id_map or {}).get(new_id) if ctx.cache else None
+                new_image_url = cache_item.get('image_url', '') if isinstance(cache_item, dict) else ''
 
-                # ===========================
-                # === 情况 1: 聚合角色包 ===
-                # ===========================
-                if is_bundle:
-                    bundle_rel_dir = card_info['bundle_dir'] # e.g. "Race/Elf"
-                    if not bundle_rel_dir: continue
-
-                    src_dir_full = os.path.join(CARDS_FOLDER, bundle_rel_dir.replace('/', os.sep))
-                    folder_name = os.path.basename(src_dir_full)
-                    
-                    # 目标路径 e.g. "Cards/NewCat/Elf"
-                    dst_dir_full = os.path.join(dst_base_dir, folder_name)
-                    
-                    # 如果源和目标一样，跳过
-                    if os.path.abspath(src_dir_full) == os.path.abspath(dst_dir_full):
-                        continue
-
-                    # 处理重名：如果目标文件夹已存在，自动改名 e.g. "Elf_1"
-                    if os.path.exists(dst_dir_full):
-                        counter = 1
-                        while True:
-                            new_folder_name = f"{folder_name}_{counter}"
-                            dst_dir_full = os.path.join(dst_base_dir, new_folder_name)
-                            if not os.path.exists(dst_dir_full):
-                                folder_name = new_folder_name
-                                break
-                            counter += 1
-                    
-                    # 执行移动
-                    shutil.move(src_dir_full, dst_dir_full)
-                    
-                    # 计算新的相对路径 (用于更新 ui_data 和前端)
-                    new_bundle_rel_dir = f"{target_cat}/{folder_name}" if target_cat else folder_name
-                    
-                    # 1. 更新数据库 (模糊匹配目录下的所有文件)
-                    cursor.execute("SELECT id FROM card_metadata WHERE id LIKE ? || '/%'", (bundle_rel_dir,))
-                    rows = cursor.fetchall()
-                    for row in rows:
-                        old_sub_id = row[0]
-                        new_sub_id = old_sub_id.replace(bundle_rel_dir, new_bundle_rel_dir, 1)
-                        cursor.execute("""
-                            UPDATE card_metadata 
-                            SET id = ?, 
-                                category = REPLACE(category, ?, ?) 
-                            WHERE id = ?
-                        """, (new_sub_id, bundle_rel_dir, new_bundle_rel_dir, old_sub_id))
-
-                    # 更新 UI Data (Key 是文件夹路径)
-                    if bundle_rel_dir in ui_data:
-                        ui_data[new_bundle_rel_dir] = ui_data[bundle_rel_dir]
-                        del ui_data[bundle_rel_dir]
-                        ui_changed = True
-                    
-                    ctx.cache.move_bundle_update(bundle_rel_dir, new_bundle_rel_dir, old_category, target_cat)
-
-                    # 返回给前端的信息
-                    moved_details.append({
-                        "old_id": cid,
-                        "new_id": new_bundle_rel_dir, # 前端可以用这个判断
-                        "is_bundle": True,
-                        "new_category": target_cat
-                    })
-
-                # ===========================
-                # === 情况 2: 普通角色卡 ===
-                # ===========================
-                else:
-                    src_sys_path = cid.replace('/', os.sep)
-                    src_full = os.path.join(CARDS_FOLDER, src_sys_path)
-                    
-                    if not os.path.exists(src_full): continue
-
-                    filename = os.path.basename(src_full)
-                    # 此时 dst_full 只是一个基于原名的假设路径，稍后会根据冲突检测改变
-                    # dst_full = os.path.join(dst_base_dir, filename) 
-                    
-                    # 如果源和目标目录完全一致，跳过
-                    if os.path.dirname(src_full) == os.path.abspath(dst_base_dir):
-                        continue
-                    
-                    # === 1. 识别文件及其伴生图片 ===
-                    sidecar_src = None
-                    sidecar_ext = None
-                    
-                    # 只有 JSON 才检查伴生图，PNG 本身就是主图
-                    if filename.lower().endswith('.json'):
-                        sidecar_src = find_sidecar_image(src_full)
-                        if sidecar_src:
-                            sidecar_ext = os.path.splitext(sidecar_src)[1]
-
-                    # === 2. 联合冲突检测 ===
-                    # 我们需要找到一个 base_name，使得 base_name.json 和 base_name.png 在目标目录都不存在
-                    
-                    name_part, ext_part = os.path.splitext(filename)
-                    counter = 0
-                    final_base_name = name_part
-                    
-                    while True:
-                        if counter > 0:
-                            final_base_name = f"{name_part}_{counter}"
-                        
-                        # 预测的主文件目标路径
-                        candidate_main_name = final_base_name + ext_part
-                        candidate_main_path = os.path.join(dst_base_dir, candidate_main_name)
-                        
-                        # 预测的伴生图目标路径 (如果有)
-                        candidate_sidecar_path = None
-                        if sidecar_ext:
-                            candidate_sidecar_name = final_base_name + sidecar_ext
-                            candidate_sidecar_path = os.path.join(dst_base_dir, candidate_sidecar_name)
-                        
-                        # === 同时检测主文件和伴生图是否存在 ===
-                        conflict_main = os.path.exists(candidate_main_path)
-                        conflict_sidecar = False
-                        if candidate_sidecar_path:
-                            conflict_sidecar = os.path.exists(candidate_sidecar_path)
-                        
-                        # 如果两者都不冲突，说明这个名字安全
-                        if not conflict_main and not conflict_sidecar:
-                            # 确定了最终的 safe paths
-                            dst_full = candidate_main_path
-                            dst_sidecar_full = candidate_sidecar_path
-                            final_filename = candidate_main_name
-                            break
-                        
-                        # 否则继续尝试下一个序号
-                        counter += 1
-                    
-                    # === 3. 执行移动 ===
-                    
-                    # 移动主文件
-                    shutil.move(src_full, dst_full)
-                    
-                    # 移动伴生图片 (如果有)
-                    if sidecar_src and dst_sidecar_full:
-                        shutil.move(sidecar_src, dst_sidecar_full)
-
-                    # === 4. 更新数据 ===
-                    
-                    # 计算新 ID (Relative Path)
-                    new_id = f"{target_cat}/{final_filename}" if target_cat else final_filename
-
-                    # 更新数据库
-                    cursor.execute("""
-                        UPDATE card_metadata 
-                        SET id = ?, category = ? 
-                        WHERE id = ?
-                    """, (new_id, target_cat, cid))
-                    # update_card_cache(new_id, dst_full) # 确保 hash 更新
-                    
-                    # 更新 UI Data
-                    if cid in ui_data:
-                        ui_data[new_id] = ui_data[cid]
-                        del ui_data[cid]
-                        ui_changed = True
-
-                    # 增量更新】内存缓存
-                    ctx.cache.move_card_update(cid, new_id, old_category, target_cat, final_filename, dst_full)
-
-                    moved_details.append({
-                        "old_id": cid,
-                        "new_id": new_id,
-                        "new_filename": final_filename,
-                        "new_category": target_cat,
-                        "new_image_url": ctx.cache.id_map[new_id]['image_url'] # 返回给前端用
-                    })
-                    
+                moved_details.append({
+                    "old_id": cid,
+                    "new_id": new_id,
+                    "new_filename": new_filename,
+                    "new_category": new_category,
+                    "new_image_url": new_image_url,
+                })
             except Exception as inner_e:
                 print(f"Error moving {cid}: {inner_e}")
                 continue
-        
-        # 提交数据库和 UI Data
-        conn.commit()
-
-        if ui_changed:
-            save_ui_data(ui_data)
         
         return jsonify({
             "success": True, 
@@ -2364,9 +2196,15 @@ def api_import_from_url():
             save_ui_data(ui_data)
         
         # === 6. 更新缓存与返回 ===
-        cache_updated = update_card_cache(rel_path, target_save_path)
-        if cache_updated:
-            enqueue_index_job('upsert_world_owner', entity_id=rel_path, source_path=target_save_path)
+        cache_result = update_card_cache(rel_path, target_save_path)
+        sync_card_index_jobs(
+            card_id=rel_path,
+            source_path=target_save_path,
+            file_content_changed=True,
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        )
         schedule_reload(reason="import_from_url")
 
         data_block = info.get('data', {}) if 'data' in info else info
@@ -4571,9 +4409,15 @@ def api_upload_commit():
             if import_time_changed:
                 save_ui_data(ui_data)
             
-            cache_updated = update_card_cache(rel_id, dst_path, parsed_info=info, file_hash=final_hash, file_size=final_size, mtime=mtime)
-            if cache_updated:
-                enqueue_index_job('upsert_world_owner', entity_id=rel_id, source_path=dst_path)
+            cache_result = update_card_cache(rel_id, dst_path, parsed_info=info, file_hash=final_hash, file_size=final_size, mtime=mtime)
+            sync_card_index_jobs(
+                card_id=rel_id,
+                source_path=dst_path,
+                file_content_changed=True,
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            )
             
             # 构建返回给前端的卡片对象
             if info:

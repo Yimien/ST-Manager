@@ -1723,7 +1723,11 @@ def test_sync_card_names_internal_template_rename_keeps_priority_over_legacy_fil
         },
     )
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
     monkeypatch.setattr(card_service, 'get_db', lambda: type('Conn', (), {'execute': lambda self, *a, **k: self, 'commit': lambda self: None})())
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: {})
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: None)
@@ -1925,7 +1929,11 @@ def test_sync_card_names_internal_accepts_structured_template_rename_config(monk
     monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
     monkeypatch.setattr(card_service, 'extract_card_info', lambda path: {'name': 'Hero Card', 'data': {'name': 'Hero Card'}})
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
     monkeypatch.setattr(card_service, 'get_db', lambda: type('Conn', (), {'execute': lambda self, *a, **k: self, 'commit': lambda self: None})())
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: {'folder/demo.json': {'import_time': 1704153600}})
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: None)

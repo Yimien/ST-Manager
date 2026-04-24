@@ -1166,7 +1166,7 @@ def test_update_card_ui_only_does_not_refresh_card_cache_or_enqueue_world_owner(
     })
     monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)))
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr('core.services.card_index_sync_service.enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
     monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
@@ -1195,7 +1195,9 @@ def test_update_card_ui_only_does_not_refresh_card_cache_or_enqueue_world_owner(
     body = res.get_json()
     assert body['success'] is True
     assert cache_calls == []
-    assert job_calls == []
+    assert job_calls == [
+        ('upsert_card', {'entity_id': card_rel, 'source_path': str(card_path)}),
+    ]
 
 
 def test_update_card_resource_folder_change_enqueues_world_owner_without_refreshing_card_cache(monkeypatch, tmp_path):
@@ -1265,7 +1267,7 @@ def test_update_card_resource_folder_change_enqueues_world_owner_without_refresh
     })
     monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)))
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr('core.services.card_index_sync_service.enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
     monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
@@ -1382,7 +1384,7 @@ def test_update_card_bundle_ui_only_resource_folder_change_enqueues_world_owner_
     })
     monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)))
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr('core.services.card_index_sync_service.enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
     monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
@@ -1489,8 +1491,15 @@ def test_update_card_file_content_change_enqueues_embedded_worldinfo_refresh(mon
         }
     })
     monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: written.setdefault('called', True))
-    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)) or True)
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: (
+        cache_calls.append((_args, _kwargs)),
+        {
+            'cache_updated': True,
+            'has_embedded_wi': True,
+            'previous_has_embedded_wi': False,
+        }
+    )[1])
+    monkeypatch.setattr('core.services.card_index_sync_service.enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
     monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
@@ -1535,6 +1544,8 @@ def test_update_card_file_content_change_enqueues_embedded_worldinfo_refresh(mon
     assert written == {'called': True}
     assert len(cache_calls) == 1
     assert job_calls == [
+        ('upsert_card', {'entity_id': card_rel, 'source_path': str(card_path)}),
+        ('upsert_world_embedded', {'entity_id': card_rel, 'source_path': str(card_path)}),
         ('upsert_world_owner', {'entity_id': card_rel, 'source_path': str(card_path)}),
     ]
 
@@ -1606,8 +1617,15 @@ def test_update_card_file_content_change_with_existing_resource_folder_enqueues_
         }
     })
     monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: written.setdefault('called', True))
-    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)) or True)
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: (
+        cache_calls.append((_args, _kwargs)),
+        {
+            'cache_updated': True,
+            'has_embedded_wi': True,
+            'previous_has_embedded_wi': False,
+        }
+    )[1])
+    monkeypatch.setattr('core.services.card_index_sync_service.enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
     monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda _ui_data, _ui_key, fallback: (False, fallback))
@@ -1652,6 +1670,8 @@ def test_update_card_file_content_change_with_existing_resource_folder_enqueues_
     assert written == {'called': True}
     assert len(cache_calls) == 1
     assert job_calls == [
+        ('upsert_card', {'entity_id': card_rel, 'source_path': str(card_path)}),
+        ('upsert_world_embedded', {'entity_id': card_rel, 'source_path': str(card_path)}),
         ('upsert_world_owner', {'entity_id': card_rel, 'source_path': str(card_path)}),
     ]
 
@@ -2363,6 +2383,34 @@ def test_create_worldinfo_suppresses_fs_events(monkeypatch, tmp_path):
     assert suppress_calls
 
 
+def test_create_worldinfo_enqueues_incremental_refresh(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    refresh_calls = []
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, '_enqueue_worldinfo_file_refresh', lambda path, cfg: refresh_calls.append((path, cfg)))
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/create',
+        json={'name': 'New World Info', 'target_category': '科幻/赛博朋克'},
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert refresh_calls == [
+        (
+            str(lorebooks_dir / '科幻' / '赛博朋克' / 'New World Info.json'),
+            {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+        )
+    ]
+
+
 def test_move_worldinfo_category_reset_rejects_non_resource_item(monkeypatch, tmp_path):
     lorebooks_dir = tmp_path / 'lorebooks'
     resources_dir = tmp_path / 'resources'
@@ -2402,6 +2450,42 @@ def test_move_worldinfo_category_reset_rejects_non_resource_item(monkeypatch, tm
     reset_payload = reset_res.get_json()
     assert reset_payload['success'] is False
     assert 'resource' in reset_payload['msg'].lower() or '资源' in reset_payload['msg']
+
+
+def test_move_global_worldinfo_category_enqueues_incremental_refresh(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    source_file = lorebooks_dir / '科幻' / 'dragon.json'
+    target_file = lorebooks_dir / '奇幻' / 'dragon.json'
+    _write_json(source_file, {'name': 'Dragon Lore', 'entries': {}})
+    refresh_calls = []
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, '_enqueue_worldinfo_file_refresh', lambda path, cfg: refresh_calls.append((path, cfg)))
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/category/move',
+        json={
+            'source_type': 'global',
+            'file_path': str(source_file),
+            'target_category': '奇幻',
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert Path(payload['path']) == target_file
+    assert refresh_calls == [
+        (
+            str(target_file),
+            {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+        )
+    ]
 
 
 def test_upload_worldinfo_uses_target_category_subfolder(monkeypatch, tmp_path):

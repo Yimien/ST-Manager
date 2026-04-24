@@ -19,6 +19,7 @@ from core.data.ui_store import load_ui_data, save_ui_data, VERSION_REMARKS_KEY, 
 from core.services.cache_service import update_card_cache
 from core.services.card_index_sync_service import sync_card_index_jobs
 from core.services.index_build_service import apply_card_increment, connect_index_db
+from core.services.index_job_worker import enqueue_index_job
 from core.services.scan_service import suppress_fs_events
 
 # === 工具函数 ===
@@ -1182,6 +1183,24 @@ def move_card_internal(card_id, target_category):
 
         conn.commit()
         if ui_changed: save_ui_data(ui_data)
+
+        if not is_directory:
+            cache_result = update_card_cache(
+                new_id,
+                dst_full_path,
+                remove_entity_ids=[card_id] if new_id != card_id else None,
+            )
+            sync_card_index_jobs(
+                card_id=new_id,
+                source_path=dst_full_path,
+                file_content_changed=False,
+                rename_changed=bool(new_id != card_id),
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+                remove_entity_ids=[card_id] if new_id != card_id else None,
+                remove_owner_ids=[card_id] if new_id != card_id else None,
+            )
 
         return True, new_id, "Success"
         
