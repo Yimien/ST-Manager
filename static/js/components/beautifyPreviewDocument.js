@@ -101,8 +101,8 @@ function buildPreviewBodyClasses(theme = {}) {
 }
 
 const PREVIEW_IDENTITY_ASSET_PATHS = {
-  character: "/static/images/beautify-preview/qiwu.png",
-  user: "/static/images/beautify-preview/chunlan.png",
+  character: "/static/images/beautify-preview/sumian.png",
+  user: "/static/images/beautify-preview/lingyan.png",
 };
 
 function buildInlineAvatarDataUri({
@@ -142,11 +142,11 @@ function buildPreviewIdentities(identities = {}) {
       avatarLabel: "ST",
     },
     character: {
-      name: character.name || "栖梧",
+      name: character.name || "苏眠",
       avatarSrc: character.avatarSrc || PREVIEW_IDENTITY_ASSET_PATHS.character,
     },
     user: {
-      name: user.name || "春岚",
+      name: user.name || "凌砚",
       avatarSrc: user.avatarSrc || PREVIEW_IDENTITY_ASSET_PATHS.user,
     },
   };

@@ -95,10 +95,10 @@ def test_build_beautify_preview_document_uses_builtin_identity_defaults_when_non
           },
         });
 
-        if (!html.includes('栖梧')) throw new Error('missing built-in character fallback');
-        if (!html.includes('春岚')) throw new Error('missing built-in user fallback');
-        if (!html.includes('/static/images/beautify-preview/qiwu.png')) throw new Error('missing built-in character avatar fallback');
-        if (!html.includes('/static/images/beautify-preview/chunlan.png')) throw new Error('missing built-in user avatar fallback');
+        if (!html.includes('苏眠')) throw new Error('missing built-in character fallback');
+        if (!html.includes('凌砚')) throw new Error('missing built-in user fallback');
+        if (!html.includes('/static/images/beautify-preview/sumian.png')) throw new Error('missing built-in character avatar fallback');
+        if (!html.includes('/static/images/beautify-preview/lingyan.png')) throw new Error('missing built-in user avatar fallback');
         '''
     )
 
@@ -584,15 +584,15 @@ def test_build_beautify_preview_document_uses_local_demo_identity_avatar_paths()
         const html = module.buildBeautifyPreviewDocument({ platform: 'pc' });
 
         for (const token of [
-          '/static/images/beautify-preview/qiwu.png',
-          '/static/images/beautify-preview/chunlan.png',
-          'ch_name="栖梧"',
-          'ch_name="春岚"',
-          'name_text">栖梧</span>',
-          'name_text">春岚</span>',
-          '<h2 class="interactable">栖梧</h2>',
-          'alt="栖梧" src="/static/images/beautify-preview/qiwu.png"',
-          'alt="春岚" src="/static/images/beautify-preview/chunlan.png"',
+          '/static/images/beautify-preview/sumian.png',
+          '/static/images/beautify-preview/lingyan.png',
+          'ch_name="苏眠"',
+          'ch_name="凌砚"',
+          'name_text">苏眠</span>',
+          'name_text">凌砚</span>',
+          '<h2 class="interactable">苏眠</h2>',
+          'alt="苏眠" src="/static/images/beautify-preview/sumian.png"',
+          'alt="凌砚" src="/static/images/beautify-preview/lingyan.png"',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);
         }
@@ -682,8 +682,8 @@ def test_build_beautify_preview_document_hides_top_settings_holder_in_default_pr
 
 def test_beautify_preview_identity_assets_exist_in_project_static_images():
     for relative_path in [
-        'static/images/beautify-preview/qiwu.png',
-        'static/images/beautify-preview/chunlan.png',
+        'static/images/beautify-preview/sumian.png',
+        'static/images/beautify-preview/lingyan.png',
     ]:
         assert (ROOT / relative_path).is_file(), f'missing preview identity asset: {relative_path}'
 
