@@ -1,8 +1,12 @@
+import json
 import logging
 import sqlite3
 import sys
 import types
+from io import BytesIO
 from pathlib import Path
+
+from flask import Flask
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 
 from core.services import cache_service
+from core.services import card_index_sync_service
 from core.services import index_build_service
 from core.services import scan_service
 from core.services import index_job_worker
@@ -18,10 +23,32 @@ from core.services import index_job_worker
 
 def test_worldinfo_watch_filter_accepts_global_and_resource_lorebooks(monkeypatch):
     monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
 
     assert scan_service._is_worldinfo_watch_path('D:/data/lorebooks/main/book.json') is True
     assert scan_service._is_worldinfo_watch_path('D:/data/resources/lucy/lorebooks/book.json') is True
     assert scan_service._is_worldinfo_watch_path('D:/data/resources/lucy/images/cover.png') is False
+
+
+def test_classify_worldinfo_path_distinguishes_global_resource_and_invalid(monkeypatch):
+    monkeypatch.setattr(
+        index_build_service,
+        'load_config',
+        lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'},
+    )
+
+    assert index_build_service.classify_worldinfo_path('D:/data/lorebooks/main/book.json') == {
+        'kind': 'global',
+        'source_path': 'D:/data/lorebooks/main/book.json',
+    }
+    assert index_build_service.classify_worldinfo_path('D:/data/resources/hero-assets/lorebooks/book.json') == {
+        'kind': 'resource',
+        'source_path': 'D:/data/resources/hero-assets/lorebooks/book.json',
+    }
+    assert index_build_service.classify_worldinfo_path('D:/data/resources/hero-assets/images/cover.png') == {
+        'kind': 'invalid',
+        'source_path': 'D:/data/resources/hero-assets/images/cover.png',
+    }
 
 
 def test_resolve_resource_worldinfo_owner_card_ids_returns_all_matching_cards(monkeypatch):
@@ -42,9 +69,7 @@ def test_resolve_resource_worldinfo_owner_card_ids_returns_all_matching_cards(mo
     ]
 
 
-def test_update_card_cache_enqueues_embedded_owner_refresh(monkeypatch):
-    calls = []
-
+def test_update_card_cache_returns_embedded_worldinfo_facts(monkeypatch):
     class _FakeConn:
         def cursor(self):
             return self
@@ -63,18 +88,17 @@ def test_update_card_cache_enqueues_embedded_owner_refresh(monkeypatch):
     monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': [], 'character_book': {'name': 'Book', 'entries': {}}}})
     monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
     monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (True, 'Book'))
-    monkeypatch.setattr(cache_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
 
-    cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
+    result = cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
 
-    job_names = [call[0][0] for call in calls]
-    assert 'upsert_card' in job_names
-    assert 'upsert_world_embedded' in job_names
+    assert result == {
+        'cache_updated': True,
+        'has_embedded_wi': True,
+        'previous_has_embedded_wi': False,
+    }
 
 
-def test_update_card_cache_enqueues_single_upsert_card_with_stale_cleanup_payload(monkeypatch):
-    calls = []
-
+def test_update_card_cache_ignores_cleanup_payload_and_returns_persistence_facts(monkeypatch):
     class _FakeConn:
         def cursor(self):
             return self
@@ -93,30 +117,22 @@ def test_update_card_cache_enqueues_single_upsert_card_with_stale_cleanup_payloa
     monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': ['blue']}})
     monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
     monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (False, ''))
-    monkeypatch.setattr(cache_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
 
-    cache_service.update_card_cache(
+    result = cache_service.update_card_cache(
         'cards/hero-renamed.png',
         'D:/cards/hero-renamed.png',
         mtime=123.0,
         remove_entity_ids=['cards/hero.json'],
     )
 
-    assert calls == [
-        (
-            ('upsert_card',),
-            {
-                'entity_id': 'cards/hero-renamed.png',
-                'source_path': 'D:/cards/hero-renamed.png',
-                'payload': {'remove_entity_ids': ['cards/hero.json']},
-            },
-        )
-    ]
+    assert result == {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    }
 
 
-def test_update_card_cache_enqueues_embedded_owner_refresh_when_worldinfo_removed(monkeypatch):
-    calls = []
-
+def test_update_card_cache_returns_previous_embedded_worldinfo_fact_when_removed(monkeypatch):
     class _FakeConn:
         def cursor(self):
             return self
@@ -138,23 +154,26 @@ def test_update_card_cache_enqueues_embedded_owner_refresh_when_worldinfo_remove
     monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': []}})
     monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
     monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (False, ''))
-    monkeypatch.setattr(cache_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
 
-    cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
+    result = cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
 
-    job_names = [call[0][0] for call in calls]
-    assert 'upsert_card' in job_names
-    assert 'upsert_world_embedded' in job_names
+    assert result == {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': True,
+    }
 
 
 def test_worldinfo_watch_filter_rejects_sibling_prefix_paths(monkeypatch):
     monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
 
     assert scan_service._is_worldinfo_watch_path('D:/data/lorebooks2/x.json') is False
 
 
 def test_worldinfo_watch_filter_is_case_tolerant_for_valid_paths(monkeypatch):
     monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
 
     assert scan_service._is_worldinfo_watch_path('d:/DATA/LOREBOOKS/main/book.JSON') is True
     assert scan_service._is_worldinfo_watch_path('d:/DATA/RESOURCES/lucy/LOREBOOKS/book.JSON') is True
@@ -194,6 +213,7 @@ def test_worldinfo_watcher_move_into_lorebook_path_enqueues_dest_path(monkeypatc
     monkeypatch.setitem(sys.modules, 'watchdog.events', events_module)
 
     monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
 
     scan_service.start_fs_watcher()
 
@@ -242,6 +262,7 @@ def test_worldinfo_watcher_routes_resource_lorebook_to_owner_refresh(monkeypatch
     monkeypatch.setitem(sys.modules, 'watchdog.events', events_module)
 
     monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
     monkeypatch.setattr(
         scan_service,
         'resolve_resource_worldinfo_owner_card_ids',
@@ -522,18 +543,111 @@ def test_start_fs_watcher_skips_missing_watch_paths(monkeypatch, caplog, tmp_pat
 def test_update_card_cache_returns_false_when_cache_write_fails(monkeypatch):
     monkeypatch.setattr(cache_service, 'get_db', lambda: (_ for _ in ()).throw(RuntimeError('db down')))
 
-    assert cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0) is False
+    result = cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
+
+    assert result == {
+        'cache_updated': False,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    }
+    assert bool(result) is False
 
 
-def test_cards_api_worldinfo_owner_enqueue_is_gated_by_update_card_cache_success_contract():
-    source = (ROOT / 'core/api/v1/cards.py').read_text(encoding='utf-8')
+def test_change_image_skips_file_driven_card_job_when_cache_write_fails(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
 
-    assert "remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None" in source
-    assert "should_enqueue_world_owner = bool(resource_folder_changed or cache_updated)" in source
-    assert "if should_enqueue_world_owner:" in source
-    assert "enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)" in source
-    assert "enqueue_index_job(\n                    'upsert_card'" not in source
-    assert "enqueue_index_job('upsert_world_embedded', entity_id=final_rel_path_id, source_path=current_full_path)" not in source
+    cards_dir = tmp_path / 'cards'
+    cards_dir.mkdir()
+    card_path = cards_dir / 'hero.json'
+    card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': []}}, ensure_ascii=False), encoding='utf-8')
+
+    db_path = tmp_path / 'cards_metadata.db'
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('CREATE TABLE card_metadata (id TEXT PRIMARY KEY)')
+        conn.execute('INSERT INTO card_metadata (id) VALUES (?)', ('hero.json',))
+        conn.commit()
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': []}})
+    monkeypatch.setattr(cards_api, 'resize_image_if_needed', lambda image: image)
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cards_api, 'clean_sidecar_images', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'clean_thumbnail_cache', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cards_api,
+        'update_card_cache',
+        lambda *_args, **_kwargs: {
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        },
+    )
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(cards_api, 'save_ui_data', lambda _payload: None)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 0))
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
+
+    enqueue_calls = []
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: enqueue_calls.append((args, kwargs)),
+    )
+
+    class _FakeCache:
+        initialized = True
+        category_counts = {}
+
+        def __init__(self):
+            self.id_map = {}
+            self.cards = []
+            self.bundle_map = {}
+
+        def delete_card_update(self, card_id):
+            assert card_id == 'hero.json'
+
+        def add_card_update(self, payload):
+            self.id_map[payload['id']] = payload
+            return payload
+
+        def update_card_data(self, _card_id, payload):
+            return payload
+
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    def _make_app():
+        app = Flask(__name__)
+        app.register_blueprint(cards_api.bp)
+        return app
+
+    image_bytes = BytesIO()
+    from PIL import Image
+    Image.new('RGBA', (1, 1), (255, 0, 0, 255)).save(image_bytes, format='PNG')
+    image_bytes.seek(0)
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/change_image',
+        data={'id': 'hero.json', 'image': (image_bytes, 'cover.png')},
+        content_type='multipart/form-data',
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['new_id'] == 'hero.png'
+    assert enqueue_calls == [
+        (
+            ('upsert_world_owner',),
+            {
+                'entity_id': 'hero.png',
+                'source_path': str(cards_dir / 'hero.png'),
+                'payload': {'remove_owner_ids': ['hero.json']},
+            },
+        ),
+    ]
 
 
 def test_background_scanner_enqueues_targeted_card_reconcile_when_changes_detected(monkeypatch):
@@ -802,7 +916,7 @@ def test_enqueue_index_job_persists_pending_row(monkeypatch, tmp_path):
     assert 'worldinfo' in row[2]
 
 
-def test_update_card_cache_returns_true_when_enqueue_fails_after_commit(monkeypatch):
+def test_update_card_cache_returns_persistence_facts_after_successful_commit(monkeypatch):
     calls = []
 
     class _FakeConn:
@@ -825,12 +939,14 @@ def test_update_card_cache_returns_true_when_enqueue_fails_after_commit(monkeypa
     monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
     monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (True, 'Book'))
 
-    def _boom(*_args, **_kwargs):
-        raise RuntimeError('queue down')
+    result = cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
 
-    monkeypatch.setattr(cache_service, 'enqueue_index_job', _boom)
-
-    assert cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0) is True
+    assert result == {
+        'cache_updated': True,
+        'has_embedded_wi': True,
+        'previous_has_embedded_wi': False,
+    }
+    assert bool(result) is True
     assert calls == ['commit']
 
 

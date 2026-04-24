@@ -17,7 +17,8 @@ from core.data.ui_store import load_ui_data, save_ui_data, VERSION_REMARKS_KEY, 
 
 # === 服务依赖 ===
 from core.services.cache_service import update_card_cache
-from core.services.index_job_worker import enqueue_index_job
+from core.services.card_index_sync_service import sync_card_index_jobs
+from core.services.index_build_service import apply_card_increment, connect_index_db
 from core.services.scan_service import suppress_fs_events
 
 # === 工具函数 ===
@@ -30,6 +31,15 @@ from core.utils.text import calculate_token_count
 from core.utils.hash import get_file_hash_and_size
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_card_index_increment_now(card_id, source_path, remove_entity_ids=None):
+    try:
+        with connect_index_db(DEFAULT_DB_PATH) as conn:
+            apply_card_increment(conn, card_id, source_path, remove_entity_ids=remove_entity_ids)
+    except RuntimeError as exc:
+        if 'cards active generation missing' not in str(exc):
+            raise
 
 # 内部辅助函数：获取或创建资源目录
 def _ensure_resource_folder_exists(card_id, hint_name):
@@ -383,7 +393,7 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
 
     # 4. 数据库写回 (Upsert)
     file_hash, file_size = get_file_hash_and_size(target_save_path)
-    cache_updated = update_card_cache(
+    cache_result = update_card_cache(
         final_rel_id,
         target_save_path,
         parsed_info=final_info,
@@ -392,12 +402,17 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         mtime=new_mtime,
         remove_entity_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
     )
-    if cache_updated:
-        owner_payload = {'remove_owner_ids': [card_id]} if card_id != final_rel_id and not is_bundle_update else None
-        if owner_payload:
-            enqueue_index_job('upsert_world_owner', entity_id=final_rel_id, source_path=target_save_path, payload=owner_payload)
-        else:
-            enqueue_index_job('upsert_world_owner', entity_id=final_rel_id, source_path=target_save_path)
+    sync_card_index_jobs(
+        card_id=final_rel_id,
+        source_path=target_save_path,
+        file_content_changed=True,
+        rename_changed=bool(card_id != final_rel_id and not is_bundle_update),
+        cache_updated=bool(cache_result.get('cache_updated')),
+        has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+        previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        remove_entity_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
+        remove_owner_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
+    )
     
     # 5. 内存缓存更新
     updated_card_obj = None
@@ -917,19 +932,24 @@ def sync_card_names_internal(
         except Exception:
             current_mtime = time.time()
 
-        cache_updated = update_card_cache(
+        cache_result = update_card_cache(
             new_id,
             new_full_path,
             parsed_info=info,
             mtime=current_mtime,
             remove_entity_ids=[old_id] if new_id != old_id else None,
         )
-        if cache_updated:
-            owner_payload = {'remove_owner_ids': [old_id]} if new_id != old_id else None
-            if owner_payload:
-                enqueue_index_job('upsert_world_owner', entity_id=new_id, source_path=new_full_path, payload=owner_payload)
-            else:
-                enqueue_index_job('upsert_world_owner', entity_id=new_id, source_path=new_full_path)
+        sync_card_index_jobs(
+            card_id=new_id,
+            source_path=new_full_path,
+            file_content_changed=bool(metadata_changed),
+            rename_changed=bool(new_id != old_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=[old_id] if new_id != old_id else None,
+            remove_owner_ids=[old_id] if new_id != old_id else None,
+        )
 
         cache_payload = {
             'last_modified': current_mtime,
@@ -1218,10 +1238,24 @@ def modify_card_attributes_internal(card_id, add_tags=None, remove_tags=None, se
         if set_favorite is not None:
             new_status = 1 if set_favorite else 0
             conn = get_db()
+            row = conn.execute("SELECT is_favorite FROM card_metadata WHERE id = ?", (card_id,)).fetchone()
             conn.execute("UPDATE card_metadata SET is_favorite = ? WHERE id = ?", (new_status, card_id))
             conn.commit()
             
             if ctx.cache: ctx.cache.toggle_favorite_update(card_id, bool(new_status))
+            previous_status = None
+            if row is not None:
+                try:
+                    previous_status = 1 if row['is_favorite'] else 0
+                except (TypeError, KeyError, IndexError):
+                    previous_status = 1 if row[0] else 0
+            if previous_status is None or previous_status != new_status:
+                sync_card_index_jobs(
+                    card_id=card_id,
+                    source_path=full_path,
+                    favorite_changed=True,
+                )
+                _apply_card_index_increment_now(card_id, full_path)
             changed = True
             
         return True

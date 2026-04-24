@@ -92,6 +92,41 @@ def _resolve_runtime_dir(raw_path: str, default: str) -> str:
     return os.path.normpath(os.path.join(BASE_DIR, value))
 
 
+def classify_worldinfo_path(source_path: str) -> dict:
+    cfg = load_config()
+    raw_path = str(source_path or '').strip()
+    normalized_path = os.path.normpath(raw_path)
+    result = {
+        'kind': 'invalid',
+        'source_path': normalized_path.replace('\\', '/'),
+    }
+    if not normalized_path or not normalized_path.lower().endswith('.json'):
+        return result
+
+    global_dir = _resolve_runtime_dir(cfg.get('world_info_dir'), 'data/library/lorebooks')
+    resource_dir = _resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets')
+
+    if global_dir:
+        try:
+            if os.path.commonpath([os.path.normcase(global_dir), os.path.normcase(normalized_path)]) == os.path.normcase(global_dir):
+                result['kind'] = 'global'
+                return result
+        except ValueError:
+            pass
+
+    if resource_dir:
+        try:
+            common = os.path.commonpath([os.path.normcase(resource_dir), os.path.normcase(normalized_path)])
+        except ValueError:
+            common = ''
+        if common == os.path.normcase(resource_dir):
+            rel_path = normalized_path.replace('\\', '/').lower()
+            if '/lorebooks/' in rel_path:
+                result['kind'] = 'resource'
+
+    return result
+
+
 def resolve_resource_worldinfo_owner_card_ids(source_path: str) -> list[str]:
     cfg = load_config()
     resources_dir = _resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets')

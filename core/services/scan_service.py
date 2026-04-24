@@ -11,7 +11,7 @@ from core.context import ctx
 
 # === 业务逻辑引用 ===
 from core.services.cache_service import schedule_reload
-from core.services.index_build_service import resolve_resource_worldinfo_owner_card_ids
+from core.services.index_build_service import classify_worldinfo_path, resolve_resource_worldinfo_owner_card_ids
 from core.services.index_job_worker import enqueue_index_job
 
 # === 工具函数 ===
@@ -44,32 +44,11 @@ def _resolve_runtime_dir(raw_path, default):
 
 
 def _is_global_worldinfo_watch_path(path):
-    cfg = load_config()
-    global_dir = _normalize_watch_path(_resolve_runtime_dir(cfg.get('world_info_dir'), 'data/library/lorebooks'))
-    abs_path = _normalize_watch_path(path)
-
-    if not global_dir or not abs_path.lower().endswith('.json'):
-        return False
-
-    try:
-        return os.path.commonpath([global_dir, abs_path]) == global_dir
-    except ValueError:
-        return False
+    return classify_worldinfo_path(path).get('kind') == 'global'
 
 
 def _is_resource_worldinfo_watch_path(path):
-    cfg = load_config()
-    resources_dir = _normalize_watch_path(_resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets'))
-    abs_path = _normalize_watch_path(path)
-
-    if not resources_dir or not abs_path.lower().endswith('.json'):
-        return False
-
-    rel = abs_path.replace('\\', '/').lower()
-    try:
-        return '/lorebooks/' in rel and os.path.commonpath([resources_dir, abs_path]) == resources_dir
-    except ValueError:
-        return False
+    return classify_worldinfo_path(path).get('kind') == 'resource'
 
 
 def _is_worldinfo_watch_path(path):
@@ -363,10 +342,11 @@ def start_fs_watcher():
                 return
 
             for candidate_path in (getattr(event, 'src_path', ''), getattr(event, 'dest_path', '')):
-                if _is_global_worldinfo_watch_path(candidate_path):
+                worldinfo_path = classify_worldinfo_path(candidate_path)
+                if worldinfo_path.get('kind') == 'global':
                     enqueue_index_job('upsert_worldinfo_path', source_path=candidate_path)
                     return
-                if _is_resource_worldinfo_watch_path(candidate_path):
+                if worldinfo_path.get('kind') == 'resource':
                     owner_card_ids = resolve_resource_worldinfo_owner_card_ids(candidate_path)
                     if owner_card_ids:
                         for owner_card_id in owner_card_ids:

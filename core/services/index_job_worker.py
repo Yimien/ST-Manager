@@ -9,6 +9,7 @@ from core.context import ctx
 from core.data.index_runtime_store import ensure_index_runtime_schema
 from core.services.index_build_service import (
     apply_card_increment,
+    classify_worldinfo_path,
     apply_worldinfo_embedded_increment,
     apply_worldinfo_owner_increment,
     apply_worldinfo_path_increment,
@@ -184,16 +185,18 @@ def worker_loop():
                             remove_entity_ids=payload.get('remove_entity_ids') or [],
                         )
                 elif row['job_type'] == 'upsert_worldinfo_path':
+                    classification = classify_worldinfo_path(row['source_path'])
                     try:
-                        with _connect() as conn:
-                            apply_worldinfo_path_increment(conn, row['source_path'])
-                    except RuntimeError as exc:
-                        if 'worldinfo path outside global directory' in str(exc):
+                        if classification.get('kind') == 'resource':
                             with _connect() as conn:
                                 if _retry_resource_worldinfo_job(conn, row['source_path']):
                                     processed_worldinfo_reconcile = True
                                     _mark_job_status(row['id'], 'done', '')
                                     continue
+                            raise RuntimeError('resource worldinfo path has no owner cards')
+                        with _connect() as conn:
+                            apply_worldinfo_path_increment(conn, row['source_path'])
+                    except RuntimeError as exc:
                         if 'active generation missing' not in str(exc):
                             raise
                         if not processed_worldinfo_reconcile:

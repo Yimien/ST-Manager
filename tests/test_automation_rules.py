@@ -1627,16 +1627,22 @@ def test_sync_card_names_internal_template_rename_reuses_existing_migration_logi
     monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
     monkeypatch.setattr(card_service, 'extract_card_info', lambda path: {'name': 'Hero Card', 'data': {'name': 'Hero Card'}})
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    job_calls = []
-
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda card_id_arg, full_path_arg, parsed_info=None, mtime=None, remove_entity_ids=None: cache_calls.setdefault('update_card_cache', {
-        'card_id': card_id_arg,
-        'full_path': full_path_arg,
-        'parsed_info': parsed_info,
-        'mtime': mtime,
-        'remove_entity_ids': remove_entity_ids,
-    }))
-    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)))
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda card_id_arg, full_path_arg, parsed_info=None, mtime=None, remove_entity_ids=None: (
+        cache_calls.setdefault('update_card_cache', {
+            'card_id': card_id_arg,
+            'full_path': full_path_arg,
+            'parsed_info': parsed_info,
+            'mtime': mtime,
+            'remove_entity_ids': remove_entity_ids,
+        }),
+        {
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        }
+    )[1])
+    sync_calls = []
+    monkeypatch.setattr(card_service, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
     monkeypatch.setattr(card_service, 'get_db', lambda: fake_conn)
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: ui_data)
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: saved_ui_snapshots.append({key: (value.copy() if isinstance(value, dict) else value) for key, value in payload.items()}))
@@ -1679,15 +1685,18 @@ def test_sync_card_names_internal_template_rename_reuses_existing_migration_logi
     assert cache_calls['update_card_data']['card_id'] == new_id
     assert cache_calls['update_card_data']['payload']['filename'] == 'Hero Card.json'
     assert cache_calls['update_card_data']['payload']['char_name'] == 'Hero Card'
-    assert job_calls == [
-        (
-            'upsert_world_owner',
-            {
-                'entity_id': new_id,
-                'source_path': str(card_dir / 'Hero Card.json'),
-                'payload': {'remove_owner_ids': [old_id]},
-            },
-        ),
+    assert sync_calls == [
+        {
+            'card_id': new_id,
+            'source_path': str(card_dir / 'Hero Card.json'),
+            'file_content_changed': False,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': [old_id],
+            'remove_owner_ids': [old_id],
+        }
     ]
     assert saved_ui_snapshots[-1][new_id]['import_time'] == 1704153600
 

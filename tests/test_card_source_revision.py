@@ -158,14 +158,18 @@ def test_change_image_json_to_png_enqueues_stale_cleanup_with_raw_id(monkeypatch
     monkeypatch.setattr(cards_api, 'clean_sidecar_images', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cards_api, 'clean_thumbnail_cache', lambda *_args, **_kwargs: None)
     cache_calls = []
-    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)) or True)
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: cache_calls.append((_args, _kwargs)) or {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
     monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {})
     monkeypatch.setattr(cards_api, 'save_ui_data', lambda _payload: None)
     monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 0))
     monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
 
-    enqueued = []
-    monkeypatch.setattr(cards_api, 'enqueue_index_job', lambda *args, **kwargs: enqueued.append((args, kwargs)))
+    sync_calls = []
+    monkeypatch.setattr(cards_api, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
 
     class _FakeCache:
         initialized = True
@@ -210,13 +214,16 @@ def test_change_image_json_to_png_enqueues_stale_cleanup_with_raw_id(monkeypatch
             {'remove_entity_ids': ['hero.json']},
         )
     ]
-    assert enqueued == [
-        (
-            ('upsert_world_owner',),
-            {
-                'entity_id': 'hero.png',
-                'source_path': str(cards_dir / 'hero.png'),
-                'payload': {'remove_owner_ids': ['hero.json']},
-            },
-        ),
+    assert sync_calls == [
+        {
+            'card_id': 'hero.png',
+            'source_path': str(cards_dir / 'hero.png'),
+            'file_content_changed': True,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': ['hero.json'],
+            'remove_owner_ids': ['hero.json'],
+        }
     ]

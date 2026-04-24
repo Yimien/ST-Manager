@@ -1,6 +1,7 @@
 import sqlite3
 import sys
 import json
+from pathlib import Path
 import threading
 from io import BytesIO
 from pathlib import Path
@@ -19,6 +20,7 @@ from core.context import ctx
 from core.data.index_runtime_store import activate_generation, allocate_build_generation, ensure_index_runtime_schema
 from core.data import ui_store as ui_store_module
 from core.services import cache_service
+from core.services import card_index_sync_service
 from core.services import index_build_service
 from core.services import index_job_worker
 from core.services import index_service
@@ -123,9 +125,7 @@ def test_rebuild_cards_populates_fulltext_search_index(monkeypatch, tmp_path):
     assert [item['id'] for item in result['cards']] == ['cards/fulltext.png']
 
 
-def test_update_card_cache_enqueues_card_upsert(monkeypatch):
-    calls = []
-
+def test_update_card_cache_returns_persistence_facts_without_enqueueing_jobs(monkeypatch):
     class _FakeConn:
         def cursor(self):
             return self
@@ -134,7 +134,7 @@ def test_update_card_cache_enqueues_card_upsert(monkeypatch):
             return self
 
         def fetchone(self):
-            return {'is_favorite': 0, 'has_character_book': 0}
+            return {'is_favorite': 1, 'has_character_book': 1}
 
         def commit(self):
             return None
@@ -144,13 +144,192 @@ def test_update_card_cache_enqueues_card_upsert(monkeypatch):
     monkeypatch.setattr(cache_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': ['blue']}})
     monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _payload: 111)
     monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _payload: (False, ''))
-    monkeypatch.setattr(cache_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)), raising=False)
 
-    cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
+    result = cache_service.update_card_cache('cards/hero.png', 'D:/cards/hero.png', mtime=123.0)
 
-    assert calls
-    assert calls[0][0][0] == 'upsert_card'
-    assert calls[0][1]['entity_id'] == 'cards/hero.png'
+    assert result == {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': True,
+    }
+
+
+def test_sync_card_index_jobs_enqueues_card_upsert_for_summary_only_change(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+        summary_changed=True,
+    )
+
+    assert result == {
+        'upsert_card': True,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': False,
+        'jobs_enqueued': ['upsert_card'],
+    }
+    assert calls == [
+        (
+            ('upsert_card',),
+            {'entity_id': 'hero.png', 'source_path': 'D:/cards/hero.png'},
+        )
+    ]
+
+
+def test_sync_card_index_jobs_enqueues_embedded_and_owner_refresh_for_file_change(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+        cache_updated=True,
+        file_content_changed=True,
+        has_embedded_wi=True,
+    )
+
+    assert result == {
+        'upsert_card': True,
+        'upsert_world_embedded': True,
+        'upsert_world_owner': True,
+        'jobs_enqueued': ['upsert_card', 'upsert_world_embedded', 'upsert_world_owner'],
+    }
+    assert calls == [
+        (
+            ('upsert_card',),
+            {'entity_id': 'hero.png', 'source_path': 'D:/cards/hero.png'},
+        ),
+        (
+            ('upsert_world_embedded',),
+            {'entity_id': 'hero.png', 'source_path': 'D:/cards/hero.png'},
+        ),
+        (
+            ('upsert_world_owner',),
+            {'entity_id': 'hero.png', 'source_path': 'D:/cards/hero.png'},
+        ),
+    ]
+
+
+def test_sync_card_index_jobs_propagates_remove_owner_ids_payload(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+        remove_owner_ids=['old.png'],
+    )
+
+    assert result == {
+        'upsert_card': False,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': True,
+        'jobs_enqueued': ['upsert_world_owner'],
+    }
+    assert calls == [
+        (
+            ('upsert_world_owner',),
+            {
+                'entity_id': 'hero.png',
+                'source_path': 'D:/cards/hero.png',
+                'payload': {'remove_owner_ids': ['old.png']},
+            },
+        )
+    ]
+
+
+def test_sync_card_index_jobs_propagates_remove_entity_ids_payload(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+        tags_changed=True,
+        remove_entity_ids=['old.png'],
+    )
+
+    assert result == {
+        'upsert_card': True,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': False,
+        'jobs_enqueued': ['upsert_card'],
+    }
+    assert calls == [
+        (
+            ('upsert_card',),
+            {
+                'entity_id': 'hero.png',
+                'source_path': 'D:/cards/hero.png',
+                'payload': {'remove_entity_ids': ['old.png']},
+            },
+        )
+    ]
+
+
+def test_sync_card_index_jobs_returns_noop_when_no_facts_require_jobs(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        card_index_sync_service,
+        'enqueue_index_job',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+    )
+
+    assert result == {
+        'upsert_card': False,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': False,
+        'jobs_enqueued': [],
+    }
+    assert calls == []
+
+
+def test_sync_card_index_jobs_swallows_enqueue_failures_and_reports_no_success(monkeypatch):
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError('queue down')
+
+    monkeypatch.setattr(card_index_sync_service, 'enqueue_index_job', _boom)
+
+    result = card_index_sync_service.sync_card_index_jobs(
+        card_id='hero.png',
+        source_path='D:/cards/hero.png',
+        summary_changed=True,
+    )
+
+    assert result == {
+        'upsert_card': False,
+        'upsert_world_embedded': False,
+        'upsert_world_owner': False,
+        'jobs_enqueued': [],
+    }
 
 
 def test_rebuild_cards_uses_real_card_path_for_source_revision(monkeypatch, tmp_path):
@@ -1344,6 +1523,208 @@ def test_update_card_route_real_save_updates_runtime_projections_without_cards_r
     conn.close()
 
 
+def _seed_card_index_projection(conn, *, card_id, source_path, name='Hero', summary='', favorite=0, token_count=100, tags=()):
+    conn.execute(
+        'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (card_id, name, json.dumps(list(tags)), '', 10.0, token_count, favorite, 0, '', '', '', '', '', '', 'hash', 1),
+    )
+    conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+    conn.execute(
+        "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, f'card::{card_id}', 'card', str(source_path), '', name, Path(card_id).name, '', '', 'physical', favorite, summary, 10.0, 0.0, token_count, name.lower(), 10.0, '', '10:1'),
+    )
+
+    search_parts = [name, Path(card_id).name]
+    if summary:
+        search_parts.append(summary)
+    search_parts.extend(tags)
+    search_content = ' '.join(search_parts)
+
+    conn.execute('INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)', (1, f'card::{card_id}', search_content))
+    conn.execute('INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)', (1, f'card::{card_id}', search_content))
+    for tag in tags:
+        conn.execute('INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)', (1, f'card::{card_id}', tag))
+
+
+def _open_row_db(db_path):
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def test_update_card_ui_summary_only_refreshes_cards_index(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    db_path = tmp_path / 'cards_metadata.db'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    card_rel = 'hero.png'
+    card_path = cards_dir / card_rel
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': ['alpha']}}, ensure_ascii=False), encoding='utf-8')
+    ui_path.write_text(
+        json.dumps({card_rel: {'summary': 'old note', 'link': '', 'resource_folder': ''}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    _init_index_db(db_path)
+    with _open_row_db(db_path) as conn:
+        _create_card_metadata_table(conn)
+        _seed_card_index_projection(
+            conn,
+            card_id=card_rel,
+            source_path=card_path,
+            name='Hero',
+            summary='old note',
+            favorite=0,
+            token_count=321,
+            tags=('alpha',),
+        )
+        conn.commit()
+
+    class _FakeCache:
+        initialized = True
+        category_counts = {}
+        visible_folders = []
+        global_tags = set()
+        lock = threading.Lock()
+
+        def __init__(self):
+            self.bundle_map = {}
+            self.id_map = {
+                card_rel: {
+                    'id': card_rel,
+                    'filename': 'hero.png',
+                    'char_name': 'Hero',
+                    'category': '',
+                    'tags': ['alpha'],
+                    'ui_summary': 'old note',
+                    'source_link': '',
+                    'resource_folder': '',
+                    'is_favorite': False,
+                    'image_url': '/cards_file/hero.png?t=10',
+                    'thumb_url': '/api/thumbnail/hero.png?t=10',
+                }
+            }
+            self.cards = [self.id_map[card_rel]]
+
+        def update_card_data(self, card_id, payload):
+            self.id_map.setdefault(card_id, {'id': card_id}).update(payload)
+            return self.id_map[card_id]
+
+        def reload_from_db(self):
+            raise AssertionError('reload_from_db should not run in ui_summary-only update test')
+
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+    client = app.test_client()
+
+    res = client.post('/api/update_card', json={
+        'id': card_rel,
+        'ui_summary': 'new note',
+        'source_link': '',
+        'resource_folder': '',
+        'ui_only': True,
+        'ui_only_fields': ['ui_summary'],
+    })
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+
+    indexed = query_indexed_cards({
+        'db_path': str(db_path),
+        'page': 1,
+        'page_size': 20,
+    })
+
+    assert indexed['cards'][0]['ui_summary'] == 'new note'
+
+
+def test_toggle_favorite_refreshes_cards_index(monkeypatch, tmp_path):
+    from core.api.v1 import cards as cards_api
+
+    db_path = tmp_path / 'cards_metadata.db'
+    _init_index_db(db_path)
+    with _open_row_db(db_path) as conn:
+        _create_card_metadata_table(conn)
+        _seed_card_index_projection(conn, card_id='hero.png', source_path='hero.png')
+        conn.commit()
+
+    class _FakeCache:
+        def __init__(self):
+            self.id_map = {'hero.png': {'id': 'hero.png', 'is_favorite': False}}
+
+        def toggle_favorite_update(self, card_id, value):
+            self.id_map.setdefault(card_id, {'id': card_id})['is_favorite'] = value
+
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cards_api, 'get_db', lambda: _open_row_db(db_path))
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    app = Flask(__name__)
+    app.register_blueprint(cards_api.bp)
+    client = app.test_client()
+
+    res = client.post('/api/toggle_favorite', json={'id': 'hero.png'})
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+
+    indexed = query_indexed_cards({
+        'db_path': str(db_path),
+        'page': 1,
+        'page_size': 20,
+        'fav_filter': 'included',
+    })
+
+    assert [item['id'] for item in indexed['cards']] == ['hero.png']
+    assert indexed['cards'][0]['is_favorite'] == 1
+
+
+def test_modify_card_attributes_favorite_refreshes_cards_index(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    db_path = tmp_path / 'cards_metadata.db'
+    cards_dir = tmp_path / 'cards'
+    card_path = cards_dir / 'hero.png'
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': []}}, ensure_ascii=False), encoding='utf-8')
+
+    _init_index_db(db_path)
+    with _open_row_db(db_path) as conn:
+        _create_card_metadata_table(conn)
+        _seed_card_index_projection(conn, card_id='hero.png', source_path=card_path)
+        conn.commit()
+
+    class _FakeCache:
+        def toggle_favorite_update(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(card_service, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': []}})
+    monkeypatch.setattr(card_service.ctx, 'cache', _FakeCache())
+    monkeypatch.setattr(card_service, 'get_db', lambda: sqlite3.connect(db_path, timeout=30, check_same_thread=False))
+
+    assert card_service.modify_card_attributes_internal('hero.png', set_favorite=True) is True
+
+    indexed = query_indexed_cards({
+        'db_path': str(db_path),
+        'page': 1,
+        'page_size': 20,
+        'fav_filter': 'included',
+    })
+
+    assert [item['id'] for item in indexed['cards']] == ['hero.png']
+
+
 def test_change_image_route_rename_cleans_old_card_and_worldinfo_projections(monkeypatch, tmp_path):
     from core.api.v1 import cards as cards_api
 
@@ -1497,6 +1878,97 @@ def test_change_image_route_rename_cleans_old_card_and_worldinfo_projections(mon
     ]
     assert calls == []
     conn.close()
+
+
+def test_update_card_content_uses_sync_service_with_cleanup_facts(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    cards_root.mkdir(parents=True, exist_ok=True)
+    card_path = cards_root / 'hero.json'
+    temp_path = tmp_path / 'upload.png'
+    card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': ['old']}}, ensure_ascii=False), encoding='utf-8')
+    temp_path.write_bytes(b'not-an-image-but-mocked')
+
+    ui_state = {
+        'hero.json': {
+            'summary': 'old note',
+            'link': 'old-link',
+            'resource_folder': 'keep-folder',
+        }
+    }
+    sync_calls = []
+
+    class _FakeImage:
+        def save(self, path, _fmt):
+            Path(path).write_bytes(b'png-data')
+
+    class _FakeCache:
+        def __init__(self):
+            self.id_map = {}
+            self.cards = []
+            self.bundle_map = {}
+
+        def delete_card_update(self, card_id):
+            self.id_map.pop(card_id, None)
+
+        def add_card_update(self, payload):
+            self.id_map[payload['id']] = dict(payload)
+            return self.id_map[payload['id']]
+
+        def update_card_data(self, card_id, payload):
+            self.id_map.setdefault(card_id, {}).update(payload)
+            return self.id_map[card_id]
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root))
+    monkeypatch.setattr(card_service, 'DEFAULT_DB_PATH', str(tmp_path / 'cards_metadata.db'))
+    monkeypatch.setattr(card_service, 'THUMB_FOLDER', str(tmp_path / 'thumbs'))
+    monkeypatch.setattr(card_service, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda path: {'data': {'name': 'Hero', 'tags': ['fresh']}} if str(path).endswith('upload.png') else {'data': {'name': 'Hero', 'tags': ['old']}})
+    monkeypatch.setattr(card_service, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(card_service, 'resize_image_if_needed', lambda image: image)
+    monkeypatch.setattr(card_service, 'clean_sidecar_images', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(card_service, 'clean_thumbnail_cache', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(card_service, 'load_ui_data', lambda: ui_state)
+    monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: None)
+    monkeypatch.setattr(card_service, 'resolve_ui_key', lambda card_id: card_id)
+    monkeypatch.setattr(card_service, 'ensure_import_time', lambda *_args, **_kwargs: (False, 123.0))
+    monkeypatch.setattr(card_service, 'get_import_time', lambda *_args, **_kwargs: 123.0)
+    monkeypatch.setattr(card_service, 'calculate_token_count', lambda _payload: 42)
+    monkeypatch.setattr(card_service, 'get_file_hash_and_size', lambda _path: ('new-hash', 11))
+    monkeypatch.setattr(card_service, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
+    real_sqlite_connect = sqlite3.connect
+    monkeypatch.setattr(card_service.sqlite3, 'connect', lambda *_args, **_kwargs: real_sqlite_connect(tmp_path / 'cards_metadata.db', timeout=30, check_same_thread=False))
+    monkeypatch.setattr(card_service.ctx, 'cache', _FakeCache())
+    monkeypatch.setattr(card_service.Image, 'open', lambda _path: _FakeImage())
+
+    with _open_row_db(tmp_path / 'cards_metadata.db') as conn:
+        _create_card_metadata_table(conn)
+        conn.commit()
+
+    result = card_service.update_card_content(
+        'hero.json',
+        str(temp_path),
+        is_bundle_update=False,
+        keep_ui_data={'ui_summary': 'new note', 'source_link': 'new-link', 'resource_folder': 'keep-folder'},
+        new_upload_ext='.png',
+    )
+
+    assert result['success'] is True
+    assert result['new_id'] == 'hero.png'
+    assert sync_calls == [
+        {
+            'card_id': 'hero.png',
+            'source_path': str(cards_root / 'hero.png'),
+            'file_content_changed': True,
+            'rename_changed': True,
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': ['hero.json'],
+            'remove_owner_ids': ['hero.json'],
+        }
+    ]
 
 
 def test_worker_loop_marks_unknown_job_failed(monkeypatch, tmp_path):

@@ -46,6 +46,8 @@ from core.consts import SIDECAR_EXTENSIONS
 from core.services.scan_service import suppress_fs_events
 from core.services.cache_service import schedule_reload, force_reload, update_card_cache
 from core.services.index_service import enqueue_index_job
+from core.services.card_index_sync_service import sync_card_index_jobs
+from core.services.index_build_service import apply_card_increment, connect_index_db
 from core.services.card_index_query_service import query_indexed_cards
 from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover
 from core.services.tag_management_service import build_governance_feedback, build_known_tag_set, filter_governed_tags
@@ -77,6 +79,15 @@ logger = logging.getLogger(__name__)
 bp = Blueprint('cards', __name__)
 
 TAG_ORDER_KEY = '_tag_order_v1'
+
+
+def _apply_card_index_increment_now(card_id, source_path, remove_entity_ids=None):
+    try:
+        with connect_index_db(DEFAULT_DB_PATH) as conn:
+            apply_card_increment(conn, card_id, source_path, remove_entity_ids=remove_entity_ids)
+    except RuntimeError as exc:
+        if 'cards active generation missing' not in str(exc):
+            raise
 
 
 def _normalize_tag_list(tags):
@@ -1136,6 +1147,7 @@ def api_toggle_favorite():
         row = cursor.fetchone()
         if not row: return jsonify({"success": False, "msg": "Card not found in DB"})
         
+        current_status = 1 if row['is_favorite'] else 0
         new_status = 0 if row['is_favorite'] else 1
         
         # 更新数据库
@@ -1144,6 +1156,17 @@ def api_toggle_favorite():
         
         # 更新缓存
         ctx.cache.toggle_favorite_update(card_id, bool(new_status))
+
+        if current_status != new_status:
+            sync_card_index_jobs(
+                card_id=card_id,
+                source_path=os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep)),
+                favorite_changed=True,
+            )
+            _apply_card_index_increment_now(
+                card_id,
+                os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep)),
+            )
         
         return jsonify({"success": True, "new_status": bool(new_status)})
     except Exception as e:
@@ -1322,6 +1345,7 @@ def api_update_card():
 
         # 注意：如果是设为封面，前端发来的 ui_summary 可能是空的，保留原有值
         # Track UI-only side effects before mutating ui_data.
+        summary_changed = False
         link_changed = False
         resource_folder_changed = False
 
@@ -1373,6 +1397,7 @@ def api_update_card():
                 resource_folder_changed = old_resource_folder != new_resource_folder
 
                 if ui_data[ui_key].get('summary', '') != new_summary:
+                    summary_changed = True
                     ui_data[ui_key]['summary'] = new_summary
                     ui_changed = True
                 if link_changed:  # Use the flag set before update
@@ -1403,11 +1428,15 @@ def api_update_card():
              info = extract_card_info(current_full_path)
         
         # 更新 DB (Hash / Time)
-        cache_updated = False
+        cache_result = {
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        }
         should_refresh_card_cache = bool(file_content_modified or is_renamed or force_set_cover)
 
         if should_refresh_card_cache:
-            cache_updated = update_card_cache(
+            cache_result = update_card_cache(
                 final_rel_path_id,
                 current_full_path,
                 parsed_info=info,
@@ -1415,14 +1444,36 @@ def api_update_card():
                 remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
             )
 
-        should_enqueue_world_owner = bool(resource_folder_changed or cache_updated)
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                file_content_changed=bool(file_content_modified),
+                rename_changed=bool(is_renamed),
+                force_set_cover=bool(force_set_cover),
+                resource_folder_changed=bool(resource_folder_changed),
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+                remove_owner_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+            _apply_card_index_increment_now(
+                final_rel_path_id,
+                current_full_path,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
 
-        if should_enqueue_world_owner:
-            owner_payload = {'remove_owner_ids': [raw_id]} if raw_id != final_rel_path_id else None
-            if owner_payload:
-                enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path, payload=owner_payload)
-            else:
-                enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)
+        if summary_changed:
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                summary_changed=True,
+            )
+            _apply_card_index_increment_now(
+                final_rel_path_id,
+                current_full_path,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
 
         if raw_id != final_rel_path_id:
             try:
@@ -2524,17 +2575,22 @@ def api_change_image():
             save_ui_data(ui_data_for_import_time)
         
         # 3. 更新数据库记录 (Upsert)
-        cache_updated = update_card_cache(
+        cache_result = update_card_cache(
             final_id,
             target_save_path,
             remove_entity_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
         )
-        if cache_updated:
-            owner_payload = {'remove_owner_ids': [raw_id]} if is_format_conversion and raw_id != final_id else None
-            if owner_payload:
-                enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path, payload=owner_payload)
-            else:
-                enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path)
+        sync_card_index_jobs(
+            card_id=final_id,
+            source_path=target_save_path,
+            file_content_changed=True,
+            rename_changed=bool(is_format_conversion and raw_id != final_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+            remove_owner_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+        )
         
         # 4. [增量更新] 内存缓存
         # 我们需要构造一个符合 ctx.cache 格式的对象
