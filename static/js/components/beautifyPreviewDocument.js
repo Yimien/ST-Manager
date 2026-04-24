@@ -386,6 +386,12 @@ function buildPreviewBehaviorScript() {
         });
       });
 
+      document.querySelectorAll('[data-preview-link="disabled"]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+        });
+      });
+
       const scrollChatToBottom = () => {
         const chat = document.querySelector('#chat');
         if (!chat) {
@@ -775,7 +781,7 @@ export function buildBeautifyPreviewSampleMarkup(
         isSystem: true,
         extraClass: "smallSysMes",
         messageHtml:
-          '<p>Previewing theme surfaces with fixed sample content.</p><p><a href="#">Example link</a></p><hr>',
+          '<p>Previewing theme surfaces with fixed sample content.</p><p><a href="#" data-preview-link="disabled">Example link</a></p><hr>',
       })}
       ${buildMessage({
         mesId: "2",

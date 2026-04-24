@@ -403,6 +403,106 @@ def test_build_beautify_preview_sample_markup_contains_st_right_send_form_action
     )
 
 
+def test_build_beautify_preview_sample_markup_keeps_example_link_as_marked_real_anchor():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewSampleMarkup('pc');
+
+        if (!html.includes('Example link')) throw new Error('missing example link text');
+        if (html.includes('<a role="link" aria-disabled="true">Example link</a>')) throw new Error('example link should not use fake link semantics');
+        if (!html.includes('<a href="#" data-preview-link="disabled">Example link</a>')) throw new Error('example link should remain a real anchor with a preview disable marker');
+        '''
+    )
+
+
+def test_build_beautify_preview_document_disables_navigation_for_marked_example_link():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({
+          platform: 'pc',
+          theme: {},
+          wallpaperUrl: '',
+        });
+
+        const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
+        if (!scriptMatch) throw new Error('missing preview behavior script');
+
+        let clickHandler = null;
+        let unmarkedClickHandler = null;
+        let preventDefaultCalls = 0;
+        let loadHandler = null;
+        const root = { dataset: { activePanel: 'none' } };
+        const chat = { scrollTop: 0, scrollHeight: 42 };
+        const previewLink = {
+          addEventListener(type, handler) {
+            if (type === 'click') {
+              clickHandler = handler;
+            }
+          },
+        };
+        const unmarkedLink = {
+          addEventListener(type, handler) {
+            if (type === 'click') {
+              unmarkedClickHandler = handler;
+            }
+          },
+        };
+
+        const document = {
+          querySelector(selector) {
+            if (selector === '.st-preview-root') return root;
+            if (selector === '#chat') return chat;
+            return null;
+          },
+          querySelectorAll(selector) {
+            if (selector === '[data-preview-link="disabled"]') return [previewLink];
+            if (selector === 'a') return [previewLink, unmarkedLink];
+            return [];
+          },
+        };
+
+        const window = {
+          requestAnimationFrame(callback) {
+            callback();
+          },
+          addEventListener(type, handler) {
+            if (type === 'load') {
+              loadHandler = handler;
+            }
+          },
+        };
+
+        class CustomEvent {
+          constructor(type, options = {}) {
+            this.type = type;
+            this.bubbles = Boolean(options.bubbles);
+          }
+        }
+
+        const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
+        runScript(document, window, CustomEvent);
+
+        if (typeof clickHandler !== 'function') throw new Error('marked example link did not receive a click handler');
+        if (unmarkedClickHandler !== null) throw new Error('unmarked anchor should not receive preview link interception');
+        if (typeof loadHandler !== 'function') throw new Error('preview script did not bind its load handler');
+        if (chat.scrollTop !== chat.scrollHeight) throw new Error('preview script did not run initial chat scroll');
+
+        const event = {
+          defaultPrevented: false,
+          preventDefault() {
+            this.defaultPrevented = true;
+            preventDefaultCalls += 1;
+          },
+        };
+
+        clickHandler(event);
+
+        if (!event.defaultPrevented) throw new Error('marked example link click was not prevented');
+        if (preventDefaultCalls !== 1) throw new Error(`expected one preventDefault call, got ${preventDefaultCalls}`);
+        '''
+    )
+
+
 def test_build_beautify_preview_sample_markup_contains_st_send_form_and_textarea_attributes():
     run_preview_document_check(
         '''

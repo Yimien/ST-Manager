@@ -379,12 +379,58 @@ export default function beautifyGrid() {
 
     resolveDefaultVariant(detail) {
       if (!detail || !detail.variants) return null;
+      const previewPlatform = this.resolvePackagePreviewPlatform(detail);
       return (
-        this.findVariantByPlatform("pc", detail) ||
-        this.findVariantByPlatform("mobile", detail) ||
-        this.findVariantByPlatform("dual", detail) ||
+        this.findVariantForPreviewPlatform(previewPlatform, detail) ||
         Object.values(detail.variants)[0] ||
         null
+      );
+    },
+
+    resolvePackagePreviewPlatform(detail = this.activeDetail) {
+      if (!detail || !detail.variants) {
+        return "pc";
+      }
+
+      const currentPlatform = this.selectedVariantPlatform;
+      const hasPc = !!this.findVariantForPreviewPlatform("pc", detail);
+      const hasMobile = !!this.findVariantForPreviewPlatform("mobile", detail);
+      const hasDual = !!this.findVariantByPlatform("dual", detail);
+
+      if (currentPlatform === "dual" && hasDual) {
+        return "dual";
+      }
+      if (currentPlatform === "dual" && hasPc) {
+        return "pc";
+      }
+      if (currentPlatform === "mobile" && hasMobile) {
+        return "mobile";
+      }
+      if (currentPlatform === "pc" && hasPc) {
+        return "pc";
+      }
+      if (hasMobile && !hasPc) {
+        return "mobile";
+      }
+      if (hasPc && !hasMobile) {
+        return "pc";
+      }
+      if (hasDual) {
+        return "dual";
+      }
+      if (hasMobile) {
+        return "mobile";
+      }
+      return "pc";
+    },
+
+    findVariantForPreviewPlatform(platform, detail = this.activeDetail) {
+      if (platform === "dual") {
+        return this.findVariantByPlatform("dual", detail);
+      }
+      return (
+        this.findVariantByPlatform(platform, detail) ||
+        this.findVariantByPlatform("dual", detail)
       );
     },
 
@@ -404,11 +450,7 @@ export default function beautifyGrid() {
       this.$store.global.beautifyActiveWallpaper = wallpaper;
       this.selectedWallpaperId = wallpaper?.id || "";
 
-      if (variant.platform === "mobile") {
-        this.selectedVariantPlatform = "mobile";
-      } else {
-        this.selectedVariantPlatform = "pc";
-      }
+      this.selectedVariantPlatform = this.resolvePackagePreviewPlatform();
     },
 
     resolveActiveWallpaper(variant) {
@@ -487,7 +529,16 @@ export default function beautifyGrid() {
         this.alignSettingsPreviewDeviceToViewport();
         this.stageMode = "preview";
         this.fetchGlobalSettings();
+        return;
       }
+      const previewPlatform = this.resolvePackagePreviewPlatform();
+      const nextVariant = this.findVariantForPreviewPlatform(previewPlatform);
+      if (nextVariant) {
+        this.applyActiveVariant(nextVariant);
+        this.selectedVariantPlatform = previewPlatform;
+        return;
+      }
+      this.selectedVariantPlatform = previewPlatform;
     },
 
     setStageMode(mode) {
