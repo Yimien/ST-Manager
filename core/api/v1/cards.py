@@ -3010,12 +3010,30 @@ def api_toggle_bundle_mode():
             # 这里我们把合并后的 tags 更新到最新的那张卡片文件里，确保数据物理落地
             latest_card_file = os.path.join(full_path, cards_in_dir[0]['filename'])
             info = extract_card_info(latest_card_file)
-            if info:
-                data_part = info.get('data') if 'data' in info else info
-                data_part['tags'] = list(all_tags)
-                if 'data' in info: info['data'] = data_part # 确保写回结构正确
-                else: info = data_part
-                write_card_metadata(latest_card_file, info)
+            if not info:
+                return jsonify({"success": False, "msg": "读取封面卡片元数据失败"})
+            data_part = info.get('data') if 'data' in info else info
+            data_part['tags'] = sorted(list(all_tags))
+            if 'data' in info: info['data'] = data_part # 确保写回结构正确
+            else: info = data_part
+            if not write_card_metadata(latest_card_file, info):
+                return jsonify({"success": False, "msg": "写入卡片元数据失败"})
+            cover_mtime = os.path.getmtime(latest_card_file)
+            cache_result = update_card_cache(
+                cover_id,
+                latest_card_file,
+                parsed_info=info,
+                mtime=cover_mtime,
+            )
+            sync_card_index_jobs(
+                card_id=cover_id,
+                source_path=latest_card_file,
+                tags_changed=True,
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            )
+            _apply_card_index_increment_now(cover_id, latest_card_file)
 
             save_ui_data(ui_data)
             
@@ -3097,30 +3115,44 @@ def api_convert_to_bundle():
         
         # 新 ID 变为 "Category/BundleName/Card.png"
         new_id = f"{old_cat}/{new_bundle_name}/{filename}" if old_cat else f"{new_bundle_name}/{filename}"
+        new_bundle_dir = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
+        remove_entity_ids = [card_id]
         
         # 数据库更新
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("UPDATE card_metadata SET id = ? WHERE id = ?", (new_id, card_id))
+        cursor.execute(
+            "UPDATE card_metadata SET id = ?, category = ? WHERE id = ?",
+            (new_id, new_bundle_dir, card_id),
+        )
         conn.commit()
-        
-        # 内存更新
-        # 先删除旧的
-        if card_id in ctx.cache.id_map:
-            card_data = ctx.cache.id_map.pop(card_id)
-            # 修改属性
-            card_data['id'] = new_id
-            card_data['is_bundle'] = True
-            card_data['bundle_dir'] = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
-            # 重新插入
-            ctx.cache.id_map[new_id] = card_data
-            # 如果在列表里，也要更新列表引用
-            # 注意：列表里的对象引用必须是同一个
+
+        cache_result = update_card_cache(
+            new_id,
+            dst_path,
+            remove_entity_ids=remove_entity_ids,
+        )
+        sync_card_index_jobs(
+            card_id=new_id,
+            source_path=dst_path,
+            file_content_changed=False,
+            rename_changed=True,
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=remove_entity_ids,
+            remove_owner_ids=remove_entity_ids,
+        )
+        _apply_card_index_increment_now(
+            new_id,
+            dst_path,
+            remove_entity_ids=remove_entity_ids,
+        )
             
         # UI Data 更新
         ui_data = load_ui_data()
         ui_changed = False
-        new_key = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
+        new_key = new_bundle_dir
         if card_id in ui_data:
             # Bundle 模式下，UI data key 通常是 bundle_dir
             ui_data[new_key] = ui_data[card_id]
@@ -3139,6 +3171,8 @@ def api_convert_to_bundle():
 
         if ui_changed:
             save_ui_data(ui_data)
+
+        force_reload(reason='convert_to_bundle')
             
         # 强制前端刷新
         return jsonify({"success": True, "new_id": new_id, "new_bundle_dir": new_dir_path})
