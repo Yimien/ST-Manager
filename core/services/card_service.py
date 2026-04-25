@@ -426,7 +426,8 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
     updated_card_obj = None
     
     if is_bundle_update:
-        # Bundle 更新涉及版本列表重构，建议全量 Reload
+        # Bundle 更新会影响聚合卡的 versions 列表、封面选择和 bundle_map。
+        # 现有缓存没有等价的定向重建入口，所以这里保留全量 reload。
         ctx.cache.reload_from_db()
         # 找回对象
         bundle_dir_rel = os.path.dirname(final_rel_id).replace('\\', '/')

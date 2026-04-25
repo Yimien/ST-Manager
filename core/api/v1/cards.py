@@ -2929,6 +2929,7 @@ def api_toggle_bundle_mode():
             # 在删除标记文件前，先将 bundle 的全局 link/resource_folder 复制到每个版本
             ui_data = load_ui_data()
             ui_changed = False
+            migrated_resource_folder = ''
 
             version_ids = []
             if os.path.exists(full_path):
@@ -2941,6 +2942,8 @@ def api_toggle_bundle_mode():
                             version_ids.append(rel_id)
             
             if folder_path in ui_data and os.path.exists(full_path):
+                folder_ui = ui_data.get(folder_path) if isinstance(ui_data.get(folder_path), dict) else {}
+                migrated_resource_folder = str(folder_ui.get('resource_folder') or '').strip()
                 # 迁移 bundle 的全局数据到各个版本
                 if version_ids:
                     from core.data.ui_store import migrate_bundle_remarks_to_versions
@@ -2959,6 +2962,14 @@ def api_toggle_bundle_mode():
             
             if ui_changed:
                 save_ui_data(ui_data)
+            for ver_id in version_ids:
+                sync_card_index_jobs(
+                    card_id=ver_id,
+                    source_path=os.path.join(CARDS_FOLDER, ver_id.replace('/', os.sep)),
+                    file_content_changed=False,
+                    summary_changed=True,
+                    resource_folder_changed=bool(migrated_resource_folder),
+                )
             
             if os.path.exists(marker_path):
                 os.remove(marker_path)

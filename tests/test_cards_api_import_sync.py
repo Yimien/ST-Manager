@@ -2248,6 +2248,144 @@ def test_toggle_bundle_mode_enable_keeps_tags_consistent_between_file_db_cache_a
     real_cache_conn.close()
 
 
+def test_toggle_bundle_mode_disable_enqueues_incremental_repairs_for_versions(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    bundle_dir = cards_dir / 'pack'
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    cover_path = bundle_dir / 'cover.png'
+    alt_path = bundle_dir / 'alt.png'
+    cover_path.write_bytes(b'cover')
+    alt_path.write_bytes(b'alt')
+    (bundle_dir / '.bundle').write_text('1', encoding='utf-8')
+
+    saved_ui_payloads = []
+    sync_calls = []
+    force_reload_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path, allow_empty=False: True)
+    monkeypatch.setattr(
+        cards_api.os,
+        'walk',
+        lambda path: [(str(bundle_dir), [], ['cover.png', 'alt.png'])] if str(path) == str(bundle_dir) else [],
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'load_ui_data',
+        lambda: {
+            'pack': {
+                'link': 'https://example.com/card',
+                'resource_folder': 'hero-assets',
+            }
+        },
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'save_ui_data',
+        lambda payload: saved_ui_payloads.append(json.loads(json.dumps(payload, ensure_ascii=False))),
+    )
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda ui_data, ver_id: (ui_data.setdefault(ver_id, {}).update({'import_time': 123.0}) is None, 123.0))
+    monkeypatch.setattr(cards_api, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **kwargs: force_reload_calls.append(kwargs))
+
+    client = _make_app().test_client()
+    res = client.post('/api/toggle_bundle_mode', json={'folder_path': 'pack', 'action': 'disable'})
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert sync_calls == [
+        {
+            'card_id': 'pack/cover.png',
+            'source_path': str(cover_path),
+            'file_content_changed': False,
+            'summary_changed': True,
+            'resource_folder_changed': True,
+        },
+        {
+            'card_id': 'pack/alt.png',
+            'source_path': str(alt_path),
+            'file_content_changed': False,
+            'summary_changed': True,
+            'resource_folder_changed': True,
+        },
+    ]
+    assert saved_ui_payloads == [
+        {
+            'pack/cover.png': {
+                'link': 'https://example.com/card',
+                'resource_folder': 'hero-assets',
+                'import_time': 123.0,
+            },
+            'pack/alt.png': {
+                'link': 'https://example.com/card',
+                'resource_folder': 'hero-assets',
+                'import_time': 123.0,
+            },
+        }
+    ]
+    assert force_reload_calls == [{'reason': 'toggle_bundle_mode:disable'}]
+    assert (bundle_dir / '.bundle').exists() is False
+
+
+def test_toggle_bundle_mode_disable_still_enqueues_incremental_repairs_without_bundle_ui_entry(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    bundle_dir = cards_dir / 'pack'
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    cover_path = bundle_dir / 'cover.png'
+    alt_path = bundle_dir / 'alt.png'
+    cover_path.write_bytes(b'cover')
+    alt_path.write_bytes(b'alt')
+    (bundle_dir / '.bundle').write_text('1', encoding='utf-8')
+
+    saved_ui_payloads = []
+    sync_calls = []
+    force_reload_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path, allow_empty=False: True)
+    monkeypatch.setattr(
+        cards_api.os,
+        'walk',
+        lambda path: [(str(bundle_dir), [], ['cover.png', 'alt.png'])] if str(path) == str(bundle_dir) else [],
+    )
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(
+        cards_api,
+        'save_ui_data',
+        lambda payload: saved_ui_payloads.append(json.loads(json.dumps(payload, ensure_ascii=False))),
+    )
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 0.0))
+    monkeypatch.setattr(cards_api, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **kwargs: force_reload_calls.append(kwargs))
+
+    client = _make_app().test_client()
+    res = client.post('/api/toggle_bundle_mode', json={'folder_path': 'pack', 'action': 'disable'})
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert sync_calls == [
+        {
+            'card_id': 'pack/cover.png',
+            'source_path': str(cover_path),
+            'file_content_changed': False,
+            'summary_changed': True,
+            'resource_folder_changed': False,
+        },
+        {
+            'card_id': 'pack/alt.png',
+            'source_path': str(alt_path),
+            'file_content_changed': False,
+            'summary_changed': True,
+            'resource_folder_changed': False,
+        },
+    ]
+    assert saved_ui_payloads == []
+    assert force_reload_calls == [{'reason': 'toggle_bundle_mode:disable'}]
+    assert (bundle_dir / '.bundle').exists() is False
+
+
 def test_api_move_folder_merge_bundle_preserves_version_remarks_and_rebuilds_projection(monkeypatch, tmp_path):
     db_path = tmp_path / 'cards_metadata.db'
     ui_path = tmp_path / 'ui_data.json'
