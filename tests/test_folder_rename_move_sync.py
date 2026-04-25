@@ -332,6 +332,138 @@ def test_sync_exact_card_after_fs_move_updates_db_ui_cache_and_index(monkeypatch
     ]
 
 
+def test_sync_exact_card_after_fs_move_updates_db_ui_cache_and_index_for_png_rename(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    moved_file = cards_root / 'dst' / 'hero_1.png'
+    moved_file.parent.mkdir(parents=True, exist_ok=True)
+    moved_file.write_bytes(b'hero-image')
+
+    saved_ui_payloads = []
+    update_calls = []
+    sync_calls = []
+    move_card_calls = []
+    events = []
+
+    class _FakeConn:
+        def __init__(self):
+            self.executed = []
+            self.commit_calls = 0
+
+        def execute(self, sql, params=()):
+            self.executed.append((sql, params))
+            return self
+
+        def commit(self):
+            self.commit_calls += 1
+            events.append('commit')
+            return None
+
+    fake_conn = _FakeConn()
+    ui_data = {
+        'src/hero.png': {
+            'summary': 'card note',
+            card_service.VERSION_REMARKS_KEY: {
+                'src/hero.png': {'summary': 'version note'},
+            },
+        },
+        '_worldinfo_notes_v1': {
+            'embedded::src/hero.png': {'summary': 'embedded note'},
+            'embedded::src/other.png': {'summary': 'keep other note'},
+            'resource::book.json': {'summary': 'keep resource note'},
+        },
+    }
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(
+        card_service,
+        'save_ui_data',
+        lambda payload: ((
+            events.append('save_ui_data'),
+            saved_ui_payloads.append(json.loads(json.dumps(payload, ensure_ascii=False))),
+        ), None)[1],
+    )
+    monkeypatch.setattr(
+        card_service,
+        'update_card_cache',
+        lambda card_id, full_path, **kwargs: ((
+            events.append('update_card_cache'),
+            update_calls.append({'card_id': card_id, 'full_path': full_path, 'kwargs': kwargs}),
+            {
+                'cache_updated': True,
+                'has_embedded_wi': False,
+                'previous_has_embedded_wi': False,
+            },
+        ))[2],
+    )
+    monkeypatch.setattr(
+        card_service,
+        'sync_card_index_jobs',
+        lambda **kwargs: ((events.append('sync_card_index_jobs'), sync_calls.append(kwargs)), {})[1],
+    )
+    monkeypatch.setattr(
+        card_service.ctx,
+        'cache',
+        SimpleNamespace(
+            move_card_update=lambda *args: (events.append('move_card_update'), move_card_calls.append(args))[-1],
+        ),
+        raising=False,
+    )
+
+    card_service.sync_exact_card_after_fs_move(
+        conn=fake_conn,
+        ui_data=ui_data,
+        old_card_id='src/hero.png',
+        new_card_id='dst/hero_1.png',
+        dst_full_path=str(moved_file),
+        final_name='hero_1.png',
+        old_category='src',
+    )
+
+    assert fake_conn.executed == [
+        ('UPDATE card_metadata SET id = ?, category = ? WHERE id = ?', ('dst/hero_1.png', 'dst', 'src/hero.png')),
+    ]
+    assert fake_conn.commit_calls == 1
+    assert saved_ui_payloads[-1] == {
+        'dst/hero_1.png': {
+            'summary': 'card note',
+            card_service.VERSION_REMARKS_KEY: {
+                'dst/hero_1.png': {'summary': 'version note'},
+            },
+        },
+        '_worldinfo_notes_v1': {
+            'embedded::dst/hero_1.png': {'summary': 'embedded note'},
+            'embedded::src/other.png': {'summary': 'keep other note'},
+            'resource::book.json': {'summary': 'keep resource note'},
+        },
+    }
+    assert events == ['save_ui_data', 'commit', 'move_card_update', 'update_card_cache', 'sync_card_index_jobs']
+    assert move_card_calls == [
+        ('src/hero.png', 'dst/hero_1.png', 'src', 'dst', 'hero_1.png', str(moved_file)),
+    ]
+    assert update_calls == [
+        {
+            'card_id': 'dst/hero_1.png',
+            'full_path': str(moved_file),
+            'kwargs': {'remove_entity_ids': ['src/hero.png']},
+        }
+    ]
+    assert sync_calls == [
+        {
+            'card_id': 'dst/hero_1.png',
+            'source_path': str(moved_file),
+            'file_content_changed': False,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': ['src/hero.png'],
+            'remove_owner_ids': ['src/hero.png'],
+        }
+    ]
+
+
 def test_sync_exact_card_after_fs_move_cache_failure_stops_after_commit_before_cache_refresh(monkeypatch, tmp_path):
     from core.services import card_service
 
@@ -1235,6 +1367,120 @@ def test_api_move_folder_merge_plans_success_actions_without_force_reload(monkey
     assert (cards_dir / 'dst' / 'pack' / 'hero_1.json').exists() is True
     assert (cards_dir / 'dst' / 'pack' / 'ally.json').exists() is True
     assert (cards_dir / 'dst' / 'pack' / 'subfree' / 'ally.json').exists() is True
+    assert (cards_dir / 'src' / 'pack').exists() is False
+
+
+def test_api_move_folder_merge_syncs_standalone_png_without_conflict(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    source_dir = cards_dir / 'src' / 'pack'
+    target_dir = cards_dir / 'dst' / 'pack'
+    source_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    (source_dir / 'hero.png').write_bytes(b'hero-image')
+
+    folder_sync_calls = []
+    exact_sync_calls = []
+    force_reload_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _value, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: object())
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {'src/pack': {'summary': 'folder note'}})
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **kwargs: force_reload_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **kwargs: folder_sync_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: exact_sync_calls.append(kwargs),
+        raising=False,
+    )
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/move_folder',
+        json={
+            'source_path': 'src/pack',
+            'target_parent_path': 'dst',
+            'merge_if_exists': True,
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.get_json() == {'success': True, 'new_path': 'dst/pack', 'mode': 'merge'}
+    assert folder_sync_calls == []
+    assert len(exact_sync_calls) == 1
+    assert exact_sync_calls[0]['old_card_id'] == 'src/pack/hero.png'
+    assert exact_sync_calls[0]['new_card_id'] == 'dst/pack/hero.png'
+    assert exact_sync_calls[0]['dst_full_path'] == str(target_dir / 'hero.png')
+    assert exact_sync_calls[0]['final_name'] == 'hero.png'
+    assert exact_sync_calls[0]['old_category'] == 'src/pack'
+    assert force_reload_calls == []
+    assert (cards_dir / 'dst' / 'pack' / 'hero.png').exists() is True
+    assert (cards_dir / 'src' / 'pack').exists() is False
+
+
+def test_api_move_folder_merge_syncs_standalone_png_when_conflict_renames(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    source_dir = cards_dir / 'src' / 'pack'
+    target_dir = cards_dir / 'dst' / 'pack'
+    source_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    (source_dir / 'hero.png').write_bytes(b'source-hero-image')
+    (target_dir / 'hero.png').write_bytes(b'existing-hero-image')
+
+    folder_sync_calls = []
+    exact_sync_calls = []
+    force_reload_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _value, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: object())
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {'src/pack': {'summary': 'folder note'}})
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **kwargs: force_reload_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **kwargs: folder_sync_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: exact_sync_calls.append(kwargs),
+        raising=False,
+    )
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/move_folder',
+        json={
+            'source_path': 'src/pack',
+            'target_parent_path': 'dst',
+            'merge_if_exists': True,
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.get_json() == {'success': True, 'new_path': 'dst/pack', 'mode': 'merge'}
+    assert folder_sync_calls == []
+    assert len(exact_sync_calls) == 1
+    assert exact_sync_calls[0]['old_card_id'] == 'src/pack/hero.png'
+    assert exact_sync_calls[0]['new_card_id'] == 'dst/pack/hero_1.png'
+    assert exact_sync_calls[0]['dst_full_path'] == str(target_dir / 'hero_1.png')
+    assert exact_sync_calls[0]['final_name'] == 'hero_1.png'
+    assert exact_sync_calls[0]['old_category'] == 'src/pack'
+    assert force_reload_calls == []
+    assert (cards_dir / 'dst' / 'pack' / 'hero.png').read_bytes() == b'existing-hero-image'
+    assert (cards_dir / 'dst' / 'pack' / 'hero_1.png').read_bytes() == b'source-hero-image'
     assert (cards_dir / 'src' / 'pack').exists() is False
 
 

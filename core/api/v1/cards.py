@@ -509,7 +509,7 @@ def _build_move_folder_merge_actions(source_path, source_full_path, target_full_
                 'dst_file': final_dst,
                 'filename': file_name,
             }
-            if file_name.lower().endswith('.json'):
+            if file_name.lower().endswith(('.json', '.png')):
                 rel_parent = os.path.dirname(rel_from_source).replace('\\', '/')
                 old_card_id = f"{source_path}/{rel_from_source}".replace('\\', '/')
                 new_rel_name = f"{rel_parent}/{final_name}" if rel_parent else final_name
@@ -4219,28 +4219,28 @@ def api_move_folder():
                         s_dst = os.path.join(dst_dir, base_dst + ext)
                         shutil.move(s_src, s_dst)
 
-                if action.get('sync') == 'exact_card':
-                    try:
-                        sync_exact_card_after_fs_move(
-                            conn=conn,
-                            ui_data=ui_data,
-                            old_card_id=action['old_card_id'],
-                            new_card_id=action['new_card_id'],
-                            dst_full_path=action['dst_file'],
-                            final_name=action['final_name'],
-                            old_category=action['old_category'],
-                        )
-                    except Exception as e:
-                        if not is_last_action:
-                            raise
-                        logger.error(f"Folder merge sync failed after all filesystem moves completed: {e}")
-                        schedule_reload(reason='move_folder:merge_fallback')
-                        return jsonify({
-                            'success': True,
-                            'new_path': new_path_prefix,
-                            'mode': 'merge',
-                            'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
-                        })
+            if action.get('sync') == 'exact_card':
+                try:
+                    sync_exact_card_after_fs_move(
+                        conn=conn,
+                        ui_data=ui_data,
+                        old_card_id=action['old_card_id'],
+                        new_card_id=action['new_card_id'],
+                        dst_full_path=action['dst_file'],
+                        final_name=action['final_name'],
+                        old_category=action['old_category'],
+                    )
+                except Exception as e:
+                    if not is_last_action:
+                        raise
+                    logger.error(f"Folder merge sync failed after all filesystem moves completed: {e}")
+                    schedule_reload(reason='move_folder:merge_fallback')
+                    return jsonify({
+                        'success': True,
+                        'new_path': new_path_prefix,
+                        'mode': 'merge',
+                        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+                    })
 
         # 删除源文件夹 (此时应为空)
         try: shutil.rmtree(source_full_path)
