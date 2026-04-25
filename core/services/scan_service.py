@@ -346,17 +346,22 @@ def start_fs_watcher():
             if ctx.should_ignore_fs_event():
                 return
 
+            handled_worldinfo = False
             for candidate_path in (getattr(event, 'src_path', ''), getattr(event, 'dest_path', '')):
                 worldinfo_path = classify_worldinfo_path(candidate_path)
                 if worldinfo_path.get('kind') == 'global':
                     enqueue_index_job('upsert_worldinfo_path', source_path=candidate_path)
-                    return
+                    handled_worldinfo = True
+                    continue
                 if worldinfo_path.get('kind') == 'resource':
                     owner_card_ids = resolve_resource_worldinfo_owner_card_ids(candidate_path)
                     if owner_card_ids:
                         for owner_card_id in owner_card_ids:
                             enqueue_index_job('upsert_world_owner', entity_id=owner_card_id, source_path=candidate_path)
-                        return
+                        handled_worldinfo = True
+
+            if handled_worldinfo:
+                return
 
             card_task = _build_card_watch_task(event)
             if card_task:

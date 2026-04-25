@@ -286,6 +286,116 @@ def test_worldinfo_watcher_routes_resource_lorebook_to_owner_refresh(monkeypatch
     ]
 
 
+def test_worldinfo_watcher_move_between_global_categories_refreshes_old_and_new_paths(monkeypatch):
+    calls = []
+    scheduled = {}
+
+    class _FakeObserver:
+        daemon = False
+
+        def schedule(self, handler, watch_path, recursive=True):
+            scheduled['handler'] = handler
+            scheduled['watch_path'] = watch_path
+            scheduled['recursive'] = recursive
+
+        def start(self):
+            scheduled['started'] = True
+
+    class _FakeHandlerBase:
+        pass
+
+    monkeypatch.setattr(scan_service.ctx, 'should_ignore_fs_event', lambda: False)
+    monkeypatch.setattr(scan_service, 'CARDS_FOLDER', 'D:/cards')
+    monkeypatch.setattr(scan_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(scan_service, 'request_scan', lambda **_kwargs: calls.append((('scan',), {})))
+
+    watchdog_module = types.ModuleType('watchdog')
+    observers_module = types.ModuleType('watchdog.observers')
+    observers_module.Observer = _FakeObserver
+    events_module = types.ModuleType('watchdog.events')
+    events_module.FileSystemEventHandler = _FakeHandlerBase
+
+    monkeypatch.setitem(sys.modules, 'watchdog', watchdog_module)
+    monkeypatch.setitem(sys.modules, 'watchdog.observers', observers_module)
+    monkeypatch.setitem(sys.modules, 'watchdog.events', events_module)
+
+    monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+
+    scan_service.start_fs_watcher()
+
+    event = types.SimpleNamespace(
+        is_directory=False,
+        event_type='moved',
+        src_path='D:/data/lorebooks/旧分类/book.json',
+        dest_path='D:/data/lorebooks/新分类/book.json',
+    )
+    scheduled['handler'].on_any_event(event)
+
+    assert calls == [
+        (('upsert_worldinfo_path',), {'source_path': 'D:/data/lorebooks/旧分类/book.json'}),
+        (('upsert_worldinfo_path',), {'source_path': 'D:/data/lorebooks/新分类/book.json'}),
+    ]
+
+
+def test_worldinfo_watcher_move_between_resource_owners_refreshes_old_and_new_owners(monkeypatch):
+    calls = []
+    scheduled = {}
+
+    class _FakeObserver:
+        daemon = False
+
+        def schedule(self, handler, watch_path, recursive=True):
+            scheduled['handler'] = handler
+            scheduled['watch_path'] = watch_path
+            scheduled['recursive'] = recursive
+
+        def start(self):
+            scheduled['started'] = True
+
+    class _FakeHandlerBase:
+        pass
+
+    monkeypatch.setattr(scan_service.ctx, 'should_ignore_fs_event', lambda: False)
+    monkeypatch.setattr(scan_service, 'CARDS_FOLDER', 'D:/cards')
+    monkeypatch.setattr(scan_service, 'enqueue_index_job', lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(scan_service, 'request_scan', lambda **_kwargs: calls.append((('scan',), {})))
+
+    watchdog_module = types.ModuleType('watchdog')
+    observers_module = types.ModuleType('watchdog.observers')
+    observers_module.Observer = _FakeObserver
+    events_module = types.ModuleType('watchdog.events')
+    events_module.FileSystemEventHandler = _FakeHandlerBase
+
+    monkeypatch.setitem(sys.modules, 'watchdog', watchdog_module)
+    monkeypatch.setitem(sys.modules, 'watchdog.observers', observers_module)
+    monkeypatch.setitem(sys.modules, 'watchdog.events', events_module)
+
+    monkeypatch.setattr(scan_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': 'D:/data/lorebooks', 'resources_dir': 'D:/data/resources'})
+    monkeypatch.setattr(
+        scan_service,
+        'resolve_resource_worldinfo_owner_card_ids',
+        lambda source_path: ['cards/old-owner.png'] if 'old-pack' in source_path else ['cards/new-owner.png'],
+        raising=False,
+    )
+
+    scan_service.start_fs_watcher()
+
+    event = types.SimpleNamespace(
+        is_directory=False,
+        event_type='moved',
+        src_path='D:/data/resources/old-pack/lorebooks/book.json',
+        dest_path='D:/data/resources/new-pack/lorebooks/book.json',
+    )
+    scheduled['handler'].on_any_event(event)
+
+    assert calls == [
+        (('upsert_world_owner',), {'entity_id': 'cards/old-owner.png', 'source_path': 'D:/data/resources/old-pack/lorebooks/book.json'}),
+        (('upsert_world_owner',), {'entity_id': 'cards/new-owner.png', 'source_path': 'D:/data/resources/new-pack/lorebooks/book.json'}),
+    ]
+
+
 def test_card_watcher_routes_modify_to_targeted_card_task(monkeypatch):
     queued = []
     scheduled = {}

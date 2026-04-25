@@ -2124,6 +2124,142 @@ def test_move_worldinfo_global_item_moves_file_to_target_category(monkeypatch, t
     assert (lorebooks_dir / '奇幻' / '巨龙' / 'dragon.json').exists()
 
 
+def test_move_worldinfo_global_item_remaps_note_and_refreshes_old_and_new_paths(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    source_file = lorebooks_dir / '科幻' / 'dragon.json'
+    target_file = lorebooks_dir / '奇幻' / '巨龙' / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+    _write_json(source_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(
+        json.dumps(
+            {
+                '_worldinfo_notes_v1': {
+                    f"global::{str(source_file).replace('\\', '/').lower()}": {'summary': 'global note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    refresh_calls = []
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, '_enqueue_worldinfo_file_refresh', lambda path, cfg: refresh_calls.append((path, cfg)))
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/category/move',
+        json={
+            'source_type': 'global',
+            'file_path': str(source_file),
+            'target_category': '奇幻/巨龙',
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    notes = ui_store_module.get_worldinfo_notes(ui_store_module.load_ui_data())
+    assert f"global::{str(source_file).replace('\\', '/').lower()}" not in notes
+    assert notes[f"global::{str(target_file).replace('\\', '/').lower()}"]['summary'] == 'global note'
+    assert refresh_calls == [
+        (str(source_file), {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)}),
+        (str(target_file), {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)}),
+    ]
+
+
+def test_move_worldinfo_global_item_returns_error_when_note_remap_persistence_fails(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    source_file = lorebooks_dir / '科幻' / 'dragon.json'
+    target_file = lorebooks_dir / '奇幻' / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+    _write_json(source_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(
+        json.dumps(
+            {
+                '_worldinfo_notes_v1': {
+                    f"global::{str(source_file).replace('\\', '/').lower()}": {'summary': 'global note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'CARDS_FOLDER', str(tmp_path / 'cards'))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'save_ui_data', lambda _data: False)
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/world_info/category/move',
+        json={
+            'source_type': 'global',
+            'file_path': str(source_file),
+            'target_category': '奇幻',
+        },
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert '保存' in payload['msg']
+    assert source_file.exists() is True
+    assert target_file.exists() is False
+
+
+def test_rename_worldinfo_folder_returns_error_and_rolls_back_when_note_remap_persistence_fails(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    source_dir = lorebooks_dir / '科幻' / '旧分类'
+    source_file = source_dir / 'dragon.json'
+    target_dir = lorebooks_dir / '科幻' / '新分类'
+    target_file = target_dir / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+    _write_json(source_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(
+        json.dumps(
+            {
+                '_worldinfo_notes_v1': {
+                    f"global::{str(source_file).replace('\\', '/').lower()}": {'summary': 'folder note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, 'save_ui_data', lambda _data: False)
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/rename', json={'category': '科幻/旧分类', 'new_name': '新分类'})
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is False
+    assert '保存' in payload['msg']
+    assert source_dir.is_dir() is True
+    assert source_file.exists() is True
+    assert target_dir.exists() is False
+    assert target_file.exists() is False
+
+
 def test_worldinfo_delete_enqueues_incremental_index_repair_for_global_and_resource_files(monkeypatch, tmp_path):
     lorebooks_dir = tmp_path / 'lorebooks'
     resources_dir = tmp_path / 'resources'
@@ -2327,6 +2463,50 @@ def test_rename_worldinfo_folder_renames_real_subdirectory(monkeypatch, tmp_path
     assert payload['success'] is True
     assert (lorebooks_dir / '科幻' / '旧分类').exists() is False
     assert (lorebooks_dir / '科幻' / '新分类').is_dir()
+
+
+def test_rename_worldinfo_folder_reindexes_contained_files_and_remaps_notes(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    source_dir = lorebooks_dir / '科幻' / '旧分类'
+    source_file = source_dir / 'dragon.json'
+    target_dir = lorebooks_dir / '科幻' / '新分类'
+    target_file = target_dir / 'dragon.json'
+    ui_path = tmp_path / 'ui_data.json'
+    _write_json(source_file, {'name': 'Dragon Lore', 'entries': {}})
+    ui_path.write_text(
+        json.dumps(
+            {
+                '_worldinfo_notes_v1': {
+                    f"global::{str(source_file).replace('\\', '/').lower()}": {'summary': 'folder note'},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    refresh_calls = []
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, '_enqueue_worldinfo_file_refresh', lambda path, cfg: refresh_calls.append((path, cfg)))
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/rename', json={'category': '科幻/旧分类', 'new_name': '新分类'})
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert refresh_calls == [
+        (str(source_file), {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)}),
+        (str(target_file), {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)}),
+    ]
+    notes = ui_store_module.get_worldinfo_notes(ui_store_module.load_ui_data())
+    assert f"global::{str(source_file).replace('\\', '/').lower()}" not in notes
+    assert notes[f"global::{str(target_file).replace('\\', '/').lower()}"]['summary'] == 'folder note'
 
 
 def test_rename_worldinfo_folder_suppresses_fs_events(monkeypatch, tmp_path):
@@ -2615,6 +2795,10 @@ def test_move_global_worldinfo_category_enqueues_incremental_refresh(monkeypatch
     assert Path(payload['path']) == target_file
     assert refresh_calls == [
         (
+            str(source_file),
+            {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+        ),
+        (
             str(target_file),
             {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
         )
@@ -2642,6 +2826,44 @@ def test_upload_worldinfo_uses_target_category_subfolder(monkeypatch, tmp_path):
     payload = res.get_json()
     assert payload['success'] is True
     assert (lorebooks_dir / '科幻' / '赛博朋克' / 'dragon.json').exists()
+
+
+def test_upload_worldinfo_enqueues_refresh_for_each_saved_file(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    refresh_calls = []
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(world_info_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(world_info_api, '_enqueue_worldinfo_file_refresh', lambda path, cfg: refresh_calls.append((path, cfg)))
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/upload_world_info',
+        data={
+            'target_category': '科幻/赛博朋克',
+            'files': [
+                (BytesIO(json.dumps({'name': 'Dragon Lore', 'entries': {}}).encode('utf-8')), 'dragon.json'),
+                (BytesIO(json.dumps({'name': 'Phoenix Lore', 'entries': {}}).encode('utf-8')), 'phoenix.json'),
+            ],
+        },
+        content_type='multipart/form-data',
+    )
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert refresh_calls == [
+        (
+            str(lorebooks_dir / '科幻' / '赛博朋克' / 'dragon.json'),
+            {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+        ),
+        (
+            str(lorebooks_dir / '科幻' / '赛博朋克' / 'phoenix.json'),
+            {'world_info_dir': str(lorebooks_dir), 'resources_dir': str(resources_dir)},
+        ),
+    ]
 
 
 def test_upload_worldinfo_suppresses_fs_events(monkeypatch, tmp_path):

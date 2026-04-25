@@ -22,6 +22,7 @@ from core.data.ui_store import (
     get_worldinfo_note,
     set_worldinfo_note,
     delete_worldinfo_note,
+    rename_global_worldinfo_note_path_prefix,
 )
 from core.services.card_service import resolve_ui_key
 from core.services.cache_service import invalidate_wi_list_cache
@@ -603,6 +604,19 @@ def _move_global_worldinfo_file(file_path: str, target_category: str, cfg: dict)
 
     shutil.move(file_path, target_path)
     return target_path
+
+
+def _remap_global_worldinfo_note_path(old_path: str, new_path: str):
+    if not old_path or not new_path:
+        return False
+
+    ui_data = load_ui_data()
+    changed = rename_global_worldinfo_note_path_prefix(ui_data, old_path, new_path)
+    if not changed:
+        return False
+    if not save_ui_data(ui_data):
+        raise ValueError('保存世界书备注失败')
+    return True
 
 
 def _folder_response(base_dir: str, success_msg: str, warning: str = ''):
@@ -1341,9 +1355,18 @@ def api_move_world_info_category():
             return jsonify({'success': False, 'msg': '缺少必要参数'})
 
         suppress_fs_events(3.0)
+        old_path = file_path
         new_path = _move_global_worldinfo_file(file_path, target_category, cfg)
+        try:
+            _remap_global_worldinfo_note_path(old_path, new_path)
+        except ValueError:
+            if os.path.exists(new_path) and not os.path.exists(old_path):
+                shutil.move(new_path, old_path)
+            raise
         invalidate_wi_list_cache()
-        _enqueue_worldinfo_file_refresh(new_path, load_config())
+        cfg = load_config()
+        _enqueue_worldinfo_file_refresh(old_path, cfg)
+        _enqueue_worldinfo_file_refresh(new_path, cfg)
         return jsonify({'success': True, 'msg': '世界书已移动', 'path': new_path})
     except ValueError as e:
         return jsonify({'success': False, 'msg': str(e)})
@@ -1412,8 +1435,27 @@ def api_rename_world_info_folder():
         if not source_dir or not target_dir or not os.path.isdir(source_dir):
             return jsonify({'success': False, 'msg': '目录不存在'})
         suppress_fs_events(3.0)
+        moved_global_files = []
+        for root, _dirs, files in os.walk(source_dir):
+            for name in files:
+                if not name.lower().endswith('.json'):
+                    continue
+                old_file_path = os.path.join(root, name)
+                rel_file_path = os.path.relpath(old_file_path, source_dir)
+                moved_global_files.append((old_file_path, os.path.join(target_dir, rel_file_path)))
+        old_prefix = os.path.normcase(os.path.normpath(source_dir)).replace('\\', '/')
         os.rename(source_dir, target_dir)
+        new_prefix = os.path.normcase(os.path.normpath(target_dir)).replace('\\', '/')
+        try:
+            _remap_global_worldinfo_note_path(old_prefix, new_prefix)
+        except ValueError:
+            if os.path.exists(target_dir) and not os.path.exists(source_dir):
+                os.rename(target_dir, source_dir)
+            raise
         invalidate_wi_list_cache()
+        for old_file_path, new_file_path in moved_global_files:
+            _enqueue_worldinfo_file_refresh(old_file_path, cfg)
+            _enqueue_worldinfo_file_refresh(new_file_path, cfg)
         warning = _refresh_worldinfo_folder_stats(cfg)
         return _folder_response(global_dir, '目录已重命名', warning=warning)
     except Exception as e:
@@ -1475,6 +1517,7 @@ def api_upload_world_info():
 
         success_count = 0
         failed_list = []
+        saved_paths = []
 
         for file in files:
             if not file.filename.lower().endswith('.json'):
@@ -1500,6 +1543,7 @@ def api_upload_world_info():
                 file.seek(0)
                 file.save(save_path)
                 success_count += 1
+                saved_paths.append(save_path)
             except Exception:
                 failed_list.append(file.filename)
 
@@ -1507,6 +1551,8 @@ def api_upload_world_info():
         if failed_list:
             msg += f" 失败: {', '.join(failed_list)}"
         invalidate_wi_list_cache()
+        for save_path in saved_paths:
+            _enqueue_worldinfo_file_refresh(save_path, cfg)
         return jsonify({"success": True, "count": success_count, "msg": msg})
         
     except Exception as e:
