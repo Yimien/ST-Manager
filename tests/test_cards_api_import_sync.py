@@ -1,9 +1,12 @@
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from flask import Flask
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,12 +15,88 @@ if str(ROOT) not in sys.path:
 
 
 from core.api.v1 import cards as cards_api
+from core.context import ctx
+from core.data import cache as cache_module
+from core.data import ui_store as ui_store_module
+from core.data.cache import GlobalMetadataCache
+from core.data.index_runtime_store import ensure_index_runtime_schema
+from core.services import cache_service
+from core.services import index_build_service
+from core.services import index_job_worker
+from core.utils.image import write_card_metadata
 
 
 def _make_app():
     app = Flask(__name__)
     app.register_blueprint(cards_api.bp)
     return app
+
+
+class _StopWorkerLoop(Exception):
+    pass
+
+
+def _init_index_db(db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        ensure_index_runtime_schema(conn)
+
+
+def _create_card_metadata_table(conn):
+    conn.execute(
+        'CREATE TABLE card_metadata (id TEXT PRIMARY KEY, char_name TEXT, tags TEXT, category TEXT, last_modified REAL, token_count INTEGER, is_favorite INTEGER, has_character_book INTEGER, character_book_name TEXT, description TEXT, first_mes TEXT, mes_example TEXT, creator TEXT, char_version TEXT, file_hash TEXT, file_size INTEGER)'
+    )
+
+
+def _open_row_db(db_path: Path):
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _run_index_worker_once(monkeypatch, db_path: Path):
+    rebuild_calls = []
+    wait_calls = {'count': 0}
+
+    def fake_wait(timeout):
+        del timeout
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopWorkerLoop()
+        return True
+
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(
+        index_job_worker,
+        'rebuild_scope_generation',
+        lambda scope='cards', reason='bootstrap': rebuild_calls.append((scope, reason)),
+    )
+    monkeypatch.setattr(ctx.index_wakeup, 'wait', fake_wait)
+    ctx.index_state.update({'state': 'empty', 'scope': 'cards', 'progress': 0, 'message': '', 'pending_jobs': 0})
+    ctx.index_wakeup.set()
+
+    with pytest.raises(_StopWorkerLoop):
+        index_job_worker.worker_loop()
+
+    return rebuild_calls
+
+
+def _write_png_card(path: Path, *, name: str, tags):
+    payload = {
+        'data': {
+            'name': name,
+            'tags': list(tags),
+            'description': '',
+            'first_mes': '',
+            'mes_example': '',
+            'alternate_greetings': [],
+            'extensions': {},
+            'creator': '',
+            'character_version': '',
+        }
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new('RGBA', (1, 1), (255, 0, 0, 255)).save(path, format='PNG')
+    assert write_card_metadata(str(path), payload) is True
 
 
 def test_import_from_url_enqueues_card_and_world_sync_jobs(monkeypatch, tmp_path):
@@ -1158,3 +1237,256 @@ def test_convert_to_bundle_updates_category_and_enqueues_incremental_sync(monkey
     ]
     assert saved_ui_payloads == [{'group/pack': {'summary': 'note'}}]
     assert force_reload_calls == [{'reason': 'convert_to_bundle'}]
+
+
+def test_convert_to_bundle_rebuilds_new_owner_projection_after_old_cleanup(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    resources_dir = tmp_path / 'resources'
+    old_id = 'group/hero.json'
+    new_id = 'group/pack/hero.json'
+    old_card_path = cards_dir / 'group' / 'hero.json'
+    new_card_path = cards_dir / 'group' / 'pack' / 'hero.json'
+    old_card_path.parent.mkdir(parents=True, exist_ok=True)
+    old_card_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': ['alpha']}}, ensure_ascii=False), encoding='utf-8')
+    (cards_dir / 'group' / 'hero.png').write_bytes(b'sidecar')
+    resource_file = resources_dir / 'hero-assets' / 'lorebooks' / 'companion.json'
+    resource_file.parent.mkdir(parents=True, exist_ok=True)
+    resource_file.write_text(json.dumps({'name': 'Fresh Resource', 'entries': {}}, ensure_ascii=False), encoding='utf-8')
+    ui_path.write_text(
+        json.dumps({old_id: {'summary': 'note', 'resource_folder': 'hero-assets'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    _init_index_db(db_path)
+    with _open_row_db(db_path) as conn:
+        _create_card_metadata_table(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (old_id, 'Hero', json.dumps(['alpha']), 'group', 10.0, 11, 0, 0, '', '', '', '', '', '', 'hash', 1),
+        )
+        conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+        conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'worldinfo'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, f'card::{old_id}', 'card', str(old_card_path), '', 'Old Hero', 'hero.json', 'group', 'group', 'physical', 0, 'note', 10.0, 0.0, 11, 'old hero', 10.0, '', '10:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (1, f'card::{old_id}', 'alpha'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, f'card::{old_id}', 'Old Hero hero.json group note alpha'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, f'card::{old_id}', 'Old Hero hero.json group note alpha'),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, f'world::resource::{old_id}::companion.json', 'world_resource', str(resource_file), f'card::{old_id}', 'Old Resource', 'companion.json', 'group', '', 'inherited', 0, '', 10.0, 0.0, 0, 'old resource', 10.0, '', '10:1'),
+        )
+        conn.commit()
+
+    real_cache_conn = _open_row_db(db_path)
+
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cache_service, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(index_build_service, 'DEFAULT_DB_PATH', str(db_path), raising=False)
+    monkeypatch.setattr(cache_module, 'DEFAULT_DB_PATH', str(db_path), raising=False)
+    monkeypatch.setattr(index_job_worker, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cache_module, 'CARDS_FOLDER', str(cards_dir), raising=False)
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, '_is_safe_filename', lambda _name: True)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: _open_row_db(db_path))
+    monkeypatch.setattr(cache_service, 'get_db', lambda: real_cache_conn)
+    monkeypatch.setattr(cache_service, 'get_file_hash_and_size', lambda _path: ('new-hash', 12))
+    monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _data: 22)
+    monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _data: (False, ''))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {'world_info_dir': str(tmp_path / 'global-lorebooks'), 'resources_dir': str(resources_dir)})
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 123.0))
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **_kwargs: None)
+    monkeypatch.setattr(cards_api.ctx, 'cache', SimpleNamespace(id_map={}, category_counts={}), raising=False)
+
+    client = _make_app().test_client()
+    res = client.post('/api/convert_to_bundle', json={'card_id': old_id, 'bundle_name': 'pack'})
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert old_card_path.exists() is False
+    assert new_card_path.exists() is True
+
+    rebuild_calls = _run_index_worker_once(monkeypatch, db_path)
+
+    with sqlite3.connect(db_path) as verify_conn:
+        card_rows = verify_conn.execute(
+            'SELECT id, category FROM card_metadata ORDER BY id'
+        ).fetchall()
+        card_entities = verify_conn.execute(
+            "SELECT entity_id, source_path FROM index_entities_v2 WHERE generation = 1 AND entity_type = 'card' ORDER BY entity_id"
+        ).fetchall()
+        world_rows = verify_conn.execute(
+            "SELECT entity_id, owner_entity_id, name FROM index_entities_v2 WHERE generation = 1 AND entity_type LIKE 'world_%' ORDER BY entity_id"
+        ).fetchall()
+        queued = verify_conn.execute(
+            'SELECT job_type, entity_id, payload_json, status FROM index_jobs ORDER BY id'
+        ).fetchall()
+
+    assert card_rows == [(new_id, 'group/pack')]
+    assert card_entities == [(f'card::{new_id}', str(new_card_path))]
+    assert world_rows == [
+        (f'world::resource::{new_id}::companion.json', f'card::{new_id}', 'Fresh Resource'),
+    ]
+    assert queued == [
+        ('upsert_card', new_id, json.dumps({'remove_entity_ids': [old_id]}, ensure_ascii=False), 'done'),
+        ('upsert_world_owner', new_id, json.dumps({'remove_owner_ids': [old_id]}, ensure_ascii=False), 'done'),
+    ]
+    assert rebuild_calls == []
+
+    real_cache_conn.close()
+
+
+def test_toggle_bundle_mode_enable_keeps_tags_consistent_between_file_db_cache_and_index(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    ui_path = tmp_path / 'ui_data.json'
+    cards_dir = tmp_path / 'cards'
+    bundle_dir = cards_dir / 'pack'
+    cover_path = bundle_dir / 'cover.png'
+    alt_path = bundle_dir / 'alt.png'
+    _write_png_card(cover_path, name='Cover', tags=['zeta'])
+    _write_png_card(alt_path, name='Alt', tags=['alpha'])
+    ui_path.write_text(
+        json.dumps({'pack/cover.png': {'summary': 'cover note'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    _init_index_db(db_path)
+    real_cache_conn = _open_row_db(db_path)
+    with _open_row_db(db_path) as conn:
+        _create_card_metadata_table(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('pack/cover.png', 'Cover', json.dumps(['zeta']), 'pack', 20.0, 11, 0, 0, '', '', '', '', '', '', 'cover-hash', 1),
+        )
+        conn.execute(
+            'INSERT INTO card_metadata (id, char_name, tags, category, last_modified, token_count, is_favorite, has_character_book, character_book_name, description, first_mes, mes_example, creator, char_version, file_hash, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('pack/alt.png', 'Alt', json.dumps(['alpha']), 'pack', 10.0, 12, 0, 0, '', '', '', '', '', '', 'alt-hash', 1),
+        )
+        conn.execute("UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'cards'")
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 'card::pack/cover.png', 'card', str(cover_path), '', 'Cover', 'cover.png', 'pack', 'pack', 'physical', 0, 'cover note', 20.0, 0.0, 11, 'cover', 20.0, '', '20:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (1, 'card::pack/cover.png', 'zeta'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, 'card::pack/cover.png', 'Cover cover.png pack cover note zeta'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, 'card::pack/cover.png', 'Cover cover.png pack cover note zeta'),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 'card::pack/alt.png', 'card', str(alt_path), '', 'Alt', 'alt.png', 'pack', 'pack', 'physical', 0, '', 10.0, 0.0, 12, 'alt', 10.0, '', '10:1'),
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO index_entity_tags_v2(generation, entity_id, tag) VALUES (?, ?, ?)',
+            (1, 'card::pack/alt.png', 'alpha'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_fast_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, 'card::pack/alt.png', 'Alt alt.png pack alpha'),
+        )
+        conn.execute(
+            'INSERT INTO index_search_full_v2(generation, entity_id, content) VALUES (?, ?, ?)',
+            (1, 'card::pack/alt.png', 'Alt alt.png pack alpha'),
+        )
+        conn.commit()
+
+    cache = GlobalMetadataCache()
+
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cache_service, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(index_build_service, 'DEFAULT_DB_PATH', str(db_path), raising=False)
+    monkeypatch.setattr(cache_module, 'DEFAULT_DB_PATH', str(db_path), raising=False)
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cache_service, 'CARDS_FOLDER', str(cards_dir), raising=False)
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cache_module, 'CARDS_FOLDER', str(cards_dir), raising=False)
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path, allow_empty=False: True)
+    monkeypatch.setattr(
+        cards_api.os.path,
+        'getmtime',
+        lambda path: 20.0 if str(path) == str(cover_path) else 10.0,
+    )
+    monkeypatch.setattr(cache_service, 'get_db', lambda: real_cache_conn)
+    monkeypatch.setattr(cache_service, 'get_file_hash_and_size', lambda path: ('cover-hash' if str(path) == str(cover_path) else 'alt-hash', 1))
+    monkeypatch.setattr(cache_service, 'calculate_token_count', lambda _data: 77)
+    monkeypatch.setattr(cache_service, 'get_wi_meta', lambda _data: (False, ''))
+    monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _card_id, fallback: fallback)
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 0.0))
+    monkeypatch.setattr(cards_api.ctx, 'cache', cache, raising=False)
+
+    monkeypatch.setattr(
+        cards_api,
+        'force_reload',
+        lambda **_kwargs: cache.reload_from_db(),
+    )
+
+    client = _make_app().test_client()
+    res = client.post('/api/toggle_bundle_mode', json={'folder_path': 'pack', 'action': 'enable'})
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+
+    cover_info = cards_api.extract_card_info(str(cover_path))
+    alt_info = cards_api.extract_card_info(str(alt_path))
+
+    with sqlite3.connect(db_path) as verify_conn:
+        db_rows = verify_conn.execute(
+            'SELECT id, tags, category FROM card_metadata ORDER BY id'
+        ).fetchall()
+        index_rows = verify_conn.execute(
+            "SELECT entity_id FROM index_entities_v2 WHERE generation = 1 AND entity_type = 'card' ORDER BY entity_id"
+        ).fetchall()
+        cover_tags = verify_conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 1 AND entity_id = 'card::pack/cover.png' ORDER BY tag"
+        ).fetchall()
+        alt_tags = verify_conn.execute(
+            "SELECT tag FROM index_entity_tags_v2 WHERE generation = 1 AND entity_id = 'card::pack/alt.png' ORDER BY tag"
+        ).fetchall()
+        cover_search = verify_conn.execute(
+            "SELECT content FROM index_search_fast_v2 WHERE generation = 1 AND entity_id = 'card::pack/cover.png'"
+        ).fetchone()
+
+    assert cover_info['data']['tags'] == ['alpha', 'zeta']
+    assert alt_info['data']['tags'] == ['alpha']
+    assert db_rows == [
+        ('pack/alt.png', json.dumps(['alpha']), 'pack'),
+        ('pack/cover.png', json.dumps(['alpha', 'zeta']), 'pack'),
+    ]
+    assert index_rows == [('card::pack/alt.png',), ('card::pack/cover.png',)]
+    assert cover_tags == [('alpha',), ('zeta',)]
+    assert alt_tags == [('alpha',)]
+    assert cover_search == ('Cover cover.png pack cover note alpha zeta',)
+    assert cache.bundle_map == {'pack': 'pack/cover.png'}
+    assert cache.id_map['pack/cover.png']['is_bundle'] is True
+    assert cache.id_map['pack/cover.png']['tags'] == ['alpha', 'zeta']
+    assert [version['id'] for version in cache.id_map['pack/cover.png']['versions']] == [
+        'pack/cover.png',
+        'pack/alt.png',
+    ]
+
+    real_cache_conn.close()

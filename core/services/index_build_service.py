@@ -52,6 +52,22 @@ def _embedded_summary(ui_data: dict, card_id: str) -> str:
     return _worldinfo_note_summary(ui_data, 'embedded', card_id=card_id)
 
 
+def _resolve_card_ui_meta(ui_data: dict, card_id: str) -> dict:
+    if not isinstance(ui_data, dict):
+        return {}
+
+    card_meta = ui_data.get(card_id) or {}
+    if isinstance(card_meta, dict) and card_meta:
+        return card_meta
+
+    parent_dir = str(card_id or '').replace('\\', '/').rsplit('/', 1)[0] if '/' in str(card_id or '') else ''
+    bundle_meta = ui_data.get(parent_dir) or {}
+    if isinstance(bundle_meta, dict):
+        return bundle_meta
+
+    return {}
+
+
 def _insert_worldinfo_search(conn, generation: int, entity_id: str, *parts):
     content = ' '.join(str(part or '').strip() for part in parts if str(part or '').strip())
     conn.execute(
@@ -418,7 +434,7 @@ def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '', *
     global_dir, resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     owner_entity_id = f'card::{card_id}'
 
-    resource_folder = str((ui_data.get(card_id) or {}).get('resource_folder', '')).strip()
+    resource_folder = str((_resolve_card_ui_meta(ui_data, card_id).get('resource_folder') or '')).strip()
     resource_item_categories = ((ui_data.get('_resource_item_categories_v1') or {}).get('worldinfo') or {})
     if resource_folder:
         lore_dir = os.path.join(resources_dir, resource_folder, 'lorebooks')
@@ -736,7 +752,7 @@ def build_worldinfo_generation(conn, generation: int, inspected_books=None):
         card_id = str(row['id'])
         card_path = os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep))
         owner_entity_id = f'card::{card_id}'
-        resource_folder = str((ui_data.get(card_id) or {}).get('resource_folder', '')).strip()
+        resource_folder = str((_resolve_card_ui_meta(ui_data, card_id).get('resource_folder') or '')).strip()
         if resource_folder:
             lore_dir = os.path.join(resources_dir, resource_folder, 'lorebooks')
             if os.path.isdir(lore_dir):
