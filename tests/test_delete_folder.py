@@ -288,13 +288,139 @@ def test_delete_folder_dissolve_schedules_fallback_reload_when_shared_sync_fails
     res = client.post('/api/delete_folder', json={'folder_path': 'testA'})
 
     assert res.status_code == 200
-    assert res.get_json() == {'success': False, 'msg': 'sync failed'}
+    assert res.get_json() == {
+        'success': True,
+        'mode': 'dissolve',
+        'moved_count': 2,
+        'warning': '文件夹已解散，但数据库索引更新遇到问题，系统将自动修复。',
+    }
     assert schedule_calls == [{'reason': 'delete_folder:fallback'}]
     assert (cards_dir / 'a.png').exists()
     assert (cards_dir / 'sub').is_dir()
     assert (cards_dir / 'sub' / 'b.png').exists()
     assert (cards_dir / 'testA').is_dir()
     assert list((cards_dir / 'testA').iterdir()) == []
+
+
+def test_delete_folder_dissolve_returns_warning_when_partial_moves_then_sync_fails(monkeypatch, folder_fixture):
+    cards_dir = folder_fixture['cards_dir']
+    trash_dir = folder_fixture['trash_dir']
+    db_path = folder_fixture['db_path']
+    ui_path = folder_fixture['ui_path']
+
+    schedule_calls = []
+    exact_sync_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(db_session_module, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+
+    monkeypatch.setattr(cards_api, 'force_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda **kwargs: schedule_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: (exact_sync_calls.append(kwargs), None)[1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError('sync failed')),
+        raising=False,
+    )
+
+    ctx.cache.visible_folders = ['testA']
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/delete_folder', json={'folder_path': 'testA'})
+
+    assert res.status_code == 200
+    assert res.get_json() == {
+        'success': True,
+        'mode': 'dissolve',
+        'moved_count': 2,
+        'warning': '文件夹已解散，但数据库索引更新遇到问题，系统将自动修复。',
+    }
+    assert schedule_calls == [{'reason': 'delete_folder:fallback'}]
+    assert len(exact_sync_calls) == 1
+    assert (cards_dir / 'a.png').exists()
+    assert (cards_dir / 'sub').is_dir()
+    assert (cards_dir / 'sub' / 'b.png').exists()
+    assert (cards_dir / 'testA').is_dir()
+    assert list((cards_dir / 'testA').iterdir()) == []
+
+
+def test_delete_folder_dissolve_returns_warning_when_partial_move_fails(monkeypatch, folder_fixture):
+    cards_dir = folder_fixture['cards_dir']
+    trash_dir = folder_fixture['trash_dir']
+    db_path = folder_fixture['db_path']
+    ui_path = folder_fixture['ui_path']
+
+    schedule_calls = []
+    exact_sync_calls = []
+    folder_sync_calls = []
+    real_listdir = cards_api.os.listdir
+    real_move = cards_api.shutil.move
+    move_attempts = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(db_session_module, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(ui_store_module, 'UI_DATA_FILE', str(ui_path))
+
+    monkeypatch.setattr(cards_api, 'force_reload', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda **kwargs: schedule_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: exact_sync_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **kwargs: folder_sync_calls.append(kwargs),
+        raising=False,
+    )
+
+    def _ordered_listdir(path):
+        if Path(path) == cards_dir / 'testA':
+            return ['a.png', 'sub']
+        return real_listdir(path)
+
+    def _move_with_second_failure(src, dst, *args, **kwargs):
+        move_attempts.append((src, dst))
+        if len(move_attempts) == 2:
+            raise RuntimeError('move failed')
+        return real_move(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(cards_api.os, 'listdir', _ordered_listdir)
+    monkeypatch.setattr(cards_api.shutil, 'move', _move_with_second_failure)
+
+    ctx.cache.visible_folders = ['testA']
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/delete_folder', json={'folder_path': 'testA'})
+
+    assert res.status_code == 200
+    assert res.get_json() == {
+        'success': True,
+        'mode': 'dissolve',
+        'moved_count': 1,
+        'failed_count': 1,
+        'warning': '文件夹已部分解散，已移动 1 个项目，另有 1 个项目处理失败，系统将自动修复。',
+    }
+    assert schedule_calls == [{'reason': 'delete_folder:fallback'}]
+    assert exact_sync_calls == []
+    assert folder_sync_calls == []
+    assert (cards_dir / 'a.png').exists() is True
+    assert (cards_dir / 'testA').is_dir() is True
+    assert (cards_dir / 'testA' / 'sub' / 'b.png').exists() is True
+    assert any(path.name == 'sub' for path in (cards_dir / 'testA').iterdir())
 
 
 def test_delete_folder_delete_children_recursive(monkeypatch, folder_fixture):

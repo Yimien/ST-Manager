@@ -3978,6 +3978,7 @@ def api_delete_folder():
         moved_count = 0
         exact_card_moves = []
         folder_prefix_moves = []
+        move_failures = []
 
         file_groups = {}
         dirs = []
@@ -4047,6 +4048,7 @@ def api_delete_folder():
 
                 except Exception as e:
                     logger.error(f"Error moving file {original_filename}: {e}")
+                    move_failures.append(original_filename)
 
         # 3. 处理子文件夹 (Dirs)
         for dir_name in dirs:
@@ -4077,6 +4079,29 @@ def api_delete_folder():
 
             except Exception as e:
                 logger.error(f"Error moving subfolder {dir_name}: {e}")
+                move_failures.append(dir_name)
+
+        if move_failures:
+            if moved_count > 0:
+                logger.error(
+                    'Delete folder dissolve encountered partial move failures: %s',
+                    ', '.join(move_failures),
+                )
+                schedule_reload(reason='delete_folder:fallback')
+                return jsonify({
+                    'success': True,
+                    'mode': 'dissolve',
+                    'moved_count': moved_count,
+                    'failed_count': len(move_failures),
+                    'warning': (
+                        f'文件夹已部分解散，已移动 {moved_count} 个项目，'
+                        f'另有 {len(move_failures)} 个项目处理失败，系统将自动修复。'
+                    ),
+                })
+            return jsonify({
+                'success': False,
+                'msg': f'解散文件夹失败，{len(move_failures)} 个项目移动失败。',
+            })
 
         try:
             for move in exact_card_moves:
@@ -4100,7 +4125,12 @@ def api_delete_folder():
         except Exception as e:
             logger.error(f"Delete folder sync failed after filesystem moves: {e}")
             schedule_reload(reason="delete_folder:fallback")
-            return jsonify({"success": False, "msg": str(e)})
+            return jsonify({
+                'success': True,
+                'mode': 'dissolve',
+                'moved_count': moved_count,
+                'warning': '文件夹已解散，但数据库索引更新遇到问题，系统将自动修复。',
+            })
 
         # 4. 删除原空文件夹
         try:
@@ -4225,49 +4255,37 @@ def api_move_folder():
             new_path_prefix=new_path_prefix,
         )
 
-        total_actions = len(merge_actions)
-        for index, action in enumerate(merge_actions):
-            is_last_action = index == total_actions - 1
-
-            if action['type'] == 'folder':
-                shutil.move(action['src_dir'], action['dst_dir'])
-                try:
+        fs_mutation_started = False
+        try:
+            for action in merge_actions:
+                if action['type'] == 'folder':
+                    shutil.move(action['src_dir'], action['dst_dir'])
+                    fs_mutation_started = True
                     sync_folder_prefix_after_fs_move(
                         conn=conn,
                         ui_data=ui_data,
                         old_path=action['old_path'],
                         new_path=action['new_path'],
                     )
-                except Exception as e:
-                    if not is_last_action:
-                        raise
-                    logger.error(f"Folder merge sync failed after all filesystem moves completed: {e}")
-                    schedule_reload(reason='move_folder:merge_fallback')
-                    return jsonify({
-                        'success': True,
-                        'new_path': new_path_prefix,
-                        'mode': 'merge',
-                        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
-                    })
-                continue
+                    continue
 
-            os.makedirs(os.path.dirname(action['dst_file']), exist_ok=True)
-            shutil.move(action['src_file'], action['dst_file'])
+                os.makedirs(os.path.dirname(action['dst_file']), exist_ok=True)
+                shutil.move(action['src_file'], action['dst_file'])
+                fs_mutation_started = True
 
-            if action['filename'].lower().endswith('.json'):
-                base_src = os.path.splitext(action['filename'])[0]
-                base_dst = os.path.splitext(os.path.basename(action['dst_file']))[0]
-                src_dir = os.path.dirname(action['src_file'])
-                dst_dir = os.path.dirname(action['dst_file'])
+                if action['filename'].lower().endswith('.json'):
+                    base_src = os.path.splitext(action['filename'])[0]
+                    base_dst = os.path.splitext(os.path.basename(action['dst_file']))[0]
+                    src_dir = os.path.dirname(action['src_file'])
+                    dst_dir = os.path.dirname(action['dst_file'])
 
-                for ext in SIDECAR_EXTENSIONS:
-                    s_src = os.path.join(src_dir, base_src + ext)
-                    if os.path.exists(s_src):
-                        s_dst = os.path.join(dst_dir, base_dst + ext)
-                        shutil.move(s_src, s_dst)
+                    for ext in SIDECAR_EXTENSIONS:
+                        s_src = os.path.join(src_dir, base_src + ext)
+                        if os.path.exists(s_src):
+                            s_dst = os.path.join(dst_dir, base_dst + ext)
+                            shutil.move(s_src, s_dst)
 
-            if action.get('sync') == 'exact_card':
-                try:
+                if action.get('sync') == 'exact_card':
                     sync_exact_card_after_fs_move(
                         conn=conn,
                         ui_data=ui_data,
@@ -4277,17 +4295,17 @@ def api_move_folder():
                         final_name=action['final_name'],
                         old_category=action['old_category'],
                     )
-                except Exception as e:
-                    if not is_last_action:
-                        raise
-                    logger.error(f"Folder merge sync failed after all filesystem moves completed: {e}")
-                    schedule_reload(reason='move_folder:merge_fallback')
-                    return jsonify({
-                        'success': True,
-                        'new_path': new_path_prefix,
-                        'mode': 'merge',
-                        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
-                    })
+        except Exception as e:
+            if not fs_mutation_started:
+                raise
+            logger.error(f"Folder merge sync failed after filesystem mutation started: {e}")
+            schedule_reload(reason='move_folder:merge_fallback')
+            return jsonify({
+                'success': True,
+                'new_path': new_path_prefix,
+                'mode': 'merge',
+                'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+            })
 
         # 删除源文件夹 (此时应为空)
         try: shutil.rmtree(source_full_path)

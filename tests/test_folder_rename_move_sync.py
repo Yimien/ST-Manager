@@ -1590,8 +1590,13 @@ def test_api_move_folder_merge_sync_failure_before_remaining_actions_returns_err
     )
 
     assert res.status_code == 200
-    assert res.get_json() == {'success': False, 'msg': 'sync failed'}
-    assert schedule_calls == []
+    assert res.get_json() == {
+        'success': True,
+        'new_path': 'dst/pack',
+        'mode': 'merge',
+        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+    }
+    assert schedule_calls == [{'reason': 'move_folder:merge_fallback'}]
     assert force_reload_calls == []
     assert len(exact_sync_calls) == 1
     moved_old_id = exact_sync_calls[0]['old_card_id']
@@ -1610,3 +1615,131 @@ def test_api_move_folder_merge_sync_failure_before_remaining_actions_returns_err
         assert (cards_dir / 'src' / 'pack' / 'ally.json').exists() is False
         assert (cards_dir / 'dst' / 'pack' / 'hero_1.json').exists() is False
         assert (cards_dir / 'src' / 'pack' / 'hero.json').exists() is True
+
+
+def test_api_move_folder_merge_returns_warning_for_post_mutation_failure_before_remaining_actions(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    source_dir = cards_dir / 'src' / 'pack'
+    target_dir = cards_dir / 'dst' / 'pack'
+    source_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    (source_dir / 'hero.json').write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+    (source_dir / 'ally.json').write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+    (target_dir / 'hero.json').write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    schedule_calls = []
+    force_reload_calls = []
+    exact_sync_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _value, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: object())
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {'src/pack': {'summary': 'folder note'}})
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda **kwargs: schedule_calls.append(kwargs))
+    monkeypatch.setattr(cards_api, 'force_reload', lambda **kwargs: force_reload_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: (exact_sync_calls.append(kwargs), (_ for _ in ()).throw(RuntimeError('sync failed')))[1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **_kwargs: None,
+        raising=False,
+    )
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/move_folder',
+        json={
+            'source_path': 'src/pack',
+            'target_parent_path': 'dst',
+            'merge_if_exists': True,
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.get_json() == {
+        'success': True,
+        'new_path': 'dst/pack',
+        'mode': 'merge',
+        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+    }
+    assert schedule_calls == [{'reason': 'move_folder:merge_fallback'}]
+    assert force_reload_calls == []
+    assert len(exact_sync_calls) == 1
+    moved_old_id = exact_sync_calls[0]['old_card_id']
+    moved_new_id = exact_sync_calls[0]['new_card_id']
+    assert {moved_old_id, moved_new_id} in [
+        {'src/pack/hero.json', 'dst/pack/hero_1.json'},
+        {'src/pack/ally.json', 'dst/pack/ally.json'},
+    ]
+    if moved_old_id == 'src/pack/hero.json':
+        assert (cards_dir / 'dst' / 'pack' / 'hero_1.json').exists() is True
+        assert (cards_dir / 'src' / 'pack' / 'hero.json').exists() is False
+        assert (cards_dir / 'dst' / 'pack' / 'ally.json').exists() is False
+        assert (cards_dir / 'src' / 'pack' / 'ally.json').exists() is True
+    else:
+        assert (cards_dir / 'dst' / 'pack' / 'ally.json').exists() is True
+        assert (cards_dir / 'src' / 'pack' / 'ally.json').exists() is False
+        assert (cards_dir / 'dst' / 'pack' / 'hero_1.json').exists() is False
+        assert (cards_dir / 'src' / 'pack' / 'hero.json').exists() is True
+
+
+def test_api_move_folder_merge_returns_warning_when_folder_sync_fails_after_folder_move(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    source_dir = cards_dir / 'src' / 'pack'
+    target_dir = cards_dir / 'dst' / 'pack'
+    source_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    (source_dir / 'subfree').mkdir(parents=True, exist_ok=True)
+    (source_dir / 'subfree' / 'ally.json').write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    schedule_calls = []
+    exact_sync_calls = []
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _value, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: object())
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {'src/pack': {'summary': 'folder note'}})
+    monkeypatch.setattr(cards_api, 'schedule_reload', lambda **kwargs: schedule_calls.append(kwargs))
+    monkeypatch.setattr(
+        cards_api,
+        'sync_exact_card_after_fs_move',
+        lambda **kwargs: exact_sync_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cards_api,
+        'sync_folder_prefix_after_fs_move',
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError('sync failed')),
+        raising=False,
+    )
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/move_folder',
+        json={
+            'source_path': 'src/pack',
+            'target_parent_path': 'dst',
+            'merge_if_exists': True,
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.get_json() == {
+        'success': True,
+        'new_path': 'dst/pack',
+        'mode': 'merge',
+        'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+    }
+    assert schedule_calls == [{'reason': 'move_folder:merge_fallback'}]
+    assert exact_sync_calls == []
+    assert (cards_dir / 'dst' / 'pack' / 'subfree' / 'ally.json').exists() is True
+    assert (cards_dir / 'src' / 'pack' / 'subfree').exists() is False
