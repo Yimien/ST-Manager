@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import sys
 import threading
 from io import BytesIO
@@ -13,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 
 from core.api.v1 import world_info as world_info_api
+from core.data.index_runtime_store import ensure_index_runtime_schema
 from core.data import ui_store as ui_store_module
 
 
@@ -49,6 +51,27 @@ class _LazyFakeCache(_FakeCache):
 def _write_json(path: Path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _activate_worldinfo_generation(db_path: Path, lorebooks_dir: Path, *, category='科幻'):
+    with sqlite3.connect(db_path) as conn:
+        ensure_index_runtime_schema(conn)
+        conn.execute(
+            "UPDATE index_build_state SET active_generation = 1, state = 'ready', phase = 'ready' WHERE scope = 'worldinfo'"
+        )
+        source_path = lorebooks_dir / category / 'dragon.json'
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(json.dumps({'name': 'Dragon Lore', 'entries': {}}, ensure_ascii=False), encoding='utf-8')
+        conn.execute(
+            "INSERT OR REPLACE INTO index_entities_v2(generation, entity_id, entity_type, source_path, owner_entity_id, name, filename, display_category, physical_category, category_mode, favorite, summary_preview, updated_at, import_time, token_count, sort_name, sort_mtime, thumb_url, source_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, f'world::global::{category}/dragon.json', 'world_global', str(source_path), '', 'Dragon Lore', 'dragon.json', category, category, 'physical', 0, '', 300.0, 0.0, 0, 'dragon lore', 300.0, '', '300:1'),
+        )
+        for entity_type in ('world_global', 'world_all'):
+            conn.execute(
+                "INSERT OR REPLACE INTO index_category_stats_v2(generation, scope, entity_type, category_path, direct_count, subtree_count) VALUES (?, ?, ?, ?, ?, ?)",
+                (1, 'worldinfo', entity_type, category, 1, 1),
+            )
+        conn.commit()
 
 
 def _make_card(card_id, category, *, char_name='Lucy', has_character_book=False):
@@ -2341,6 +2364,116 @@ def test_delete_empty_worldinfo_folder_removes_directory(monkeypatch, tmp_path):
     payload = res.get_json()
     assert payload['success'] is True
     assert target_dir.exists() is False
+
+
+def test_indexed_worldinfo_folder_create_refreshes_folder_metadata(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    _activate_worldinfo_generation(db_path, lorebooks_dir)
+
+    monkeypatch.setattr(world_info_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {
+        'worldinfo_list_use_index': True,
+        'world_info_dir': str(lorebooks_dir),
+        'resources_dir': str(resources_dir),
+    })
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/create', json={'parent_category': '科幻', 'name': '赛博朋克'})
+    listed = client.get('/api/world_info/list?type=global&page=1&page_size=20')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert listed.status_code == 200
+    list_payload = listed.get_json()
+    assert '科幻/赛博朋克' in list_payload['all_folders']
+    assert list_payload['folder_capabilities']['科幻/赛博朋克']['has_physical_folder'] is True
+    assert list_payload['folder_capabilities']['科幻/赛博朋克']['can_delete_physical_folder'] is True
+
+
+def test_indexed_worldinfo_folder_rename_refreshes_folder_metadata(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    _activate_worldinfo_generation(db_path, lorebooks_dir)
+    (lorebooks_dir / '科幻' / '旧分类').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(world_info_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {
+        'worldinfo_list_use_index': True,
+        'world_info_dir': str(lorebooks_dir),
+        'resources_dir': str(resources_dir),
+    })
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/rename', json={'category': '科幻/旧分类', 'new_name': '新分类'})
+    listed = client.get('/api/world_info/list?type=global&page=1&page_size=20')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert listed.status_code == 200
+    list_payload = listed.get_json()
+    assert '科幻/旧分类' not in list_payload['all_folders']
+    assert '科幻/新分类' in list_payload['all_folders']
+    assert list_payload['folder_capabilities']['科幻/新分类']['can_delete_physical_folder'] is True
+
+
+def test_indexed_worldinfo_folder_delete_refreshes_folder_metadata(monkeypatch, tmp_path):
+    db_path = tmp_path / 'cards_metadata.db'
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+    _activate_worldinfo_generation(db_path, lorebooks_dir)
+    (lorebooks_dir / '科幻' / '待删除').mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(world_info_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {
+        'worldinfo_list_use_index': True,
+        'world_info_dir': str(lorebooks_dir),
+        'resources_dir': str(resources_dir),
+    })
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/delete', json={'category': '科幻/待删除'})
+    listed = client.get('/api/world_info/list?type=global&page=1&page_size=20')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert listed.status_code == 200
+    list_payload = listed.get_json()
+    assert '科幻/待删除' not in list_payload['all_folders']
+
+
+def test_worldinfo_folder_mutation_returns_warning_when_stats_refresh_fails(monkeypatch, tmp_path):
+    lorebooks_dir = tmp_path / 'lorebooks'
+    resources_dir = tmp_path / 'resources'
+
+    monkeypatch.setattr(world_info_api.ctx, 'cache', _FakeCache([]))
+    monkeypatch.setattr(world_info_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(world_info_api, 'load_config', lambda: {
+        'worldinfo_list_use_index': True,
+        'world_info_dir': str(lorebooks_dir),
+        'resources_dir': str(resources_dir),
+    })
+    monkeypatch.setattr(world_info_api, '_refresh_worldinfo_folder_stats', lambda _cfg=None: '索引分类统计刷新失败', raising=False)
+
+    client = _make_test_app().test_client()
+    res = client.post('/api/world_info/folders/create', json={'parent_category': '科幻', 'name': '赛博朋克'})
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+    assert payload['warning'] == '索引分类统计刷新失败'
+    assert (lorebooks_dir / '科幻' / '赛博朋克').is_dir()
 
 
 def test_create_worldinfo_uses_target_category_subfolder(monkeypatch, tmp_path):

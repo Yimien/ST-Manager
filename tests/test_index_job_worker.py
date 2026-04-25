@@ -282,6 +282,74 @@ def test_worker_routes_legacy_resource_worldinfo_path_job_via_shared_classifier(
     ]
 
 
+def test_worker_routes_relative_resource_worldinfo_path_via_real_classifier(monkeypatch, tmp_path):
+    class _StopLoop(Exception):
+        pass
+
+    base_dir = tmp_path / 'runtime'
+    resource_file = base_dir / 'data' / 'assets' / 'card_assets' / 'hero-assets' / 'lorebooks' / 'book.json'
+    resource_file.parent.mkdir(parents=True)
+    resource_file.write_text('{}', encoding='utf-8')
+
+    rows = [[{
+        'id': 1,
+        'job_type': 'upsert_worldinfo_path',
+        'entity_id': '',
+        'source_path': str(resource_file),
+        'payload_json': '{}',
+    }], []]
+    calls = []
+    wait_calls = {'count': 0}
+
+    def fake_wait(_timeout):
+        wait_calls['count'] += 1
+        if wait_calls['count'] >= 2:
+            raise _StopLoop()
+        return True
+
+    class _FakeResult:
+        def fetchone(self):
+            return [0]
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return _FakeResult()
+
+    monkeypatch.setattr(index_job_worker.ctx.index_wakeup, 'wait', fake_wait)
+    monkeypatch.setattr(index_job_worker.ctx.index_wakeup, 'clear', lambda: None)
+    monkeypatch.setattr(index_job_worker, '_claim_pending_jobs', lambda _limit: (rows.pop(0), 0))
+    monkeypatch.setattr(index_job_worker, '_set_jobs_state', lambda **_kwargs: None)
+    monkeypatch.setattr(index_job_worker, '_mark_job_status', lambda job_id, status, error_msg='': calls.append(('mark', job_id, status, error_msg)))
+    monkeypatch.setattr(index_job_worker, '_connect', lambda: _FakeConn())
+    monkeypatch.setattr(index_job_worker, 'apply_worldinfo_path_increment', lambda _conn, _source_path: calls.append(('global', _source_path)) or True)
+    monkeypatch.setattr(index_job_worker, 'apply_worldinfo_owner_increment', lambda _conn, entity_id, source_path='': calls.append(('owner', entity_id, source_path)) or True)
+    monkeypatch.setattr(index_job_worker, 'resolve_resource_worldinfo_owner_card_ids', lambda source_path: ['cards/alpha.png'] if str(resource_file) == source_path else [], raising=False)
+    monkeypatch.setattr(index_job_worker, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    }, raising=False)
+    monkeypatch.setattr(index_job_worker, 'BASE_DIR', str(base_dir), raising=False)
+    monkeypatch.setattr('core.services.index_build_service.BASE_DIR', str(base_dir))
+    monkeypatch.setattr('core.services.index_build_service.load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+
+    with pytest.raises(_StopLoop):
+        index_job_worker.worker_loop()
+
+    assert calls == [
+        ('owner', 'cards/alpha.png', str(resource_file)),
+        ('mark', 1, 'done', ''),
+    ]
+
+
 def test_worker_keeps_global_worldinfo_path_on_global_increment_branch(monkeypatch):
     class _StopLoop(Exception):
         pass

@@ -25,7 +25,11 @@ from core.data.ui_store import (
 )
 from core.services.card_service import resolve_ui_key
 from core.services.cache_service import invalidate_wi_list_cache
-from core.services.index_build_service import resolve_resource_worldinfo_owner_card_ids
+from core.services.index_build_service import (
+    connect_index_db,
+    refresh_worldinfo_category_stats,
+    resolve_resource_worldinfo_owner_card_ids,
+)
 from core.services.index_job_worker import enqueue_index_job
 from core.services.scan_service import suppress_fs_events
 from core.services.worldinfo_index_query_service import query_worldinfo_index
@@ -601,7 +605,7 @@ def _move_global_worldinfo_file(file_path: str, target_category: str, cfg: dict)
     return target_path
 
 
-def _folder_response(base_dir: str, success_msg: str):
+def _folder_response(base_dir: str, success_msg: str, warning: str = ''):
     items = []
     for root, _dirs, files in os.walk(base_dir):
         for name in files:
@@ -612,13 +616,30 @@ def _folder_response(base_dir: str, success_msg: str):
             physical_category = _get_parent_category(rel_path)
             items.append({'type': 'global', 'display_category': physical_category, 'physical_category': physical_category})
     folder_meta = _add_physical_folder_nodes(_build_folder_metadata(items), base_dir)
-    return jsonify({
+    response = {
         'success': True,
         'msg': success_msg,
         'all_folders': folder_meta['all_folders'],
         'category_counts': folder_meta['category_counts'],
         'folder_capabilities': folder_meta['folder_capabilities'],
-    })
+    }
+    if warning:
+        response['warning'] = warning
+    return jsonify(response)
+
+
+def _refresh_worldinfo_folder_stats(cfg: dict | None = None) -> str:
+    cfg = cfg or load_config()
+    if not bool(cfg.get('worldinfo_list_use_index', False)):
+        return ''
+
+    try:
+        with connect_index_db(DEFAULT_DB_PATH) as conn:
+            refresh_worldinfo_category_stats(conn, cfg)
+        return ''
+    except Exception as exc:
+        logger.warning('Refresh worldinfo folder stats failed: %s', exc)
+        return f'索引分类统计刷新失败: {exc}'
 
 
 def _build_card_category_sig(cards) -> tuple:
@@ -1368,7 +1389,8 @@ def api_create_world_info_folder():
         suppress_fs_events(1.5)
         os.makedirs(target_dir, exist_ok=True)
         invalidate_wi_list_cache()
-        return _folder_response(global_dir, '目录已创建')
+        warning = _refresh_worldinfo_folder_stats(cfg)
+        return _folder_response(global_dir, '目录已创建', warning=warning)
     except Exception as e:
         logger.error(f'Create WI folder error: {e}')
         return jsonify({'success': False, 'msg': str(e)})
@@ -1392,7 +1414,8 @@ def api_rename_world_info_folder():
         suppress_fs_events(3.0)
         os.rename(source_dir, target_dir)
         invalidate_wi_list_cache()
-        return _folder_response(global_dir, '目录已重命名')
+        warning = _refresh_worldinfo_folder_stats(cfg)
+        return _folder_response(global_dir, '目录已重命名', warning=warning)
     except Exception as e:
         logger.error(f'Rename WI folder error: {e}')
         return jsonify({'success': False, 'msg': str(e)})
@@ -1413,7 +1436,8 @@ def api_delete_world_info_folder():
         suppress_fs_events(1.5)
         os.rmdir(target_dir)
         invalidate_wi_list_cache()
-        return _folder_response(global_dir, '目录已删除')
+        warning = _refresh_worldinfo_folder_stats(cfg)
+        return _folder_response(global_dir, '目录已删除', warning=warning)
     except Exception as e:
         logger.error(f'Delete WI folder error: {e}')
         return jsonify({'success': False, 'msg': str(e)})

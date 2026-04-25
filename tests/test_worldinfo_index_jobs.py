@@ -640,6 +640,14 @@ def test_change_image_skips_file_driven_card_job_when_cache_write_fails(monkeypa
     assert payload['new_id'] == 'hero.png'
     assert enqueue_calls == [
         (
+            ('upsert_card',),
+            {
+                'entity_id': 'hero.png',
+                'source_path': str(cards_dir / 'hero.png'),
+                'payload': {'remove_entity_ids': ['hero.json']},
+            },
+        ),
+        (
             ('upsert_world_owner',),
             {
                 'entity_id': 'hero.png',
@@ -990,3 +998,308 @@ def test_start_fs_watcher_schedules_cards_and_distinct_worldinfo_roots(monkeypat
 
     assert [item[1] for item in scheduled] == ['D:/cards', 'D:/data/lorebooks', 'D:/data/resources']
     assert all(item[2] is True for item in scheduled)
+
+
+def test_classify_worldinfo_path_resolves_relative_dirs_from_base_dir(monkeypatch, tmp_path):
+    base_dir = tmp_path / 'runtime'
+    global_file = base_dir / 'data' / 'library' / 'lorebooks' / 'main' / 'book.json'
+    resource_file = base_dir / 'data' / 'assets' / 'card_assets' / 'hero-assets' / 'lorebooks' / 'book.json'
+    global_file.parent.mkdir(parents=True)
+    resource_file.parent.mkdir(parents=True)
+    global_file.write_text('{}', encoding='utf-8')
+    resource_file.write_text('{}', encoding='utf-8')
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+
+    assert index_build_service.classify_worldinfo_path(str(global_file)) == {
+        'kind': 'global',
+        'source_path': str(global_file).replace('\\', '/'),
+    }
+    assert index_build_service.classify_worldinfo_path(str(resource_file)) == {
+        'kind': 'resource',
+        'source_path': str(resource_file).replace('\\', '/'),
+    }
+
+
+def test_resolve_resource_worldinfo_owner_card_ids_supports_relative_resources_dir(monkeypatch, tmp_path):
+    base_dir = tmp_path / 'runtime'
+    resource_file = base_dir / 'data' / 'assets' / 'card_assets' / 'shared-pack' / 'lorebooks' / 'book.json'
+    resource_file.parent.mkdir(parents=True)
+    resource_file.write_text('{}', encoding='utf-8')
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+    monkeypatch.setattr(
+        index_build_service,
+        'load_ui_data',
+        lambda: {
+            'cards/zeta.png': {'resource_folder': 'shared-pack'},
+            'cards/alpha.png': {'resource_folder': 'shared-pack'},
+            'cards/other.png': {'resource_folder': 'other-pack'},
+        },
+    )
+
+    assert index_build_service.resolve_resource_worldinfo_owner_card_ids(str(resource_file)) == [
+        'cards/alpha.png',
+        'cards/zeta.png',
+    ]
+
+
+def test_apply_worldinfo_path_increment_uses_resolved_relative_global_dir(monkeypatch, tmp_path):
+    from core.data.index_runtime_store import ensure_index_runtime_schema
+
+    base_dir = tmp_path / 'runtime'
+    global_file = base_dir / 'data' / 'library' / 'lorebooks' / 'main' / 'book.json'
+    global_file.parent.mkdir(parents=True)
+    global_file.write_text(json.dumps({'name': 'Global Book'}), encoding='utf-8')
+
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    ensure_index_runtime_schema(conn)
+    conn.execute('UPDATE index_build_state SET active_generation = 1 WHERE scope = ?', ('worldinfo',))
+    conn.commit()
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+    monkeypatch.setattr(index_build_service, 'load_ui_data', lambda: {})
+
+    assert index_build_service.apply_worldinfo_path_increment(conn, str(global_file)) is True
+
+    row = conn.execute(
+        'SELECT entity_type, entity_id, source_path, display_category, name FROM index_entities_v2 WHERE generation = 1'
+    ).fetchone()
+
+    assert row['entity_type'] == 'world_global'
+    assert row['entity_id'] == 'world::global::main/book.json'
+    assert row['source_path'] == str(global_file)
+    assert row['display_category'] == 'main'
+    assert row['name'] == 'Global Book'
+
+
+def test_build_worldinfo_generation_uses_resolved_relative_dirs(monkeypatch, tmp_path):
+    from core.data.index_runtime_store import ensure_index_runtime_schema
+
+    base_dir = tmp_path / 'runtime'
+    global_file = base_dir / 'data' / 'library' / 'lorebooks' / 'main' / 'global-book.json'
+    resource_file = base_dir / 'data' / 'assets' / 'card_assets' / 'shared-pack' / 'lorebooks' / 'resource-book.json'
+    global_file.parent.mkdir(parents=True)
+    resource_file.parent.mkdir(parents=True)
+    global_file.write_text(json.dumps({'name': 'Global Book'}), encoding='utf-8')
+    resource_file.write_text(json.dumps({'name': 'Resource Book'}), encoding='utf-8')
+
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    ensure_index_runtime_schema(conn)
+    conn.execute(
+        '''
+        CREATE TABLE card_metadata (
+            id TEXT PRIMARY KEY,
+            char_name TEXT,
+            category TEXT,
+            character_book_name TEXT DEFAULT '',
+            last_modified REAL,
+            has_character_book INTEGER DEFAULT 0
+        )
+        '''
+    )
+    conn.execute(
+        'INSERT INTO card_metadata(id, char_name, category, character_book_name, last_modified, has_character_book) VALUES (?, ?, ?, ?, ?, ?)',
+        ('cards/hero.png', 'Hero', 'companions', '', 123.0, 0),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(base_dir / 'cards'))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+    monkeypatch.setattr(
+        index_build_service,
+        'load_ui_data',
+        lambda: {'cards/hero.png': {'resource_folder': 'shared-pack'}},
+    )
+    monkeypatch.setattr(index_build_service, 'extract_card_info', lambda _path: {})
+
+    items_written = index_build_service.build_worldinfo_generation(conn, 7)
+
+    rows = conn.execute(
+        'SELECT entity_type, entity_id, source_path, name FROM index_entities_v2 WHERE generation = 7 ORDER BY entity_id'
+    ).fetchall()
+
+    assert items_written == 2
+    assert [dict(row) for row in rows] == [
+        {
+            'entity_type': 'world_global',
+            'entity_id': 'world::global::main/global-book.json',
+            'source_path': str(global_file),
+            'name': 'Global Book',
+        },
+        {
+            'entity_type': 'world_resource',
+            'entity_id': 'world::resource::cards/hero.png::resource-book.json',
+            'source_path': str(resource_file),
+            'name': 'Resource Book',
+        },
+    ]
+
+
+def test_apply_worldinfo_owner_increment_uses_resolved_relative_runtime_dirs(monkeypatch, tmp_path):
+    from core.data.index_runtime_store import ensure_index_runtime_schema
+
+    base_dir = tmp_path / 'runtime'
+    global_file = base_dir / 'data' / 'library' / 'lorebooks' / 'global' / 'book.json'
+    resource_file = base_dir / 'data' / 'assets' / 'card_assets' / 'shared-pack' / 'lorebooks' / 'resource-book.json'
+    global_file.parent.mkdir(parents=True)
+    resource_file.parent.mkdir(parents=True)
+    global_file.write_text(json.dumps({'name': 'Global Book'}), encoding='utf-8')
+    resource_file.write_text(json.dumps({'name': 'Resource Book'}), encoding='utf-8')
+
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    ensure_index_runtime_schema(conn)
+    conn.execute('UPDATE index_build_state SET active_generation = 1 WHERE scope = ?', ('worldinfo',))
+    conn.execute(
+        '''
+        CREATE TABLE card_metadata (
+            id TEXT PRIMARY KEY,
+            char_name TEXT,
+            category TEXT,
+            character_book_name TEXT DEFAULT '',
+            last_modified REAL,
+            has_character_book INTEGER DEFAULT 0
+        )
+        '''
+    )
+    conn.execute(
+        'INSERT INTO card_metadata(id, char_name, category, character_book_name, last_modified, has_character_book) VALUES (?, ?, ?, ?, ?, ?)',
+        ('cards/hero.png', 'Hero', 'companions', 'Embedded Book', 123.0, 1),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(base_dir / 'cards'))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+    monkeypatch.setattr(
+        index_build_service,
+        'load_ui_data',
+        lambda: {
+            'cards/hero.png': {'resource_folder': 'shared-pack'},
+            '_resource_item_categories_v1': {
+                'worldinfo': {
+                    str(resource_file).replace('\\', '/').lower(): {'category': 'override-cat'}
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        index_build_service,
+        'extract_card_info',
+        lambda _path: {'data': {'character_book': {'name': 'Embedded Book'}}},
+    )
+
+    assert index_build_service.apply_worldinfo_owner_increment(conn, 'cards/hero.png') is True
+
+    rows = conn.execute(
+        'SELECT entity_type, entity_id, source_path, display_category, category_mode, name FROM index_entities_v2 WHERE generation = 1 ORDER BY entity_id'
+    ).fetchall()
+    stats = conn.execute(
+        'SELECT entity_type, category_path, direct_count, subtree_count FROM index_category_stats_v2 WHERE generation = 1 AND scope = ? ORDER BY entity_type, category_path',
+        ('worldinfo',),
+    ).fetchall()
+
+    assert [dict(row) for row in rows] == [
+        {
+            'entity_type': 'world_embedded',
+            'entity_id': 'world::embedded::cards/hero.png',
+            'source_path': str(base_dir / 'cards' / 'cards' / 'hero.png'),
+            'display_category': 'companions',
+            'category_mode': 'inherited',
+            'name': 'Embedded Book',
+        },
+        {
+            'entity_type': 'world_resource',
+            'entity_id': 'world::resource::cards/hero.png::resource-book.json',
+            'source_path': str(resource_file),
+            'display_category': 'override-cat',
+            'category_mode': 'override',
+            'name': 'Resource Book',
+        },
+    ]
+    assert ('world_global', 'global', 0, 0) in [tuple(row) for row in stats]
+
+
+def test_apply_worldinfo_embedded_increment_uses_resolved_relative_global_dir(monkeypatch, tmp_path):
+    from core.data.index_runtime_store import ensure_index_runtime_schema
+
+    base_dir = tmp_path / 'runtime'
+    global_file = base_dir / 'data' / 'library' / 'lorebooks' / 'global' / 'book.json'
+    global_file.parent.mkdir(parents=True)
+    global_file.write_text(json.dumps({'name': 'Global Book'}), encoding='utf-8')
+
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    ensure_index_runtime_schema(conn)
+    conn.execute('UPDATE index_build_state SET active_generation = 1 WHERE scope = ?', ('worldinfo',))
+    conn.execute(
+        '''
+        CREATE TABLE card_metadata (
+            id TEXT PRIMARY KEY,
+            char_name TEXT,
+            category TEXT,
+            character_book_name TEXT DEFAULT '',
+            last_modified REAL,
+            has_character_book INTEGER DEFAULT 0
+        )
+        '''
+    )
+    conn.execute(
+        'INSERT INTO card_metadata(id, char_name, category, character_book_name, last_modified, has_character_book) VALUES (?, ?, ?, ?, ?, ?)',
+        ('cards/hero.png', 'Hero', 'companions', 'Embedded Book', 123.0, 1),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(index_build_service, 'BASE_DIR', str(base_dir))
+    monkeypatch.setattr(index_build_service, 'CARDS_FOLDER', str(base_dir / 'cards'))
+    monkeypatch.setattr(index_build_service, 'load_config', lambda: {
+        'world_info_dir': 'data/library/lorebooks',
+        'resources_dir': 'data/assets/card_assets',
+    })
+    monkeypatch.setattr(index_build_service, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(
+        index_build_service,
+        'extract_card_info',
+        lambda _path: {'data': {'character_book': {'name': 'Embedded Book'}}},
+    )
+
+    assert index_build_service.apply_worldinfo_embedded_increment(conn, 'cards/hero.png') is True
+
+    row = conn.execute(
+        'SELECT entity_type, entity_id, source_path, display_category, name FROM index_entities_v2 WHERE generation = 1'
+    ).fetchone()
+    stats = conn.execute(
+        'SELECT entity_type, category_path, direct_count, subtree_count FROM index_category_stats_v2 WHERE generation = 1 AND scope = ? ORDER BY entity_type, category_path',
+        ('worldinfo',),
+    ).fetchall()
+
+    assert dict(row) == {
+        'entity_type': 'world_embedded',
+        'entity_id': 'world::embedded::cards/hero.png',
+        'source_path': str(base_dir / 'cards' / 'cards' / 'hero.png'),
+        'display_category': 'companions',
+        'name': 'Embedded Book',
+    }
+    assert ('world_global', 'global', 0, 0) in [tuple(stat) for stat in stats]

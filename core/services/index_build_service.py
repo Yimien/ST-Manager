@@ -92,6 +92,14 @@ def _resolve_runtime_dir(raw_path: str, default: str) -> str:
     return os.path.normpath(os.path.join(BASE_DIR, value))
 
 
+def _resolve_worldinfo_runtime_dirs(cfg: dict | None = None) -> tuple[str, str]:
+    cfg = cfg or load_config()
+    return (
+        _resolve_runtime_dir(cfg.get('world_info_dir'), 'data/library/lorebooks'),
+        _resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets'),
+    )
+
+
 def classify_worldinfo_path(source_path: str) -> dict:
     cfg = load_config()
     raw_path = str(source_path or '').strip()
@@ -103,8 +111,7 @@ def classify_worldinfo_path(source_path: str) -> dict:
     if not normalized_path or not normalized_path.lower().endswith('.json'):
         return result
 
-    global_dir = _resolve_runtime_dir(cfg.get('world_info_dir'), 'data/library/lorebooks')
-    resource_dir = _resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets')
+    global_dir, resource_dir = _resolve_worldinfo_runtime_dirs(cfg)
 
     if global_dir:
         try:
@@ -129,7 +136,7 @@ def classify_worldinfo_path(source_path: str) -> dict:
 
 def resolve_resource_worldinfo_owner_card_ids(source_path: str) -> list[str]:
     cfg = load_config()
-    resources_dir = _resolve_runtime_dir(cfg.get('resources_dir'), 'data/assets/card_assets')
+    _global_dir, resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     normalized_path = os.path.normpath(str(source_path or ''))
     if not resources_dir or not normalized_path:
         return []
@@ -253,7 +260,7 @@ def apply_worldinfo_path_increment(conn, source_path: str) -> bool:
     cfg = load_config()
     ui_data = load_ui_data()
     normalized_path = os.path.normpath(str(source_path or ''))
-    normalized_global_dir = os.path.normpath(str(cfg.get('world_info_dir') or ''))
+    normalized_global_dir, _resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     if not normalized_path or not normalized_global_dir:
         raise RuntimeError('worldinfo global directory unavailable')
 
@@ -371,7 +378,7 @@ def apply_worldinfo_embedded_increment(conn, card_id: str, source_path: str = ''
             _insert_worldinfo_search(conn, generation, entity_id, name, os.path.basename(card_path), category, summary, str(row['char_name'] or ''))
 
     cfg = load_config()
-    global_dir = str(cfg.get('world_info_dir') or '')
+    global_dir, _resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     _rebuild_worldinfo_category_stats_v2(conn, generation, global_dir)
     conn.commit()
     return True
@@ -397,7 +404,7 @@ def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '', *
     if row is None:
         if cleanup_only:
             cfg = load_config()
-            global_dir = str(cfg.get('world_info_dir') or '')
+            global_dir, _resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
             _rebuild_worldinfo_category_stats_v2(conn, generation, global_dir)
             conn.commit()
             return True
@@ -408,7 +415,7 @@ def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '', *
 
     cfg = load_config()
     ui_data = load_ui_data()
-    resources_dir = str(cfg.get('resources_dir') or '')
+    global_dir, resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     owner_entity_id = f'card::{card_id}'
 
     resource_folder = str((ui_data.get(card_id) or {}).get('resource_folder', '')).strip()
@@ -476,7 +483,6 @@ def apply_worldinfo_owner_increment(conn, card_id: str, source_path: str = '', *
                     str(row['char_name'] or ''),
                 )
 
-    global_dir = str(cfg.get('world_info_dir') or '')
     _rebuild_worldinfo_category_stats_v2(conn, generation, global_dir)
     conn.commit()
     return True
@@ -488,6 +494,17 @@ def connect_index_db(db_path=None):
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=NORMAL;')
     return conn
+
+
+def refresh_worldinfo_category_stats(conn, cfg: dict | None = None) -> bool:
+    generation = get_active_generation(conn, 'worldinfo')
+    if generation <= 0:
+        raise RuntimeError('worldinfo active generation missing')
+
+    global_dir, _resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
+    _rebuild_worldinfo_category_stats_v2(conn, generation, global_dir)
+    conn.commit()
+    return True
 
 
 def apply_card_increment(conn, card_id: str, source_path: str = '', *, remove_entity_ids: list[str] | None = None) -> bool:
@@ -651,8 +668,7 @@ def build_cards_generation(conn, generation: int):
 def build_worldinfo_generation(conn, generation: int, inspected_books=None):
     cfg = load_config()
     ui_data = load_ui_data()
-    global_dir = str(cfg.get('world_info_dir') or '')
-    resources_dir = str(cfg.get('resources_dir') or '')
+    global_dir, resources_dir = _resolve_worldinfo_runtime_dirs(cfg)
     rows = conn.execute(
         '''
         SELECT id, char_name, category, character_book_name, last_modified, has_character_book
