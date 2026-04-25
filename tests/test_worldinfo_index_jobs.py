@@ -874,7 +874,14 @@ def test_process_card_delete_task_removes_metadata_and_enqueues_targeted_cleanup
 
     assert rows == []
     assert calls == [
-        (('upsert_card',), {'entity_id': 'nested/deleted.png', 'source_path': str(cards_dir / 'nested' / 'deleted.png')}),
+        (
+            ('upsert_card',),
+            {
+                'entity_id': 'nested/deleted.png',
+                'source_path': str(cards_dir / 'nested' / 'deleted.png'),
+                'payload': {'remove_entity_ids': ['nested/deleted.png']},
+            },
+        ),
         (
             ('upsert_world_owner',),
             {
@@ -883,6 +890,42 @@ def test_process_card_delete_task_removes_metadata_and_enqueues_targeted_cleanup
                 'payload': {'remove_owner_ids': ['nested/deleted.png']},
             },
         ),
+    ]
+    assert reloads == [{'reason': 'watchdog_card_delete'}]
+
+
+def test_process_card_delete_task_enqueues_entity_and_owner_cleanup(monkeypatch, tmp_path):
+    calls = []
+    reloads = []
+    card_path = tmp_path / 'cards' / 'nested' / 'hero.png'
+    db_path = tmp_path / 'cards_metadata.db'
+
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_bytes(b'card')
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('CREATE TABLE card_metadata (id TEXT PRIMARY KEY)')
+        conn.execute('INSERT INTO card_metadata (id) VALUES (?)', ('nested/hero.png',))
+        conn.commit()
+
+    monkeypatch.setattr(scan_service, '_resolve_card_rel_path', lambda _path: 'nested/hero.png')
+    monkeypatch.setattr(scan_service, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(
+        scan_service,
+        '_enqueue_card_reconcile_jobs',
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(scan_service, 'schedule_reload', lambda **kwargs: reloads.append(kwargs))
+
+    assert scan_service._process_card_delete_task(str(card_path)) is True
+    assert calls == [
+        (
+            ('nested/hero.png', str(card_path)),
+            {
+                'remove_entity_ids': ['nested/hero.png'],
+                'remove_owner_ids': ['nested/hero.png'],
+            },
+        )
     ]
     assert reloads == [{'reason': 'watchdog_card_delete'}]
 

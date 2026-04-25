@@ -478,3 +478,71 @@ def test_delete_cards_cleans_embedded_worldinfo_notes(monkeypatch, tmp_path):
     ui_after = _read_ui_data(ui_path)
     assert 'embedded::cards/lucy.png' not in ui_after.get('_worldinfo_notes_v1', {})
 
+
+def test_delete_cards_dispatches_cleanup_after_successful_fs_delete(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    trash_dir = tmp_path / 'trash'
+    db_path = tmp_path / 'db.sqlite'
+    card_rel_a = 'cards/lucy.png'
+    card_rel_b = 'cards/mio.png'
+    card_path_a = cards_dir / 'cards' / 'lucy.png'
+    card_path_b = cards_dir / 'cards' / 'mio.png'
+
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    card_path_a.parent.mkdir(parents=True, exist_ok=True)
+    card_path_a.write_bytes(b'a')
+    card_path_b.write_bytes(b'b')
+
+    _init_db(db_path)
+    _insert_card_meta(db_path, card_id=card_rel_a, category='cards')
+    _insert_card_meta(db_path, card_id=card_rel_b, category='cards')
+
+    cleanup_calls = []
+
+    class _FakeCache:
+        def __init__(self):
+            self.id_map = {
+                card_rel_a: {'id': card_rel_a, 'is_bundle': False},
+                card_rel_b: {'id': card_rel_b, 'is_bundle': False},
+            }
+            self.category_counts = {}
+
+        def delete_card_update(self, _cid):
+            return None
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'TRASH_FOLDER', str(trash_dir))
+    monkeypatch.setattr(cards_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(cards_api, 'DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr(cards_api, 'load_config', lambda: {'resources_dir': 'resources'})
+    monkeypatch.setattr(cards_api, 'get_db', lambda: sqlite3.connect(str(db_path)))
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(cards_api, 'save_ui_data', lambda _payload: None)
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_api, 'resolve_ui_key', lambda cid: cid)
+    monkeypatch.setattr(
+        cards_api,
+        'cleanup_deleted_cards_after_fs_delete',
+        lambda **kwargs: cleanup_calls.append(kwargs) or {'warnings': []},
+        raising=False,
+    )
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache())
+
+    client = _make_test_app().test_client()
+    res = client.post(
+        '/api/delete_cards',
+        json={'card_ids': [card_rel_a, card_rel_b], 'delete_resources': False},
+    )
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert cleanup_calls == [
+        {
+            'deleted_card_ids': [card_rel_a, card_rel_b],
+            'source_paths_by_card_id': {
+                card_rel_a: str(card_path_a),
+                card_rel_b: str(card_path_b),
+            },
+        }
+    ]

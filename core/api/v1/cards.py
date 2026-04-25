@@ -38,6 +38,7 @@ from core.data.ui_store import (
     DEFAULT_TAG_CATEGORY_OPACITY,
     _normalize_tag_taxonomy,
     delete_worldinfo_notes_for_card_prefix,
+    rename_embedded_worldinfo_note_card_prefix,
 )
 from core.data.cache import GlobalMetadataCache
 from core.consts import SIDECAR_EXTENSIONS
@@ -1598,6 +1599,9 @@ def api_update_card():
                 if import_time_changed_after_rename:
                     rename_ui_changed = True
 
+            if rename_embedded_worldinfo_note_card_prefix(ui_data, raw_id, final_rel_path_id):
+                rename_ui_changed = True
+
             if rename_ui_changed:
                 save_ui_data(ui_data)
 
@@ -1978,6 +1982,8 @@ def api_delete_cards():
                 return jsonify({"success": False, "msg": "非法卡片路径"}), 400
 
         deleted_count = 0
+        deleted_card_ids = []
+        source_paths_by_card_id = {}
         ui_data = load_ui_data()
         ui_changed = False
 
@@ -2050,6 +2056,8 @@ def api_delete_cards():
                     is_deleted = True
 
                 if is_deleted:
+                    deleted_card_ids.append(cid)
+                    source_paths_by_card_id[cid] = full_path
                     if cid in ui_data:
                         del ui_data[cid]
                         ui_changed = True
@@ -2069,6 +2077,10 @@ def api_delete_cards():
                     ctx.cache.delete_card_update(cid)
         
         conn.commit()
+        cleanup_deleted_cards_after_fs_delete(
+            deleted_card_ids=deleted_card_ids,
+            source_paths_by_card_id=source_paths_by_card_id,
+        )
 
         if ui_changed:
             save_ui_data(ui_data)

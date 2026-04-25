@@ -253,7 +253,12 @@ def _process_card_delete_task(full_path):
         conn.execute('DELETE FROM card_metadata WHERE id = ?', (card_id,))
         conn.commit()
 
-    _enqueue_card_reconcile_jobs(card_id, full_path, remove_owner_ids=[card_id])
+    _enqueue_card_reconcile_jobs(
+        card_id,
+        full_path,
+        remove_entity_ids=[card_id],
+        remove_owner_ids=[card_id],
+    )
     schedule_reload(reason='watchdog_card_delete')
     return True
 

@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1258,7 +1259,7 @@ def test_convert_to_bundle_rebuilds_new_owner_projection_after_old_cleanup(monke
         json.dumps({old_id: {'summary': 'note', 'resource_folder': 'hero-assets'}}, ensure_ascii=False),
         encoding='utf-8',
     )
-
+    
     _init_index_db(db_path)
     with _open_row_db(db_path) as conn:
         _create_card_metadata_table(conn)
@@ -1350,6 +1351,124 @@ def test_convert_to_bundle_rebuilds_new_owner_projection_after_old_cleanup(monke
     assert rebuild_calls == []
 
     real_cache_conn.close()
+
+
+def test_update_card_rename_moves_embedded_worldinfo_note_key(monkeypatch, tmp_path):
+    cards_dir = tmp_path / 'cards'
+    old_id = 'group/hero.json'
+    new_id = 'group/hero-renamed.json'
+    old_path = cards_dir / 'group' / 'hero.json'
+    old_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.write_text(json.dumps({'data': {'name': 'Hero', 'tags': []}}, ensure_ascii=False), encoding='utf-8')
+
+    ui_data = {
+        old_id: {'summary': 'hero note'},
+        '_worldinfo_notes_v1': {
+            f'embedded::{old_id}': {'summary': 'embedded note'},
+            'embedded::group/other.json': {'summary': 'keep other note'},
+        },
+    }
+    saved_ui_payloads = []
+    sync_calls = []
+
+    class _FakeConn:
+        def execute(self, _sql, _params=()):
+            return self
+
+        def commit(self):
+            return None
+
+    class _FakeCache:
+        def __init__(self):
+            self.id_map = {
+                old_id: {
+                    'id': old_id,
+                    'category': 'group',
+                    'image_url': '/cards_file/group%2Fhero.json',
+                }
+            }
+            self.category_counts = {}
+            self.bundle_map = {}
+            self.lock = threading.Lock()
+
+        def update_card_data(self, _card_id, payload):
+            payload = dict(payload)
+            payload['image_url'] = '/cards_file/group%2Fhero-renamed.json'
+            return payload
+
+    monkeypatch.setattr(cards_api, 'CARDS_FOLDER', str(cards_dir))
+    monkeypatch.setattr(cards_api, 'suppress_fs_events', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, '_is_safe_rel_path', lambda _path, allow_empty=False: True)
+    monkeypatch.setattr(cards_api, '_is_safe_filename', lambda _name: True)
+    monkeypatch.setattr(cards_api, 'extract_card_info', lambda _path: {'data': {'name': 'Hero', 'tags': []}})
+    monkeypatch.setattr(cards_api, 'write_card_metadata', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cards_api, 'load_ui_data', lambda: ui_data)
+    monkeypatch.setattr(
+        cards_api,
+        'save_ui_data',
+        lambda payload: saved_ui_payloads.append(json.loads(json.dumps(payload, ensure_ascii=False))),
+    )
+    monkeypatch.setattr(cards_api, 'ensure_import_time', lambda *_args, **_kwargs: (False, 123.0))
+    monkeypatch.setattr(cards_api, 'get_import_time', lambda _ui_data, _ui_key, fallback: fallback)
+    monkeypatch.setattr(cards_api, 'calculate_token_count', lambda _data: 0)
+    monkeypatch.setattr(cards_api, 'update_card_cache', lambda *_args, **_kwargs: {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
+    monkeypatch.setattr(cards_api, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
+    monkeypatch.setattr(cards_api, '_apply_card_index_increment_now', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cards_api, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(cards_api.ctx, 'cache', _FakeCache(), raising=False)
+
+    client = _make_app().test_client()
+    res = client.post(
+        '/api/update_card',
+        json={
+            'id': old_id,
+            'new_filename': 'hero-renamed.json',
+            'char_name': 'Hero',
+            'description': '',
+            'first_mes': '',
+            'mes_example': '',
+            'personality': '',
+            'scenario': '',
+            'creator_notes': '',
+            'system_prompt': '',
+            'post_history_instructions': '',
+            'creator': '',
+            'character_version': '',
+            'extensions': {},
+            'tags': [],
+            'alternate_greetings': [],
+            'character_book': None,
+            'ui_summary': 'hero note',
+            'source_link': '',
+            'resource_folder': '',
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.get_json()['success'] is True
+    assert saved_ui_payloads[-1]['_worldinfo_notes_v1'] == {
+        f'embedded::{new_id}': {'summary': 'embedded note'},
+        'embedded::group/other.json': {'summary': 'keep other note'},
+    }
+    assert sync_calls == [
+        {
+            'card_id': new_id,
+            'source_path': str(cards_dir / 'group' / 'hero-renamed.json'),
+            'file_content_changed': True,
+            'rename_changed': True,
+            'force_set_cover': False,
+            'resource_folder_changed': False,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': [old_id],
+            'remove_owner_ids': [old_id],
+        }
+    ]
 
 
 def test_toggle_bundle_mode_enable_keeps_tags_consistent_between_file_db_cache_and_index(monkeypatch, tmp_path):
