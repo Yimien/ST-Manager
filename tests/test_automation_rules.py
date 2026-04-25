@@ -1450,6 +1450,189 @@ def test_manual_execute_reports_skipped_targets_missing_from_cache(monkeypatch):
     assert captured['processed_ids'] == [existing_id]
 
 
+def _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured):
+    monkeypatch.setattr(automation_api.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_api, 'load_config', lambda: {'automation_slash_is_tag_separator': False})
+    monkeypatch.setattr(automation_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(automation_api.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+
+    def _fake_build_rule_context(card_id_arg, card_obj_arg, ruleset_arg, ui_data=None, tags=None):
+        return (
+            {
+                'id': card_id_arg,
+                'category': card_obj_arg.get('category', ''),
+                'tags': list(card_obj_arg.get('tags') or []),
+                'token_count': 0,
+            },
+            ui_data or {},
+        )
+
+    monkeypatch.setattr(automation_service, '_build_rule_context', _fake_build_rule_context)
+    monkeypatch.setattr(
+        automation_api.engine,
+        'evaluate',
+        lambda *args, **kwargs: {'actions': [{'type': ACT_ADD_TAG, 'value': 'ordered'}]},
+    )
+    monkeypatch.setattr(
+        automation_api,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': list(actions),
+            'derived': {'add_tags': {'ordered'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        automation_service,
+        '_build_exec_plan_from_actions',
+        lambda actions, slash_as_separator=False: {
+            'move': None,
+            'add_tags': {'ordered'},
+            'remove_tags': set(),
+            'set_favorite': None,
+            'set_filename_from_char_name': False,
+            'set_filename_from_wi_name': False,
+            'set_char_name_from_filename': False,
+            'set_wi_name_from_filename': False,
+            'fetch_forum_tags': None,
+            'desired_filename_template': None,
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        captured['processed_ids'].append(card_id_arg)
+        return {
+            'moved_to': None,
+            'tags_added': list(plan.get('add_tags', [])),
+            'tags_removed': [],
+            'fav_changed': False,
+            'name_sync': None,
+            'forum_tags_fetched': None,
+            'final_id': card_id_arg,
+        }
+
+    monkeypatch.setattr(automation_api.executor, 'apply_plan', _fake_apply_plan)
+
+
+def test_manual_execute_preserves_explicit_order_then_appends_db_ids_in_order(monkeypatch):
+    request_first = 'folder/request-first.json'
+    request_second = 'folder/request-second.json'
+    db_only = 'folder/db-only.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            request_first: {
+                'id': request_first,
+                'filename': 'request-first.json',
+                'char_name': 'Request First',
+                'category': 'folder',
+                'tags': [],
+            },
+            request_second: {
+                'id': request_second,
+                'filename': 'request-second.json',
+                'char_name': 'Request Second',
+                'category': 'folder',
+                'tags': [],
+            },
+            db_only: {
+                'id': db_only,
+                'filename': 'db-only.json',
+                'char_name': 'DB Only',
+                'category': 'folder',
+                'tags': [],
+            },
+        },
+        bundle_map={},
+        initialized=True,
+    )
+    captured = {'processed_ids': [], 'queries': []}
+
+    class _FakeCursor:
+        def execute(self, sql, params=None):
+            captured['queries'].append((sql, params))
+
+        def fetchall(self):
+            return [(db_only,), (request_first,), (request_second,)]
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    monkeypatch.setattr(automation_api, 'get_db', lambda: _FakeConn())
+    _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured)
+
+    client = _make_automation_app().test_client()
+    response = client.post(
+        '/api/automation/execute',
+        json={
+            'card_ids': [request_second, request_first],
+            'category': 'folder',
+            'recursive': True,
+            'ruleset_id': 'ruleset-1',
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()['selected'] == 3
+    assert captured['processed_ids'] == [request_second, request_first, db_only]
+
+
+def test_manual_execute_category_queries_order_targets_by_id(monkeypatch):
+    first_id = 'folder/a.json'
+    second_id = 'folder/b.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            first_id: {
+                'id': first_id,
+                'filename': 'a.json',
+                'char_name': 'A',
+                'category': 'folder',
+                'tags': [],
+            },
+            second_id: {
+                'id': second_id,
+                'filename': 'b.json',
+                'char_name': 'B',
+                'category': 'folder',
+                'tags': [],
+            },
+        },
+        bundle_map={},
+        initialized=True,
+    )
+    captured = {'sql': None, 'processed_ids': []}
+
+    class _FakeCursor:
+        def execute(self, sql, params=None):
+            captured['sql'] = sql
+
+        def fetchall(self):
+            return [(first_id,), (second_id,)]
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    monkeypatch.setattr(automation_api, 'get_db', lambda: _FakeConn())
+    _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured)
+
+    client = _make_automation_app().test_client()
+    response = client.post(
+        '/api/automation/execute',
+        json={'category': 'folder', 'recursive': True, 'ruleset_id': 'ruleset-1'},
+    )
+
+    assert response.status_code == 200
+    assert 'ORDER BY id' in captured['sql']
+    assert captured['processed_ids'] == [first_id, second_id]
+
+
 def test_executor_apply_plan_runs_template_rename_before_move(monkeypatch):
     from core.automation.executor import AutomationExecutor
     from core.automation import executor as automation_executor

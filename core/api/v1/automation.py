@@ -85,21 +85,24 @@ def execute_rules():
             
             if category == "": # 根目录
                 if recursive:
-                    cursor.execute("SELECT id FROM card_metadata")
+                    cursor.execute("SELECT id FROM card_metadata ORDER BY id")
                 else:
-                    cursor.execute("SELECT id FROM card_metadata WHERE category = ''")
+                    cursor.execute("SELECT id FROM card_metadata WHERE category = '' ORDER BY id")
             else:
                 if recursive:
                     # 转义 SQL 通配符，匹配 category/%
                     safe_cat = category.replace('_', r'\_').replace('%', r'\%')
-                    cursor.execute(f"SELECT id FROM card_metadata WHERE category = ? OR id LIKE ? || '/%' ESCAPE '\\'", (category, safe_cat))
+                    cursor.execute(
+                        "SELECT id FROM card_metadata WHERE category = ? OR id LIKE ? || '/%' ESCAPE '\\' ORDER BY id",
+                        (category, safe_cat)
+                    )
                 else:
-                    cursor.execute("SELECT id FROM card_metadata WHERE category = ?", (category,))
+                    cursor.execute("SELECT id FROM card_metadata WHERE category = ? ORDER BY id", (category,))
             
             rows = cursor.fetchall()
             # 将查询结果合并到 card_ids (去重)
             db_ids = [row[0] for row in rows]
-            card_ids = list(set(card_ids + db_ids))
+            card_ids = list(dict.fromkeys(card_ids + db_ids))
 
         selected_count = len(card_ids)
 
