@@ -230,3 +230,28 @@ def test_evaluate_st_path_safety_marks_st_inside_manager_relation(tmp_path):
     assert result['conflicts'][0]['relation'] == 'st_inside_manager'
     assert result['conflicts'][0]['manager_path'] == os.path.normpath(str(chats_dir.parent))
     assert result['conflicts'][0]['st_path'] == os.path.normpath(str(chats_dir))
+
+
+def test_path_safety_only_reports_openai_preset_directory_for_preset_conflicts(tmp_path):
+    st_root = tmp_path / 'SillyTavern'
+    st_presets_dir = st_root / 'data' / 'default-user' / 'OpenAI Settings'
+    st_presets_dir.mkdir(parents=True)
+
+    result = evaluate_st_path_safety(
+        {
+            'st_data_dir': str(st_root / 'data' / 'default-user'),
+            'presets_dir': str(st_presets_dir),
+            'st_openai_preset_dir': str(st_root / 'data' / 'default-user' / 'openai'),
+        },
+        base_dir=str(tmp_path),
+        st_client_factory=_factory(st_root),
+    )
+
+    fields = {item['field'] for item in result['conflicts']}
+    assert 'presets_dir' in fields
+    assert 'st_openai_preset_dir' not in fields
+    assert 'st_textgen_preset_dir' not in fields
+    assert 'st_instruct_preset_dir' not in fields
+    assert 'st_context_preset_dir' not in fields
+    assert 'st_sysprompt_dir' not in fields
+    assert 'st_reasoning_dir' not in fields

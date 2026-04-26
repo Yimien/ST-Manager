@@ -83,18 +83,47 @@ class FakeUserDbBackupService:
         return {'imported': True, 'source_name': source_name}
 
 
-def test_build_default_config_includes_profile_specific_preset_directories():
+def test_build_default_config_only_includes_openai_preset_directory():
     cfg = build_default_config()
 
     assert cfg['st_openai_preset_dir'] == ''
-    assert cfg['st_textgen_preset_dir'] == ''
-    assert cfg['st_instruct_preset_dir'] == ''
-    assert cfg['st_context_preset_dir'] == ''
-    assert cfg['st_sysprompt_dir'] == ''
-    assert cfg['st_reasoning_dir'] == ''
+    assert 'st_textgen_preset_dir' not in cfg
+    assert 'st_instruct_preset_dir' not in cfg
+    assert 'st_context_preset_dir' not in cfg
+    assert 'st_sysprompt_dir' not in cfg
+    assert 'st_reasoning_dir' not in cfg
 
 
-def test_get_settings_returns_profile_specific_preset_directories(monkeypatch):
+def test_get_settings_only_returns_openai_preset_directory(monkeypatch):
+    monkeypatch.setattr(
+        system_api,
+        'load_config',
+        lambda: {
+            'cards_dir': 'cards',
+            'world_info_dir': 'worlds',
+            'chats_dir': 'chats',
+            'presets_dir': 'presets',
+            'quick_replies_dir': 'quick',
+            'default_sort': 'date_desc',
+            'show_header_sort': True,
+            'st_openai_preset_dir': 'st/openai',
+        },
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/get_settings')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['st_openai_preset_dir'] == 'st/openai'
+    assert 'st_textgen_preset_dir' not in payload
+    assert 'st_instruct_preset_dir' not in payload
+    assert 'st_context_preset_dir' not in payload
+    assert 'st_sysprompt_dir' not in payload
+    assert 'st_reasoning_dir' not in payload
+
+
+def test_get_settings_filters_legacy_preset_directory_keys_from_loaded_config(monkeypatch):
     monkeypatch.setattr(
         system_api,
         'load_config',
@@ -121,11 +150,11 @@ def test_get_settings_returns_profile_specific_preset_directories(monkeypatch):
     assert res.status_code == 200
     payload = res.get_json()
     assert payload['st_openai_preset_dir'] == 'st/openai'
-    assert payload['st_textgen_preset_dir'] == 'st/textgen'
-    assert payload['st_instruct_preset_dir'] == 'st/instruct'
-    assert payload['st_context_preset_dir'] == 'st/context'
-    assert payload['st_sysprompt_dir'] == 'st/sysprompt'
-    assert payload['st_reasoning_dir'] == 'st/reasoning'
+    assert 'st_textgen_preset_dir' not in payload
+    assert 'st_instruct_preset_dir' not in payload
+    assert 'st_context_preset_dir' not in payload
+    assert 'st_sysprompt_dir' not in payload
+    assert 'st_reasoning_dir' not in payload
 
 
 def test_get_settings_includes_shared_wallpaper_library_for_manager(monkeypatch):

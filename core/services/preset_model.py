@@ -11,12 +11,12 @@ from core.utils.source_revision import build_file_source_revision
 
 
 PRESET_KIND_LABELS = {
-    'textgen': '文本生成预设',
-    'instruct': '指令模板',
-    'context': '上下文模板',
-    'sysprompt': '系统提示词',
-    'reasoning': '思维链模板',
+    'openai': 'ST 聊天补全预设',
+    'generic': '通用 JSON',
 }
+
+MANAGED_PRESET_KIND_KEY = '__st_manager_preset_kind'
+MANAGED_PRESET_KIND_VALUES = {'openai', 'generic'}
 
 GENERIC_READER_FAMILY_LABEL = '通用预设'
 PROMPT_MANAGER_READER_FAMILY_LABEL = '提示词管理预设'
@@ -41,7 +41,7 @@ LONG_TEXT_EDITOR_KEYS = {
 }
 
 SELECT_EDITOR_OPTIONS = {
-    'names_behavior': ['none', 'force', 'always'],
+    'names_behavior': ['default', 'always', 'never'],
     'insertion_position': ['before', 'after'],
     'injection_role': ['system', 'user', 'assistant'],
 }
@@ -59,6 +59,48 @@ COMMON_FIELD_KEYS = {
 
 
 FIELD_ALIAS_MAP = {}
+
+LEGACY_PROMPT_WORKSPACE_MARKERS = {
+    'temperature',
+    'temp',
+    'top_p',
+    'top_k',
+    'top_a',
+    'min_p',
+    'typical_p',
+    'typical',
+    'tfs',
+    'temperature_last',
+    'dynamic_temperature',
+    'dynatemp',
+    'dynatemp_low',
+    'dynatemp_high',
+    'min_temp',
+    'max_temp',
+    'repetition_penalty',
+    'rep_pen',
+    'frequency_penalty',
+    'freq_pen',
+    'presence_penalty',
+    'pres_pen',
+    'mirostat_mode',
+    'mirostat_tau',
+    'mirostat_eta',
+    'guidance_scale',
+    'negative_prompt',
+    'json_schema',
+    'grammar',
+    'grammar_string',
+    'banned_tokens',
+    'logit_bias',
+    'sampler_order',
+    'samplers',
+    'input_sequence',
+    'output_sequence',
+    'system_sequence',
+    'first_output_sequence',
+    'last_output_sequence',
+}
 
 READER_COMMON_FIELD_DEFS = [
     {'key': 'name', 'label': '名称'},
@@ -86,7 +128,7 @@ PROMPT_INJECTION_POSITION_LABELS = {
     1: 'In-Chat 注入',
 }
 
-SCALAR_WORKSPACE_PROFILE_ID = 'st_textgen_parameter_workspace'
+SCALAR_WORKSPACE_PROFILE_ID = 'legacy_scalar_workspace'
 
 SCALAR_WORKSPACE_SECTIONS = [
     {'id': 'core_sampling', 'label': '核心采样'},
@@ -276,9 +318,32 @@ SCALAR_WORKSPACE_HIDDEN_FIELDS = [
 
 
 SECTION_DEFINITIONS = {
-    'textgen': {
-        'sampling': [
-            {'key': 'temp', 'aliases': ['temperature'], 'label': '温度'},
+    'openai': {
+        'provider_and_models': [
+            {'key': 'chat_completion_source', 'aliases': [], 'label': '聊天补全来源'},
+            {'key': 'openai_model', 'aliases': [], 'label': 'OpenAI 模型'},
+            {'key': 'openrouter_model', 'aliases': [], 'label': 'OpenRouter 模型'},
+        ],
+        'connection_and_endpoints': [
+            {'key': 'custom_url', 'aliases': [], 'label': '自定义接口地址'},
+            {'key': 'reverse_proxy', 'aliases': [], 'label': '反向代理'},
+            {'key': 'proxy_password', 'aliases': [], 'label': '代理密码'},
+        ],
+        'output_and_reasoning': [
+            {'key': 'openai_max_context', 'aliases': [], 'label': '上下文长度'},
+            {'key': 'openai_max_tokens', 'aliases': ['max_tokens', 'max_length'], 'label': '最大生成长度'},
+            {'key': 'stream_openai', 'aliases': [], 'label': '流式输出'},
+            {'key': 'show_thoughts', 'aliases': [], 'label': '显示思维链'},
+            {'key': 'reasoning_effort', 'aliases': [], 'label': '推理强度'},
+            {'key': 'verbosity', 'aliases': [], 'label': '输出冗长度'},
+            {'key': 'min_length', 'aliases': [], 'label': '最小长度'},
+            {'key': 'num_beams', 'aliases': [], 'label': 'Beam 数'},
+            {'key': 'length_penalty', 'aliases': [], 'label': 'Length Penalty'},
+            {'key': 'do_sample', 'aliases': [], 'label': 'Do Sample'},
+            {'key': 'early_stopping', 'aliases': [], 'label': 'Early Stopping'},
+        ],
+        'core_sampling': [
+            {'key': 'temperature', 'aliases': ['temp'], 'label': '温度'},
             {'key': 'top_p', 'aliases': [], 'label': 'Top P'},
             {'key': 'top_k', 'aliases': [], 'label': 'Top K'},
             {'key': 'top_a', 'aliases': [], 'label': 'Top A'},
@@ -287,119 +352,39 @@ SECTION_DEFINITIONS = {
             {'key': 'tfs', 'aliases': [], 'label': 'TFS'},
             {'key': 'temperature_last', 'aliases': [], 'label': 'Temperature Last'},
         ],
-        'penalties': [
+        'penalties_and_behavior': [
             {'key': 'repetition_penalty', 'aliases': ['rep_pen'], 'label': '重复惩罚'},
             {'key': 'repetition_penalty_range', 'aliases': [], 'label': '重复范围'},
             {'key': 'repetition_penalty_decay', 'aliases': [], 'label': '重复衰减'},
             {'key': 'frequency_penalty', 'aliases': ['freq_pen'], 'label': '频率惩罚'},
             {'key': 'presence_penalty', 'aliases': ['pres_pen'], 'label': '存在惩罚'},
             {'key': 'no_repeat_ngram_size', 'aliases': [], 'label': 'No Repeat Ngram'},
+            {'key': 'names_behavior', 'aliases': [], 'label': '名称行为'},
         ],
-        'length_and_output': [
-            {'key': 'max_tokens', 'aliases': ['openai_max_tokens', 'max_length'], 'label': '最大生成长度'},
-            {'key': 'min_length', 'aliases': [], 'label': '最小长度'},
-            {'key': 'num_beams', 'aliases': [], 'label': 'Beam 数'},
-            {'key': 'length_penalty', 'aliases': [], 'label': 'Length Penalty'},
-            {'key': 'do_sample', 'aliases': [], 'label': 'Do Sample'},
-            {'key': 'early_stopping', 'aliases': [], 'label': 'Early Stopping'},
-        ],
-        'dynamic_temperature': [
+        'images_and_advanced': [
             {'key': 'dynamic_temperature', 'aliases': [], 'label': '动态温度'},
             {'key': 'dynatemp_low', 'aliases': [], 'label': '动态温度下限'},
             {'key': 'dynatemp_high', 'aliases': [], 'label': '动态温度上限'},
-        ],
-        'mirostat': [
             {'key': 'mirostat_mode', 'aliases': [], 'label': 'Mirostat 模式'},
             {'key': 'mirostat_tau', 'aliases': [], 'label': 'Mirostat Tau'},
             {'key': 'mirostat_eta', 'aliases': [], 'label': 'Mirostat Eta'},
-        ],
-        'guidance': [
             {'key': 'guidance_scale', 'aliases': [], 'label': 'Guidance Scale'},
             {'key': 'negative_prompt', 'aliases': [], 'label': 'Negative Prompt'},
-        ],
-        'formatting': [
-            {'key': 'stream_openai', 'aliases': [], 'label': '流式输出'},
             {'key': 'wrap_in_quotes', 'aliases': [], 'label': '包裹引号'},
-            {'key': 'show_thoughts', 'aliases': [], 'label': '显示思维链'},
-        ],
-        'schema_and_grammar': [
+            {'key': 'media_inlining', 'aliases': [], 'label': '媒体内联'},
+            {'key': 'request_images', 'aliases': [], 'label': '请求图像'},
+            {'key': 'request_image_aspect_ratio', 'aliases': [], 'label': '图像比例'},
+            {'key': 'request_image_resolution', 'aliases': [], 'label': '图像分辨率'},
             {'key': 'json_schema', 'aliases': [], 'label': 'JSON Schema'},
             {'key': 'grammar', 'aliases': [], 'label': 'Grammar'},
-        ],
-        'bans_and_bias': [
             {'key': 'banned_tokens', 'aliases': [], 'label': '禁词'},
             {'key': 'logit_bias', 'aliases': [], 'label': 'Logit Bias'},
-        ],
-        'sampler_ordering': [
             {'key': 'sampler_order', 'aliases': [], 'label': 'Sampler Order'},
             {'key': 'samplers', 'aliases': [], 'label': 'Sampler Priority'},
         ],
-    },
-    'instruct': {
-        'sequences': [
-            {'key': 'input_sequence', 'aliases': [], 'label': '输入序列'},
-            {'key': 'output_sequence', 'aliases': [], 'label': '输出序列'},
-            {'key': 'system_sequence', 'aliases': [], 'label': '系统序列'},
-            {'key': 'first_output_sequence', 'aliases': [], 'label': '首输出序列'},
-            {'key': 'last_output_sequence', 'aliases': [], 'label': '尾输出序列'},
-            {'key': 'stop_sequence', 'aliases': ['stop_sequences'], 'label': '停止序列'},
-        ],
-        'wrapping_and_behavior': [
-            {'key': 'wrap', 'aliases': [], 'label': '包装与宏'},
-            {'key': 'macro', 'aliases': [], 'label': '宏'},
-            {'key': 'names_behavior', 'aliases': [], 'label': '名称行为'},
-            {'key': 'skip_examples', 'aliases': [], 'label': '跳过示例'},
-        ],
-        'activation': [
-            {'key': 'activation_regex', 'aliases': [], 'label': '激活正则'},
-        ],
-        'compatibility': [
-            {'key': 'system_same_as_user', 'aliases': [], 'label': 'system same as user'},
-            {'key': 'last_system_sequence', 'aliases': [], 'label': '尾系统序列'},
-            {'key': 'system_sequence_prefix', 'aliases': [], 'label': '系统前缀'},
-            {'key': 'sequences_as_stop_strings', 'aliases': [], 'label': '序列作为停止词'},
-        ],
-    },
-    'context': {
-        'story': [
-            {'key': 'story_string', 'aliases': [], 'label': 'Story String'},
-            {'key': 'example_separator', 'aliases': [], 'label': 'Example Separator'},
-            {'key': 'chat_start', 'aliases': [], 'label': 'Chat Start'},
-        ],
-        'separator_and_chat': [
-            {'key': 'use_stop_strings', 'aliases': [], 'label': '使用 Stop Strings'},
-            {'key': 'names_as_stop_strings', 'aliases': [], 'label': '名称作为 Stop Strings'},
-        ],
-        'insertion_behavior': [
-            {'key': 'injection_depth', 'aliases': ['depth'], 'label': '插入深度'},
-            {'key': 'insertion_position', 'aliases': ['position'], 'label': '插入位置'},
-            {'key': 'injection_role', 'aliases': ['role'], 'label': '插入角色'},
-        ],
-        'formatting_behavior': [
-            {'key': 'always_force_name2', 'aliases': [], 'label': 'always_force_name2'},
-            {'key': 'trim_sentences', 'aliases': [], 'label': 'trim_sentences'},
-            {'key': 'single_line', 'aliases': [], 'label': 'single_line'},
-        ],
-        'compatibility': [
-            {'key': 'conversation_separator', 'aliases': [], 'label': '兼容分隔符'},
-        ],
-    },
-    'sysprompt': {
-        'prompt': [
-            {'key': 'content', 'aliases': [], 'label': '主提示词内容'},
-        ],
-        'placement': [
-            {'key': 'post_history', 'aliases': [], 'label': '后置到历史后'},
-        ],
-    },
-    'reasoning': {
-        'template': [
-            {'key': 'prefix', 'aliases': [], 'label': '前缀'},
-            {'key': 'suffix', 'aliases': [], 'label': '后缀'},
-            {'key': 'separator', 'aliases': [], 'label': '分隔符'},
-        ],
-        'runtime_notes': [
-            {'key': 'note', 'aliases': [], 'label': '运行态说明'},
+        'templates_and_features': [
+            {'key': 'use_sysprompt', 'aliases': [], 'label': '使用系统提示词'},
+            {'key': 'function_calling', 'aliases': [], 'label': '函数调用'},
         ],
     },
 }
@@ -411,31 +396,83 @@ for _kind_sections in SECTION_DEFINITIONS.values():
 
 
 def detect_preset_kind(raw_data, source_folder='', file_path=''):
-    folder = str(source_folder or '').replace('\\', '/').lower()
-    file_hint = str(file_path or '').replace('\\', '/').lower()
-    combined = f'{folder} {file_hint}'
-
-    if 'sysprompt' in combined:
-        return 'sysprompt'
-    if 'reasoning' in combined:
-        return 'reasoning'
-    if 'context' in combined:
-        return 'context'
-    if 'instruct' in combined:
-        return 'instruct'
-    if 'textgen' in combined:
-        return 'textgen'
-
     data = raw_data if isinstance(raw_data, dict) else {}
-    if 'content' in data and 'post_history' in data:
-        return 'sysprompt'
-    if all(key in data for key in ('prefix', 'suffix', 'separator')):
-        return 'reasoning'
-    if 'story_string' in data and 'chat_start' in data:
-        return 'context'
-    if any(key in data for key in ('input_sequence', 'output_sequence', 'system_sequence')):
-        return 'instruct'
-    return 'textgen'
+    managed_kind = str(data.get(MANAGED_PRESET_KIND_KEY) or '').strip()
+    if managed_kind in MANAGED_PRESET_KIND_VALUES:
+        return managed_kind
+    openai_markers = {
+        'openai_max_context',
+        'openai_max_tokens',
+        'stream_openai',
+        'show_thoughts',
+        'reasoning_effort',
+        'verbosity',
+        'chat_completion_source',
+        'openai_model',
+        'use_sysprompt',
+        'openrouter_model',
+        'custom_url',
+        'reverse_proxy',
+        'proxy_password',
+        'names_behavior',
+        'function_calling',
+        'media_inlining',
+        'request_images',
+        'request_image_aspect_ratio',
+        'request_image_resolution',
+    }
+    if any(key in data for key in openai_markers):
+        return 'openai'
+    if _matches_openai_prompt_workspace_shape(data):
+        return 'openai'
+    if _matches_openai_path_hint(source_folder, file_path):
+        return 'openai'
+    return 'generic'
+
+
+def _matches_openai_path_hint(source_folder, file_path):
+    return str(source_folder or '').strip().lower() == 'st_openai_preset_dir'
+
+
+def _matches_openai_prompt_workspace_shape(data):
+    prompts = data.get('prompts')
+    if not isinstance(prompts, list):
+        return False
+
+    prompt_metadata_keys = {'system_prompt', 'marker', 'injection_position', 'injection_depth'}
+    if any(
+        isinstance(prompt, dict) and any(key in prompt for key in prompt_metadata_keys)
+        for prompt in prompts
+    ):
+        return True
+
+    prompt_order = data.get('prompt_order')
+    if not isinstance(prompt_order, list):
+        return False
+
+    if any(isinstance(prompt, dict) and 'enabled' in prompt for prompt in prompts):
+        return True
+
+    if prompt_order and all(isinstance(entry, dict) and 'identifier' in entry for entry in prompt_order):
+        return True
+
+    if any(isinstance(entry, dict) and 'order' in entry for entry in prompt_order):
+        return True
+
+    return False
+
+
+def _sanitize_preset_data(raw_data):
+    if not isinstance(raw_data, dict):
+        return raw_data
+
+    sanitized = copy.deepcopy(raw_data)
+    sanitized.pop(MANAGED_PRESET_KIND_KEY, None)
+    return sanitized
+
+
+def strip_managed_kind_marker(raw_data):
+    return _sanitize_preset_data(raw_data)
 
 
 def _resolve_field(data, field_def):
@@ -649,15 +686,6 @@ def _resolve_scalar_workspace_field(data, field_def):
 
 
 def _matches_textgen_scalar_workspace(data, preset_kind):
-    if preset_kind != 'textgen':
-        return False
-
-    if not _is_prompt_workspace_candidate(data):
-        return False
-
-    for field_def in SCALAR_WORKSPACE_FIELD_DEFS:
-        if _resolve_scalar_workspace_field(data, field_def) is not None:
-            return True
     return False
 
 
@@ -879,7 +907,7 @@ def _build_prompt_manager_reader_items(data, preset_kind=None):
 
 def build_reader_view(raw_data, preset_kind=None):
     data = raw_data if isinstance(raw_data, dict) else {}
-    if _is_prompt_workspace_candidate(data):
+    if preset_kind == 'openai' and _is_prompt_workspace_candidate(data):
         items = _build_prompt_manager_reader_items(data, preset_kind)
         groups = _build_group_defs(PROMPT_MANAGER_READER_GROUP_LABELS, items)
         prompt_count = len([item for item in items if item['type'] == 'prompt'])
@@ -919,10 +947,11 @@ def build_preset_detail(*, preset_id, file_path, filename, source_type, source_f
         source_folder=source_folder,
         file_path=file_path,
     )
-    sections, _unknown_fields = build_sections(raw_data, preset_kind)
-    reader_view = build_reader_view(raw_data, preset_kind)
-    editor_profile = build_editor_profile_payload(raw_data, preset_kind)
-    data = raw_data if isinstance(raw_data, dict) else {}
+    sanitized_raw_data = _sanitize_preset_data(raw_data)
+    sections, _unknown_fields = build_sections(sanitized_raw_data, preset_kind)
+    reader_view = build_reader_view(sanitized_raw_data, preset_kind)
+    editor_profile = build_editor_profile_payload(sanitized_raw_data, preset_kind)
+    data = sanitized_raw_data if isinstance(sanitized_raw_data, dict) else {}
 
     try:
         mtime = os.path.getmtime(file_path)
@@ -953,7 +982,7 @@ def build_preset_detail(*, preset_id, file_path, filename, source_type, source_f
         'preset_kind_label': PRESET_KIND_LABELS[preset_kind],
         'source_revision': build_file_source_revision(file_path),
         'is_default_candidate': source_type == 'global',
-        'raw_data': copy.deepcopy(raw_data or {}),
+        'raw_data': copy.deepcopy(sanitized_raw_data or {}),
         'sections': sections,
         'editor_profile': editor_profile,
         'reader_view': reader_view,
@@ -985,5 +1014,10 @@ def merge_preset_content(raw_data, preset_kind, content):
             if 'extensions' not in normalized_content
             else normalized_content.get('extensions')
         ) or {}
+
+    if preset_kind in MANAGED_PRESET_KIND_VALUES:
+        merged[MANAGED_PRESET_KIND_KEY] = preset_kind
+    else:
+        merged.pop(MANAGED_PRESET_KIND_KEY, None)
 
     return merged

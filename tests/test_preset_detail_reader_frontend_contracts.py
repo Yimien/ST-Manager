@@ -1331,7 +1331,7 @@ def test_preset_detail_reader_runtime_uses_scalar_workspace_overview_and_keeps_h
               { id: 'field:top_a', type: 'field', group: 'scalar_fields', title: 'top_a', source_key: 'top_a', value_path: 'top_a', payload: { key: 'top_a', value: 0.3 } },
             ],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
                 { id: 'penalties', label: '惩罚参数' },
@@ -1394,7 +1394,7 @@ def test_preset_detail_reader_runtime_scalar_workspace_does_not_leak_hidden_scal
               { id: 'field:top_a', type: 'field', group: 'scalar_fields', title: 'top_a', source_key: 'top_a', value_path: 'top_a', payload: { key: 'top_a', value: 0.3 } },
             ],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
               ],
@@ -1442,7 +1442,7 @@ def test_preset_detail_reader_runtime_scalar_workspace_visible_count_tracks_visi
               { id: 'field:rep_pen', type: 'field', group: 'scalar_fields', title: 'rep_pen', source_key: 'rep_pen', value_path: 'rep_pen', payload: { key: 'rep_pen', value: 1.1 } },
             ],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
                 { id: 'penalties', label: '惩罚参数' },
@@ -1490,7 +1490,7 @@ def test_preset_detail_reader_runtime_scalar_workspace_total_count_tracks_worksp
               { id: 'ext:memory', type: 'extension', group: 'extensions', title: 'Memory', payload: { value: { enabled: true } } },
             ],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
                 { id: 'penalties', label: '惩罚参数' },
