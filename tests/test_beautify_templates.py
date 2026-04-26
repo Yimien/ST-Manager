@@ -162,6 +162,26 @@ def test_beautify_grid_template_adds_screenshot_picker_package_identity_bindings
     assert '当前用户头像已覆盖全局设置' in template
 
 
+def test_beautify_grid_template_uses_single_line_inputs_for_package_identity_names():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    package_character_input_pattern = re.compile(
+        r'<input\b(?=[^>]*\btype=["\']text["\'])(?=[^>]*\bclass=["\'][^"\']*\bbeautify-filter-input\b[^"\']*["\'])'
+        r'(?=[^>]*\bx-model=["\']packageCharacterName["\'])(?=[^>]*\bplaceholder=["\']未设置，将使用全局默认角色资料["\'])[^>]*\/?>',
+        re.DOTALL,
+    )
+    package_user_input_pattern = re.compile(
+        r'<input\b(?=[^>]*\btype=["\']text["\'])(?=[^>]*\bclass=["\'][^"\']*\bbeautify-filter-input\b[^"\']*["\'])'
+        r'(?=[^>]*\bx-model=["\']packageUserName["\'])(?=[^>]*\bplaceholder=["\']未设置，将使用全局默认用户资料["\'])[^>]*\/?>',
+        re.DOTALL,
+    )
+
+    assert package_character_input_pattern.search(template)
+    assert package_user_input_pattern.search(template)
+    assert not re.search(r'<textarea\b[^>]*\bx-model=["\']packageCharacterName["\']', template, re.DOTALL)
+    assert not re.search(r'<textarea\b[^>]*\bx-model=["\']packageUserName["\']', template, re.DOTALL)
+
+
 def test_beautify_grid_template_settings_workspace_keeps_global_preview_surface():
     template = read_project_file('templates/components/grid_beautify.html')
 

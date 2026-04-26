@@ -540,11 +540,12 @@
                 <div class="beautify-settings-form-grid">
                   <label class="beautify-settings-field">
                     <span>角色覆盖</span>
-                    <textarea
-                      class="beautify-settings-textarea"
+                    <input
+                      type="text"
+                      class="beautify-filter-input"
                       x-model="packageCharacterName"
                       placeholder="未设置，将使用全局默认角色资料"
-                    ></textarea>
+                    />
                     <div
                       class="beautify-empty-inline"
                       x-text="activePackage?.identity_overrides?.character?.avatar_file ? '当前角色头像已覆盖全局设置' : '未设置，将使用全局默认角色资料'"
@@ -570,11 +571,12 @@
                   </label>
                   <label class="beautify-settings-field">
                     <span>用户覆盖</span>
-                    <textarea
-                      class="beautify-settings-textarea"
+                    <input
+                      type="text"
+                      class="beautify-filter-input"
                       x-model="packageUserName"
                       placeholder="未设置，将使用全局默认用户资料"
-                    ></textarea>
+                    />
                     <div
                       class="beautify-empty-inline"
                       x-text="activePackage?.identity_overrides?.user?.avatar_file ? '当前用户头像已覆盖全局设置' : '未设置，将使用全局默认用户资料'"
