@@ -268,6 +268,16 @@ def test_beautify_grid_template_uses_isolated_preview_host_instead_of_inline_pre
     assert 'customCssMarkup()' not in template
 
 
+def test_beautify_grid_template_places_scene_switcher_in_host_stage_markup_only():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert 'beautify-preview-scene-switcher' in template
+    assert '@click="setPreviewScene(' in template or "@click='setPreviewScene(" in template
+    assert "x-for=\"scene in previewScenes\"" in template or "x-for='scene in previewScenes'" in template
+    assert 'data-preview-scene-button' not in template
+    assert 'data-preview-scene-template' not in template
+
+
 def test_beautify_grid_template_uses_button_driven_mobile_preview_entries():
     template = read_project_file('templates/components/grid_beautify.html')
 
@@ -447,6 +457,21 @@ def test_beautify_layout_css_styles_isolated_preview_host_shell():
     assert 'max-width: 420px;' in mobile_shell_block
     assert '.beautify-preview-chat-window {' not in css
     assert '.beautify-preview-inputbar {' not in css
+
+
+def test_beautify_layout_css_styles_host_owned_scene_switcher_surface():
+    css = read_project_file('static/css/modules/view-beautify.css')
+    switcher_block = extract_css_block_for_selector(css, '.beautify-preview-scene-switcher')
+    button_block = extract_css_block_for_selector(css, '.beautify-preview-scene-btn')
+    active_button_block = extract_css_block_for_selector(css, '.beautify-preview-scene-btn.is-active')
+
+    assert_has_css_declaration(switcher_block, 'display', 'flex')
+    assert_has_css_declaration(switcher_block, 'border', 'var(--border-light)')
+    assert_has_css_declaration(switcher_block, 'background', 'var(--beautify-card-surface)')
+    assert_has_css_declaration(button_block, 'text-align', 'left')
+    assert_has_css_declaration(button_block, 'background', 'transparent')
+    assert_has_css_declaration(active_button_block, 'border-color', 'var(--beautify-active-border)')
+    assert_has_css_declaration(active_button_block, 'background', 'var(--beautify-active-bg)')
 
 
 def test_beautify_layout_css_uses_theme_driven_stage_cards_and_active_states():

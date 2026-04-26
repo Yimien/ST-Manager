@@ -1,3 +1,35 @@
+import { buildVendorFirstPreviewShell } from '../../vendor/sillytavern/preview-shell.js';
+
+export const DEFAULT_PREVIEW_SCENE_ID = 'daily';
+
+export const PREVIEW_SCENE_OPTIONS = [
+  {
+    id: 'daily',
+    label: '日常陪伴',
+    description: '轻松自然的日常聊天',
+  },
+  {
+    id: 'flirty',
+    label: '暧昧互动',
+    description: '更柔和的情绪和停顿',
+  },
+  {
+    id: 'lore',
+    label: '设定说明',
+    description: '长段落和说明性文本',
+  },
+  {
+    id: 'story',
+    label: '剧情推进',
+    description: '带动作与状态变化的连续片段',
+  },
+  {
+    id: 'system',
+    label: '系统提示',
+    description: '系统通知与规则提醒',
+  },
+];
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -161,38 +193,6 @@ function serializeCssVars(vars) {
     .join(";");
 }
 
-function buildTopBarAction(label, panelTarget, icon) {
-  const iconMap = {
-    settings: {
-      iconClass: "fa-solid fa-sliders fa-fw",
-      iconFallback: "≡",
-      id: "leftNavDrawerIcon",
-    },
-    formatting: {
-      iconClass: "fa-solid fa-font fa-fw",
-      iconFallback: "Aa",
-      id: "formattingDrawerIcon",
-    },
-    character: {
-      iconClass: "fa-solid fa-address-card fa-fw",
-      iconFallback: "⋯",
-      id: "rightNavDrawerIcon",
-    },
-  };
-  const iconConfig = iconMap[panelTarget] || iconMap.settings;
-  return `
-    <button
-      type="button"
-      id="${iconConfig.id}"
-      class="drawer-icon closedIcon st-preview-topbar-action ${iconConfig.iconClass}"
-      data-panel-target="${escapeHtml(panelTarget)}"
-      data-icon-fallback="${escapeHtml(iconConfig.iconFallback)}"
-      aria-pressed="false"
-      title="${escapeHtml(label)}"
-    ></button>
-  `;
-}
-
 function buildTopBarStaticAction(label, action, iconClass, iconFallback) {
   return `
     <button
@@ -322,128 +322,128 @@ function buildMessage({
   `;
 }
 
-const DEFAULT_PREVIEW_SCENE_ID = "daily";
-
 function buildPreviewScenes(normalizedPlatform = "pc") {
-  return [
-    {
-      id: "daily",
-      label: "日常陪伴",
-      description: "轻松自然的日常聊天",
+  return PREVIEW_SCENE_OPTIONS.map((scene) => {
+    if (scene.id === 'daily') {
+      return {
+        ...scene,
+        messages: [
+          {
+            role: 'system',
+            mesId: '1',
+            timestamp: 'System',
+            tokenCounter: 'meta',
+            extraClass: 'smallSysMes',
+            messageHtml:
+              '<p>当前预览使用内置聊天场景，便于观察主题在真实聊天节奏里的表现。</p><p><a href="#" data-preview-link="disabled">Example link</a></p><hr>',
+          },
+          {
+            role: 'character',
+            mesId: '2',
+            timestamp: '08:14',
+            tokenCounter: '318 tok',
+            includeReasoning: true,
+            messageHtml:
+              '<p><strong>粗体</strong>、<em>斜体</em>、<u>下划线</u> 和 <code>inline code</code>。</p><p>你总算忙完啦？先坐下缓一缓，我把灯调暗一点。</p><blockquote>Welcome back. Theme variables now drive this isolated preview.</blockquote>',
+          },
+          {
+            role: 'user',
+            mesId: '3',
+            timestamp: '08:15',
+            tokenCounter: '142 tok',
+            extraClass: 'last_mes',
+            messageHtml: `<p>列表、链接和代码块也需要稳定呈现。</p><ul><li>Keep the message shell realistic.</li><li>Make rich text and code samples visible.</li></ul><pre><code>const preview = buildBeautifyPreviewDocument({ platform: '${escapeHtml(normalizedPlatform)}' });</code></pre>`,
+          },
+        ],
+      };
+    }
+
+    if (scene.id === 'flirty') {
+      return {
+        ...scene,
+        messages: [
+          {
+            role: 'character',
+            mesId: '1',
+            timestamp: '22:06',
+            tokenCounter: '204 tok',
+            messageHtml:
+              '<p>你刚刚那句“只看一眼消息”听起来，可不像真的只看一眼。</p>',
+          },
+          {
+            role: 'user',
+            mesId: '2',
+            timestamp: '22:06',
+            tokenCounter: '72 tok',
+            messageHtml: '<p>被你发现了。我本来只是想确认你睡了没。</p>',
+          },
+        ],
+      };
+    }
+
+    if (scene.id === 'lore') {
+      return {
+        ...scene,
+        messages: [
+          {
+            role: 'user',
+            mesId: '1',
+            timestamp: '19:24',
+            tokenCounter: '104 tok',
+            messageHtml: '<p>你之前提过“潮灯湾”，那地方到底是什么样？</p>',
+          },
+          {
+            role: 'character',
+            mesId: '2',
+            timestamp: '19:25',
+            tokenCounter: '352 tok',
+            messageHtml:
+              '<p>港口白天看着安静，到了夜里，栈桥边会亮起成串的冷色灯。</p>',
+          },
+        ],
+      };
+    }
+
+    if (scene.id === 'story') {
+      return {
+        ...scene,
+        messages: [
+          {
+            role: 'system',
+            mesId: '1',
+            timestamp: 'System',
+            tokenCounter: 'meta',
+            extraClass: 'smallSysMes',
+            messageHtml:
+              '<p>场景预览：轻量剧情推进，用于观察多轮叙事节奏。</p><hr>',
+          },
+          {
+            role: 'character',
+            mesId: '2',
+            timestamp: '23:11',
+            tokenCounter: '180 tok',
+            messageHtml:
+              '<p>巷口的风把纸灯吹得一晃一晃的，我抬手替你挡了下火。</p>',
+          },
+        ],
+      };
+    }
+
+    return {
+      ...scene,
       messages: [
         {
-          role: "system",
-          mesId: "1",
-          timestamp: "System",
-          tokenCounter: "meta",
-          extraClass: "smallSysMes",
+          role: 'system',
+          mesId: '1',
+          timestamp: 'System',
+          tokenCounter: 'meta',
+          extraClass: 'smallSysMes',
           messageHtml:
-            '<p>当前预览使用内置聊天场景，便于观察主题在真实聊天节奏里的表现。</p><p><a href="#" data-preview-link="disabled">Example link</a></p><hr>',
-        },
-        {
-          role: "character",
-          mesId: "2",
-          timestamp: "08:14",
-          tokenCounter: "318 tok",
-          includeReasoning: true,
-          messageHtml:
-            "<p><strong>粗体</strong>、<em>斜体</em>、<u>下划线</u> 和 <code>inline code</code>。</p><p>你总算忙完啦？先坐下缓一缓，我把灯调暗一点。</p><blockquote>Welcome back. Theme variables now drive this isolated preview.</blockquote>",
-        },
-        {
-          role: "user",
-          mesId: "3",
-          timestamp: "08:15",
-          tokenCounter: "142 tok",
-          extraClass: "last_mes",
-          messageHtml: `<p>列表、链接和代码块也需要稳定呈现。</p><ul><li>Keep the message shell realistic.</li><li>Make rich text and code samples visible.</li></ul><pre><code>const preview = buildBeautifyPreviewDocument({ platform: '${escapeHtml(normalizedPlatform)}' });</code></pre>`,
+            '<p>系统消息、提示条和轻量说明也会通过相同的 ST 消息壳层渲染。</p>',
         },
       ],
-    },
-    {
-      id: "flirty",
-      label: "暧昧互动",
-      description: "更柔和的情绪和停顿",
-      messages: [
-        {
-          role: "character",
-          mesId: "1",
-          timestamp: "22:06",
-          tokenCounter: "204 tok",
-          messageHtml:
-            "<p>你刚刚那句“只看一眼消息”听起来，可不像真的只看一眼。</p>",
-        },
-        {
-          role: "user",
-          mesId: "2",
-          timestamp: "22:06",
-          tokenCounter: "72 tok",
-          messageHtml: "<p>被你发现了。我本来只是想确认你睡了没。</p>",
-        },
-      ],
-    },
-    {
-      id: "lore",
-      label: "设定说明",
-      description: "长段落和说明性文本",
-      messages: [
-        {
-          role: "user",
-          mesId: "1",
-          timestamp: "19:24",
-          tokenCounter: "104 tok",
-          messageHtml: "<p>你之前提过“潮灯湾”，那地方到底是什么样？</p>",
-        },
-        {
-          role: "character",
-          mesId: "2",
-          timestamp: "19:25",
-          tokenCounter: "352 tok",
-          messageHtml:
-            "<p>港口白天看着安静，到了夜里，栈桥边会亮起成串的冷色灯。</p>",
-        },
-      ],
-    },
-    {
-      id: "story",
-      label: "剧情推进",
-      description: "带动作与状态变化的连续片段",
-      messages: [
-        {
-          role: "system",
-          mesId: "1",
-          timestamp: "System",
-          tokenCounter: "meta",
-          extraClass: "smallSysMes",
-          messageHtml:
-            "<p>场景预览：轻量剧情推进，用于观察多轮叙事节奏。</p><hr>",
-        },
-        {
-          role: "character",
-          mesId: "2",
-          timestamp: "23:11",
-          tokenCounter: "180 tok",
-          messageHtml:
-            "<p>巷口的风把纸灯吹得一晃一晃的，我抬手替你挡了下火。</p>",
-        },
-      ],
-    },
-    {
-      id: "system",
-      label: "系统提示",
-      description: "系统通知与规则提醒",
-      messages: [
-        {
-          role: "system",
-          mesId: "1",
-          timestamp: "System",
-          tokenCounter: "meta",
-          extraClass: "smallSysMes",
-          messageHtml:
-            "<p>系统消息、提示条和轻量说明也会通过相同的 ST 消息壳层渲染。</p>",
-        },
-      ],
-    },
-  ];
+    };
+  });
 }
 
 function buildPreviewSceneMessage(message, previewIdentities) {
@@ -480,46 +480,85 @@ function buildPreviewSceneMessages(scene, previewIdentities) {
     .join("");
 }
 
-function buildPreviewSceneSwitcher(scenes) {
+function buildSettingsDrawerPreviewMarkup() {
   return `
-    <div class="st-preview-scene-switcher" data-preview-scene-switcher>
-      ${scenes
-        .map(
-          (scene) => `
-            <button
-              type="button"
-              class="st-preview-scene-button${scene.id === DEFAULT_PREVIEW_SCENE_ID ? " is-active" : ""}"
-              data-preview-scene-button="${escapeHtml(scene.id)}"
-              aria-pressed="${scene.id === DEFAULT_PREVIEW_SCENE_ID ? "true" : "false"}"
-            >${escapeHtml(scene.label)}</button>
-          `,
-        )
-        .join("")}
+    <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open">
+      <div class="right_menu_button"></div>
+      <div class="unchecked fa-solid fa-unlock right_menu_button"></div>
+      <div class="checked fa-solid fa-lock right_menu_button"></div>
+    </div>
+    <div id="clickSlidersTips" class="toggle-description">Click slider numbers to input manually.</div>
+    <a class="topRightInset notes-link" href="#" title="Documentation on sampling parameters.">
+      <span class="note-link-span fa-solid fa-circle-question"></span>
+    </a>
+    <div class="options-content" id="table_drawer_content">
+      <div class="margin0 title_restorable standoutHeader"><strong><span>Chat Completion Presets</span></strong></div>
+      <div class="flex-container flexNoGap">
+        <select id="settings_preset" class="flex1 text_pole"><option>Default</option></select>
+        <div class="flex-container marginLeft5 gap3px"><div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-save"></i></div></div>
+      </div>
+      <div class="online_status"><div class="online_status_indicator"></div><div class="online_status_text">Connected</div></div>
+      <div class="inline-drawer wide100p">
+        <div class="inline-drawer-toggle inline-drawer-header"><div class="inline-drawer-icon down"></div><b>Quick Prompts Edit</b><div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div></div>
+        <div class="inline-drawer-content"><textarea id="main_prompt_quick_edit_textarea" class="text_pole textarea_compact" rows="3">{{main}}</textarea></div>
+      </div>
+      <label class="st-preview-setting-row"><span>Blur Strength</span><input type="range" min="0" max="30" value="10"></label>
     </div>
   `;
 }
 
-function buildPreviewSceneTemplates(scenes, previewIdentities) {
+function buildFormattingDrawerPreviewMarkup() {
   return `
-    <div class="st-preview-scene-templates" hidden>
-      ${scenes
-        .map(
-          (scene) => `
-            <template data-preview-scene-template="${escapeHtml(scene.id)}" data-preview-scene-description="${escapeHtml(scene.description || "")}">${buildPreviewSceneMessages(scene, previewIdentities)}</template>
-          `,
-        )
-        .join("")}
+    <div class="flex-container alignItemsBaseline">
+      <h3 class="margin0 flex1 flex-container alignItemsBaseline"><span class="standoutHeader">Advanced Formatting</span></h3>
+      <div class="flex-container"><div id="af_master_export" class="menu_button menu_button_icon" title="Export Advanced Formatting settings"><i class="fa-solid fa-file-export"></i><span>Export</span></div></div>
+    </div>
+    <div id="advanced-formatting-cc-notice" class="info-block warning"><i class="fa-solid fa-triangle-exclamation"></i><span>Preview-only formatting surfaces.</span></div>
+    <div id="ContextSettings" class="flex-container flexNoGap flexFlowColumn flex1">
+      <select id="context_presets" class="flex1 text_pole"><option>Default Context</option></select>
+      <textarea id="context_story_string" class="text_pole textarea_compact" rows="3">{{system}}</textarea>
+      <textarea id="context_chat_start" class="text_pole textarea_compact" rows="2">### Response:</textarea>
+    </div>
+    <div id="InstructSettingsColumn" class="flex-container flexNoGap flexFlowColumn flex1">
+      <select id="instruct_presets" class="flex1 text_pole"><option>Roleplay Default</option></select>
+      <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" placeholder="e.g. /llama(-)?[3|3.1]/i">
+      <label for="instruct_wrap" class="checkbox_label"><input id="instruct_wrap" type="checkbox" checked><small>Wrap Sequences with Newline</small></label>
     </div>
   `;
 }
 
-function buildPreviewWorkbenchMarkup(scenes, defaultPreviewScene) {
+function buildCharacterDrawerPreviewMarkup(previewIdentities) {
   return `
-    <div class="st-preview-workbench">
-      ${buildPreviewSceneSwitcher(scenes)}
-      <div class="st-preview-scene-description" data-preview-scene-description>${escapeHtml(defaultPreviewScene.description || "")}</div>
+    <div id="CharListButtonAndHotSwaps" class="flex-container flexnowrap"><div class="flexFlowColumn flex-container"><div class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters"></div></div><div id="HotSwapWrapper" class="alignitemscenter flex-container margin0auto wide100p"><div class="hotswap avatars_inline scroll-reset-container expander"></div></div></div>
+    <div id="rm_PinAndTabs"><div id="right-nav-panel-tabs"><div id="rm_button_selected_ch"><h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2></div></div></div>
+    <div class="st-preview-character-card">
+      <div class="avatar-container selected"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div></div>
+      <div class="st-preview-character-copy">
+        <div class="ch_name"><span class="name_text">${escapeHtml(previewIdentities.character.name)}</span></div>
+        <div id="result_info" class="flex-container" style="display: none;"><div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference."><div><strong id="result_info_total_tokens" title="Total tokens" data-i18n="[title]Total tokens"><span data-i18n="Calculating...">Calculating...</span></strong>&nbsp;<span data-i18n="Tokens">Tokens</span></div><div><small title="Permanent tokens" data-i18n="[title]Permanent tokens">(<span id="result_info_permanent_tokens"></span>&nbsp;<span data-i18n="Permanent">Permanent</span>)</small></div></div><a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token &#39;Limits&#39;" data-i18n="[title]About Token &#39;Limits&#39;"></a><i class="fa-solid fa-ranking-star right_menu_button rm_stats_button" title="Click for stats!" data-i18n="[title]Click for stats!"></i><i id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" title="Toggle character info panel" data-i18n="[title]Toggle character info panel"></i></div>
+        <div class="character_select" id="rm_button_selected_ch"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div><div class="character_name_block"><h2>${escapeHtml(previewIdentities.character.name)}</h2><div class="ch_additional_info">默认演示角色</div></div></div>
+        <div class="st-preview-character-tags">fantasy · guide · preview persona</div>
+      </div>
     </div>
   `;
+}
+
+const VENDORED_ST_STYLESHEETS = [
+  "/static/vendor/sillytavern/style.css",
+  "/static/vendor/sillytavern/css/fontawesome.min.css",
+  "/static/vendor/sillytavern/css/solid.min.css",
+  "/static/vendor/sillytavern/css/brands.min.css",
+];
+
+function buildVendoredStylesheetMarkup(platform = "pc") {
+  const hrefs = [...VENDORED_ST_STYLESHEETS];
+  if (platform === "mobile") {
+    hrefs.push("/static/vendor/sillytavern/css/mobile-styles.css");
+  }
+
+  return hrefs
+    .map((href) => `    <link rel="stylesheet" href="${href}" />`)
+    .join("\n");
 }
 
 function buildPreviewBehaviorScript() {
@@ -529,12 +568,8 @@ function buildPreviewBehaviorScript() {
       if (!root) return;
       const buttons = Array.from(document.querySelectorAll('[data-panel-target]'));
       const staticButtons = Array.from(document.querySelectorAll('[data-preview-static-action]'));
-      const panels = Array.from(document.querySelectorAll('[data-panel-surface]'));
-      const shells = Array.from(document.querySelectorAll('[data-panel-shell]'));
+      const panels = Array.from(document.querySelectorAll('.drawer-content[data-panel-surface]'));
       const drawers = Array.from(document.querySelectorAll('.inline-drawer'));
-      const sceneButtons = Array.from(document.querySelectorAll('[data-preview-scene-button]'));
-      const chat = document.querySelector('[data-preview-chat-messages]') || document.querySelector('#chat');
-      const description = document.querySelector('[data-preview-scene-description]');
 
       const toggleInlineDrawer = (drawer, expand = true) => {
         const icon = drawer.querySelector(':scope > .inline-drawer-header .inline-drawer-icon');
@@ -571,12 +606,12 @@ function buildPreviewBehaviorScript() {
           panel.classList.toggle('openDrawer', isActive);
           panel.classList.toggle('closedDrawer', !isActive);
           panel.classList.toggle('open', isActive);
-        });
-        shells.forEach((shell) => {
-          const isActive = shell.dataset.panelShell === activePanel;
-          shell.classList.toggle('openDrawer', isActive);
-          shell.classList.toggle('closedDrawer', !isActive);
-          shell.classList.toggle('open', isActive);
+          const drawer = panel.closest('.drawer');
+          if (drawer) {
+            drawer.classList.toggle('openDrawer', isActive);
+            drawer.classList.toggle('closedDrawer', !isActive);
+            drawer.classList.toggle('open', isActive);
+          }
         });
         drawers.forEach((drawer) => {
           const isActive = activePanel === 'settings';
@@ -606,33 +641,6 @@ function buildPreviewBehaviorScript() {
         chat.scrollTop = chat.scrollHeight;
       };
 
-      const renderScene = (sceneId) => {
-        if (!chat) {
-          return;
-        }
-
-        const template = document.querySelector('[data-preview-scene-template="' + sceneId + '"]');
-        if (!template) {
-          return;
-        }
-
-        root.dataset.activeScene = sceneId;
-        chat.innerHTML = template.innerHTML;
-
-        if (description) {
-          description.textContent = template.dataset.previewSceneDescription || '';
-        }
-
-        sceneButtons.forEach((button) => {
-          const isActive = button.dataset.previewSceneButton === sceneId;
-          button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-          button.classList.toggle('is-active', isActive);
-        });
-
-        bindPreviewLinks();
-        window.requestAnimationFrame(scrollChatToBottom);
-      };
-
       buttons.forEach((button) => {
         button.addEventListener('click', () => {
           const nextPanel = button.dataset.panelTarget || 'none';
@@ -660,20 +668,8 @@ function buildPreviewBehaviorScript() {
         });
       });
 
-      sceneButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          renderScene(button.dataset.previewSceneButton);
-        });
-      });
-
       sync(root.dataset.activePanel || 'none');
       bindPreviewLinks();
-      const chatRoot = document.querySelector('#chat');
-      const defaultScene =
-        root.dataset.activeScene ||
-        root.dataset.defaultScene ||
-        ((chatRoot && chatRoot.dataset && chatRoot.dataset.previewDefaultScene) || 'daily');
-      renderScene(defaultScene);
       window.requestAnimationFrame(scrollChatToBottom);
       window.addEventListener('load', scrollChatToBottom);
     })();
@@ -724,11 +720,13 @@ export function buildBeautifyPreviewSampleMarkup(
   platform = "pc",
   theme = {},
   identities = {},
+  activeScene = "",
 ) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
   const previewIdentities = buildPreviewIdentities(identities);
   const previewScenes = buildPreviewScenes(normalizedPlatform);
-  const defaultPreviewScene =
+  const selectedScene =
+    previewScenes.find((scene) => scene.id === activeScene) ||
     previewScenes.find((scene) => scene.id === DEFAULT_PREVIEW_SCENE_ID) ||
     previewScenes[0];
   const sendFormClasses = ["no-connection"];
@@ -742,395 +740,35 @@ export function buildBeautifyPreviewSampleMarkup(
     : "";
   const noConnectionText = "Not connected to API!";
   const connectedText = "Type a message, or /? for help";
-  const topBarMarkup = `
-    <div id="top-bar">
-      <div class="st-preview-topbar-strip">
-        <div class="st-preview-topbar-section st-preview-topbar-section-left">
-          ${buildTopBarStaticAction("Menu / Options", "menu", "fa-solid fa-bars fa-fw", "Menu")}
-          ${buildTopBarAction("AI Response Configuration", "settings")}
-          ${buildTopBarStaticAction("API Connections", "api", "fa-solid fa-plug fa-fw", "API")}
-          ${buildTopBarStaticAction("World Info", "world-info", "fa-solid fa-globe fa-fw", "WI")}
-          ${buildTopBarAction("AI Response Formatting", "formatting")}
-          ${buildTopBarStaticAction("Extensions", "extensions", "fa-solid fa-puzzle-piece fa-fw", "Ext")}
-          ${buildTopBarAction("Character Management", "character")}
-          ${buildTopBarStaticAction("Moving UI", "moving-ui", "fa-solid fa-up-down-left-right fa-fw", "Move")}
-          ${buildTopBarStaticAction("Notes", "notes", "fa-solid fa-notebook fa-fw", "Note")}
-        </div>
-      </div>
-    </div>
+  const topBarStaticActionsMarkup = `
+    ${buildTopBarStaticAction("Menu / Options", "menu", "fa-solid fa-bars fa-fw", "Menu")}
+    ${buildTopBarStaticAction("API Connections", "api", "fa-solid fa-plug fa-fw", "API")}
+    ${buildTopBarStaticAction("World Info", "world-info", "fa-solid fa-globe fa-fw", "WI")}
+    ${buildTopBarStaticAction("Extensions", "extensions", "fa-solid fa-puzzle-piece fa-fw", "Ext")}
+    ${buildTopBarStaticAction("Moving UI", "moving-ui", "fa-solid fa-up-down-left-right fa-fw", "Move")}
+    ${buildTopBarStaticAction("Notes", "notes", "fa-solid fa-notebook fa-fw", "Note")}
   `;
-  const topSettingsMarkup = `
-    <div id="top-settings-holder">
-      <div class="drawer-content fillLeft closedDrawer left-drawer" id="left-nav-panel" data-panel-shell="settings">
-        <div id="left-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
-        <div class="scrollableInner">
-          <div class="drawer-content st-preview-drawer-panel st-preview-settings-drawer" style="display:none !important"></div>
-          <div class="st-preview-panel-body st-preview-drawer-panel st-preview-settings-drawer" data-panel-surface="settings">
-            <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open">
-              <div class="right_menu_button"></div>
-              <div class="unchecked fa-solid fa-unlock right_menu_button"></div>
-              <div class="checked fa-solid fa-lock right_menu_button"></div>
-            </div>
-            <div id="clickSlidersTips" class="toggle-description">Click slider numbers to input manually.</div>
-            <a class="topRightInset" href="#"></a>
-            <span class="note-link-span"></span>
-            <a class="topRightInset notes-link" href="#" title="Documentation on sampling parameters.">
-              <span class="note-link-span fa-solid fa-circle-question"></span>
-            </a>
-            <div class="inline-drawer-header">
-              <span class="standoutHeader">Preview Settings</span>
-              <span>Panel</span>
-            </div>
-            <div class="options-content" id="table_drawer_content">
-              <div class="margin0 title_restorable standoutHeader">
-                <strong><span>Chat Completion Presets</span></strong>
-                <div class="flex-container gap3px">
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-file-import"></i></div>
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-file-export"></i></div>
-                </div>
-              </div>
-              <div class="flex-container flexNoGap">
-                <select id="settings_preset" class="flex1 text_pole"><option>Default</option></select>
-                <div class="flex-container marginLeft5 gap3px">
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-save"></i></div>
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-pencil"></i></div>
-                </div>
-              </div>
-              <div class="range-block-title title_restorable">
-                <span>Secondary Preset Block</span>
-              </div>
-              <div class="flex-container flexNoGap">
-                <select id="settings_preset_openai" class="flex1 text_pole"><option>Chat Completion</option></select>
-                <div class="flex-container marginLeft5 gap3px">
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-file-circle-plus"></i></div>
-                  <div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-recycle"></i></div>
-                </div>
-              </div>
-              <label class="checkbox_label"><input type="checkbox" checked><span>Stream responses</span></label>
-              <div class="neutral_warning">For preview only: these controls mirror ST-like form surfaces.</div>
-              <div class="online_status">
-                <div class="online_status_indicator"></div>
-                <div class="online_status_text">Connected</div>
-              </div>
-              <div class="range-block-title openai_restorable">
-                <span>World Info format template</span>
-                <div id="wi_format_restore" class="right_menu_button"><div class="fa-solid fa-clock-rotate-left"></div></div>
-              </div>
-              <div class="wide100p">
-                <textarea id="wi_format_textarea" class="text_pole textarea_compact" rows="3">{{wi}}</textarea>
-              </div>
-              <div class="inline-drawer wide100p">
-                <div class="inline-drawer-toggle inline-drawer-header">
-                  <div class="inline-drawer-icon down"></div>
-                  <b>Quick Prompts Edit</b>
-                  <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                </div>
-                <div class="inline-drawer-content">
-                  <div class="range-block m-t-1">
-                    <div class="justifyLeft">Main</div>
-                    <div class="wide100p">
-                      <textarea id="main_prompt_quick_edit_textarea" class="text_pole textarea_compact" rows="4">{{main}}</textarea>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <label class="st-preview-setting-row"><span>Blur Strength</span><input type="range" min="0" max="30" value="10"></label>
-              <label class="st-preview-setting-row"><span>Chat Width</span><select><option>Balanced</option></select></label>
-              <label class="st-preview-setting-row"><span>Theme Surface</span><input type="text" value="Glass / paper layered shell"></label>
-            </div>
-          </div>
-          <div class="drawer-content fillLeft closedDrawer left-drawer" id="user-settings-drawer"></div>
-          <div class="drawer-content fillLeft closedDrawer left-drawer" id="advanced-settings-drawer"></div>
-          <div class="drawer-content fillLeft closedDrawer left-drawer" id="extensions-settings-drawer"></div>
-        </div>
-      </div>
-      <div class="drawer-content fillLeft closedDrawer left-drawer" id="advanced-formatting-button" data-panel-shell="formatting">
-        <div class="scrollableInner">
-          <div class="drawer-content st-preview-drawer-panel st-preview-formatting-drawer" style="display:none !important"></div>
-          <div class="st-preview-panel-body st-preview-drawer-panel st-preview-formatting-drawer" id="AdvancedFormatting" data-panel-surface="formatting">
-            <div class="flex-container alignItemsBaseline">
-              <h3 class="margin0 flex1 flex-container alignItemsBaseline">
-                <span class="standoutHeader">Advanced Formatting</span>
-                <a class="notes-link" href="#" title="Documentation on advanced formatting.">
-                  <span class="note-link-span fa-solid fa-circle-question"></span>
-                </a>
-              </h3>
-              <div class="flex-container">
-                <div id="af_master_import" class="menu_button menu_button_icon" title="Import Advanced Formatting settings">
-                  <i class="fa-solid fa-file-import"></i>
-                  <span>Master Import</span>
-                </div>
-                <div id="af_master_export" class="menu_button menu_button_icon" title="Export Advanced Formatting settings">
-                  <i class="fa-solid fa-file-export"></i>
-                  <span>Master Export</span>
-                </div>
-              </div>
-            </div>
-            <div id="advanced-formatting-cc-notice" class="info-block warning">
-              <i class="fa-solid fa-triangle-exclamation"></i>
-              <span>Grayed-out options have no effect when Chat Completion API is used.</span>
-            </div>
-            <div class="flex-container spaceEvenly">
-              <div id="ContextSettings" class="flex-container flexNoGap flexFlowColumn flex1">
-                <h4 class="standoutHeader title_restorable" data-cc-null>
-                  <div>
-                    <span>Context Template</span>
-                  </div>
-                  <div class="flex-container">
-                    <label for="context_derived" class="checkbox_label flex1" title="Derive from Model Metadata, if possible.">
-                      <input id="context_derived" type="checkbox" checked style="display:none;">
-                      <small><i class="fa-solid fa-bolt menu_button margin0"></i></small>
-                    </label>
-                  </div>
-                </h4>
-                <div class="flex-container flexNoGap">
-                  <select id="context_presets" class="flex1 text_pole"><option>Default Context</option></select>
-                  <div class="flex-container justifyCenter gap3px">
-                    <div class="menu_button fa-solid fa-save" title="Update current template"></div>
-                    <div class="menu_button fa-solid fa-pencil" title="Rename current template"></div>
-                    <div class="menu_button fa-solid fa-file-circle-plus" title="Save template as"></div>
-                    <div class="menu_button fa-solid fa-recycle" title="Restore current template"></div>
-                  </div>
-                </div>
-                <div class="wide100p">
-                  <label for="context_story_string" class="flex-container justifySpaceBetween alignitemscenter">
-                    <small>Story String</small>
-                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" title="Expand the editor"></i>
-                  </label>
-                  <textarea id="context_story_string" class="text_pole textarea_compact" rows="3">{{system}}</textarea>
-                </div>
-                <div class="flex-container flexFlowColumn">
-                  <div id="context_story_string_position_block">
-                    <label for="context_story_string_position"><small>Position:</small></label>
-                    <select id="context_story_string_position" class="text_pole">
-                      <option>Default (top of context)</option>
-                    </select>
-                  </div>
-                  <div id="context_story_string_inject_settings" class="flex-container gap3px">
-                    <div class="flex1">
-                      <label for="context_story_string_depth"><small>Depth:</small></label>
-                      <input type="number" id="context_story_string_depth" class="text_pole" min="0" max="99" value="4">
-                    </div>
-                    <div class="flex1">
-                      <label for="context_story_string_role"><small>Role:</small></label>
-                      <select id="context_story_string_role" class="text_pole"><option>System</option></select>
-                    </div>
-                  </div>
-                </div>
-                <div class="flex-container gap3px">
-                  <div class="flex1">
-                    <label for="context_example_separator"><small>Example Separator</small></label>
-                    <textarea id="context_example_separator" class="text_pole textarea_compact" rows="2">***</textarea>
-                  </div>
-                  <div class="flex1">
-                    <label for="context_chat_start"><small>Chat Start</small></label>
-                    <textarea id="context_chat_start" class="text_pole textarea_compact" rows="2">### Response:</textarea>
-                  </div>
-                </div>
-              </div>
-              <div id="InstructSettingsColumn" class="flex-container flexNoGap flexFlowColumn flex1">
-                <h4 class="standoutHeader title_restorable justifySpaceBetween">
-                  <div class="flex-container">
-                    <span>Instruct Template</span>
-                  </div>
-                  <div class="flex-container gap3px">
-                    <label for="instruct_derived" class="checkbox_label flex1" title="Derive from Model Metadata, if possible.">
-                      <input id="instruct_derived" type="checkbox" style="display:none;">
-                      <small><i class="fa-solid fa-bolt menu_button margin0"></i></small>
-                    </label>
-                    <label for="instruct_bind_to_context" class="checkbox_label flex1" title="Bind to Context">
-                      <input id="instruct_bind_to_context" type="checkbox" style="display:none;">
-                      <small><i class="fa-solid fa-link menu_button margin0"></i></small>
-                    </label>
-                    <label id="instruct_enabled_label" for="instruct_enabled" class="checkbox_label flex1" title="Enable Instruct Mode">
-                      <input id="instruct_enabled" type="checkbox" checked style="display:none;">
-                      <small><i class="fa-solid fa-power-off menu_button togglable margin0"></i></small>
-                    </label>
-                  </div>
-                </h4>
-                <div class="flex-container flexNoGap">
-                  <select id="instruct_presets" class="flex1 text_pole"><option>Roleplay Default</option></select>
-                  <div class="flex-container justifyCenter gap3px">
-                    <div class="menu_button fa-solid fa-save" title="Update current template"></div>
-                    <div class="menu_button fa-solid fa-pencil" title="Rename current template"></div>
-                    <div class="menu_button fa-solid fa-file-circle-plus" title="Save template as"></div>
-                    <div class="menu_button fa-solid fa-recycle" title="Restore current template"></div>
-                  </div>
-                </div>
-                <div>
-                  <label for="instruct_activation_regex"><small>Activation Regex</small></label>
-                  <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" placeholder="e.g. /llama(-)?[3|3.1]/i">
-                </div>
-                <div>
-                  <label for="instruct_wrap" class="checkbox_label"><input id="instruct_wrap" type="checkbox" checked><small>Wrap Sequences with Newline</small></label>
-                  <label for="instruct_macro" class="checkbox_label"><input id="instruct_macro" type="checkbox" checked><small>Replace Macro in Sequences</small></label>
-                  <label for="instruct_sequences_as_stop_strings" class="checkbox_label"><input id="instruct_sequences_as_stop_strings" type="checkbox"><small>Sequences as Stop Strings</small></label>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="drawer-content fillRight closedDrawer right-drawer" id="right-nav-panel" data-panel-shell="character">
-        <div id="right-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
-        <div id="CharListButtonAndHotSwaps" class="flex-container flexnowrap">
-          <div class="flexFlowColumn flex-container">
-            <div id="rm_button_panel_pin_div" class="alignitemsflexstart" title="Locked = Character Management panel will stay open">
-              <label for="rm_button_panel_pin">
-                <div class="fa-solid unchecked fa-unlock right_menu_button"></div>
-                <div class="fa-solid checked fa-lock right_menu_button"></div>
-              </label>
-            </div>
-            <div class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters"></div>
-          </div>
-          <div id="HotSwapWrapper" class="alignitemscenter flex-container margin0auto wide100p">
-            <div class="hotswap avatars_inline scroll-reset-container expander"></div>
-          </div>
-        </div>
-        <div id="rm_PinAndTabs">
-          <div id="right-nav-panel-tabs">
-            <div id="rm_button_selected_ch">
-              <h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2>
-            </div>
-            <div id="result_info" class="flex-container" style="display: none;">
-              <div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference.">
-                <div><strong id="result_info_total_tokens" title="Total tokens" data-i18n="[title]Total tokens"><span data-i18n="Calculating...">Calculating...</span></strong>&nbsp;<span data-i18n="Tokens">Tokens</span></div>
-                <div><small title="Permanent tokens" data-i18n="[title]Permanent tokens">(<span id="result_info_permanent_tokens"></span>&nbsp;<span data-i18n="Permanent">Permanent</span>)</small></div>
-              </div>
-              <a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token &#39;Limits&#39;" data-i18n="[title]About Token &#39;Limits&#39;"></a>
-              <i class="fa-solid fa-ranking-star right_menu_button rm_stats_button" title="Click for stats!" data-i18n="[title]Click for stats!"></i>
-              <i id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" title="Toggle character info panel" data-i18n="[title]Toggle character info panel"></i>
-            </div>
-          </div>
-        </div>
-        <div class="scrollableInner">
-          <div class="drawer-content st-preview-drawer-panel st-preview-character-panel" style="display:none !important"></div>
-          <div class="st-preview-panel-body st-preview-drawer-panel st-preview-character-panel" id="character_popup" data-panel-surface="character">
-            <div class="st-preview-character-card">
-              <div class="avatar-container selected">
-                <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
-              </div>
-              <div class="st-preview-character-copy">
-                <div class="ch_name"><span class="name_text">${escapeHtml(previewIdentities.character.name)}</span></div>
-                <div class="flex-container gap3px">
-                  <div class="menu_button_icon" title="Favorite"><i class="fa-solid fa-star"></i></div>
-                  <div class="menu_button_icon" title="Duplicate"><i class="fa-solid fa-copy"></i></div>
-                </div>
-                <div class="flex-container alignItemsBaseline">
-                  <a class="notes-link" href="#"><span class="note-link-span">?</span></a>
-                  <span>Persona metadata preview</span>
-                </div>
-                <div class="character_select" id="rm_button_selected_ch">
-                  <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
-                  <div class="character_name_block">
-                    <h2>${escapeHtml(previewIdentities.character.name)}</h2>
-                    <div class="ch_additional_info">默认演示角色</div>
-                  </div>
-                </div>
-                <div id="rm_print_characters_block">
-                  <div class="character_select_container">
-                    <div class="avatar-container selected">
-                      <div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div>
-                      <div class="character_name_block">
-                        <div class="ch_name">${escapeHtml(previewIdentities.character.name)}</div>
-                        <div class="ch_additional_info">Currently selected</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="character_select_container">
-                    <div class="avatar-container">
-                      <div class="avatar"></div>
-                      <div class="character_name_block">
-                        <div class="ch_name">Nova</div>
-                        <div class="ch_additional_info">Alternative preset shell</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="st-preview-character-tags">fantasy · guide · preview persona</div>
-                <textarea class="text_pole textarea_compact" rows="2">Character note preview</textarea>
-                <p>角色卡快速面板用于暴露更多主题表面，包括头像、名称、标签与简介容器。</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-  const workbenchMarkup = buildPreviewWorkbenchMarkup(
-    previewScenes,
-    defaultPreviewScene,
-  );
-  const chatMarkup = `
-    <div id="chat" data-preview-default-scene="${escapeHtml(defaultPreviewScene.id)}">
-      <div data-preview-chat-messages>
-        ${buildPreviewSceneMessages(defaultPreviewScene, previewIdentities)}
-      </div>
-    </div>
-    ${buildPreviewSceneTemplates(previewScenes, previewIdentities)}
-  `;
+  const settingsDrawerContentMarkup = buildSettingsDrawerPreviewMarkup();
+  const formattingDrawerContentMarkup = buildFormattingDrawerPreviewMarkup();
+  const characterDrawerContentMarkup = buildCharacterDrawerPreviewMarkup(previewIdentities);
+  const chatMarkup = buildPreviewSceneMessages(selectedScene, previewIdentities);
   const sendFormMarkup = `
-    <div id="form_sheld">
-      <div id="dialogue_del_mes">
-        <div id="dialogue_del_mes_ok" class="menu_button">Delete</div>
-        <div id="dialogue_del_mes_cancel" class="menu_button">Cancel</div>
-      </div>
-      <div id="send_form"${sendFormClassAttr}>
-        <form id="file_form" class="wide100p displayNone">
-          <div class="file_attached">
-            <input id="file_form_input" type="file" multiple hidden>
-            <input id="embed_file_input" type="file" multiple hidden>
-            <i class="fa-solid fa-file-alt"></i>
-            <span class="file_name">File Name</span>
-            <span class="file_size">File Size</span>
-            <button id="file_form_reset" type="reset" class="menu_button" title="Remove the file">
-              <i class="fa fa-times"></i>
-            </button>
-          </div>
-        </form>
-        <div id="nonQRFormItems">
-          <div id="leftSendForm" class="alignContentCenter">
-            <div id="options_button" class="fa-solid fa-bars interactable" data-icon-fallback="≡" aria-label="Options"></div>
-          </div>
-          <textarea id="send_textarea" name="text" class="mdHotkeys" data-i18n="[no_connection_text]${escapeHtml(noConnectionText)};[connected_text]${escapeHtml(connectedText)}" placeholder="${escapeHtml(noConnectionText)}" no_connection_text="${escapeHtml(noConnectionText)}" connected_text="${escapeHtml(connectedText)}" autocomplete="off"></textarea>
-          <div id="rightSendForm" class="alignContentCenter">
-            <div id="stscript_continue" title="Continue script execution" class="stscript_btn stscript_continue">
-              <i class="fa-solid fa-play"></i>
-            </div>
-            <div id="stscript_pause" title="Pause script execution" class="stscript_btn stscript_pause">
-              <i class="fa-solid fa-pause"></i>
-            </div>
-            <div id="stscript_stop" title="Abort script execution" class="stscript_btn stscript_stop">
-              <i class="fa-solid fa-stop"></i>
-            </div>
-            <div id="mes_stop" title="Abort request" class="mes_stop">
-              <i class="fa-solid fa-circle-stop"></i>
-            </div>
-            <div id="mes_impersonate" class="fa-solid fa-user-secret interactable displayNone" title="Ask AI to write your message for you" tabindex="0"></div>
-            <div id="mes_continue" class="fa-fw fa-solid fa-arrow-right interactable displayNone" title="Continue the last message" data-icon-fallback=">" aria-label="Continue"></div>
-            <div id="send_but" class="fa-solid fa-paper-plane interactable displayNone" title="Send a message" data-icon-fallback="➤" aria-label="Send"></div>
-          </div>
-        </div>
-      </div>
+    <div id="dialogue_del_mes"><div id="dialogue_del_mes_ok" class="menu_button">Delete</div><div id="dialogue_del_mes_cancel" class="menu_button">Cancel</div></div>
+    <div id="send_form"${sendFormClassAttr}>
+      <form id="file_form" class="wide100p displayNone"><div class="file_attached"><input id="file_form_input" type="file" multiple hidden><input id="embed_file_input" type="file" multiple hidden><i class="fa-solid fa-file-alt"></i><span class="file_name">File Name</span><span class="file_size">File Size</span><button id="file_form_reset" type="reset" class="menu_button" title="Remove the file"><i class="fa fa-times"></i></button></div></form>
+      <div id="nonQRFormItems"><div id="leftSendForm" class="alignContentCenter"><div id="options_button" class="fa-solid fa-bars interactable" data-icon-fallback="≡" aria-label="Options"></div></div><textarea id="send_textarea" name="text" class="mdHotkeys" data-i18n="[no_connection_text]${escapeHtml(noConnectionText)};[connected_text]${escapeHtml(connectedText)}" placeholder="${escapeHtml(noConnectionText)}" no_connection_text="${escapeHtml(noConnectionText)}" connected_text="${escapeHtml(connectedText)}" autocomplete="off"></textarea><div id="rightSendForm" class="alignContentCenter"><div id="stscript_continue" title="Continue script execution" class="stscript_btn stscript_continue"><i class="fa-solid fa-play"></i></div><div id="stscript_pause" title="Pause script execution" class="stscript_btn stscript_pause"><i class="fa-solid fa-pause"></i></div><div id="stscript_stop" title="Abort script execution" class="stscript_btn stscript_stop"><i class="fa-solid fa-stop"></i></div><div id="mes_stop" title="Abort request" class="mes_stop"><i class="fa-solid fa-circle-stop"></i></div><div id="mes_impersonate" class="fa-solid fa-user-secret interactable displayNone" title="Ask AI to write your message for you" tabindex="0"></div><div id="mes_continue" class="fa-fw fa-solid fa-arrow-right interactable displayNone" title="Continue the last message" data-icon-fallback=">" aria-label="Continue"></div><div id="send_but" class="fa-solid fa-paper-plane interactable displayNone" title="Send a message" data-icon-fallback="➤" aria-label="Send"></div></div></div>
     </div>
   `;
 
-  return `
-    <div class="st-preview-root" data-platform="${escapeHtml(normalizedPlatform)}" data-active-panel="none">
-      <div class="st-preview-wallpaper"></div>
-      <div class="st-preview-overlay"></div>
-      <div class="st-preview-shell">
-        ${topBarMarkup}
-        ${topSettingsMarkup}
-        ${workbenchMarkup}
-        <div id="sheld">
-          <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
-          ${chatMarkup}
-          ${sendFormMarkup}
-        </div>
-      </div>
-    </div>
-  `;
+  return buildVendorFirstPreviewShell({
+    activeSceneId: escapeHtml(selectedScene.id),
+    topBarStaticActionsMarkup,
+    settingsDrawerContentMarkup,
+    formattingDrawerContentMarkup,
+    characterDrawerContentMarkup,
+    chatMarkup,
+    sendFormMarkup,
+  });
 }
 
 export function buildBeautifyPreviewDocument({
@@ -1138,6 +776,7 @@ export function buildBeautifyPreviewDocument({
   wallpaperUrl = "",
   platform = "pc",
   identities = {},
+  activeScene = "",
 } = {}) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
   const themeVars = buildBeautifyPreviewThemeVars(theme, wallpaperUrl);
@@ -1153,13 +792,11 @@ export function buildBeautifyPreviewDocument({
     normalizedPlatform,
     theme,
     identities,
+    activeScene,
   );
   const behaviorScript = buildPreviewBehaviorScript();
   const contentSecurityPolicy = escapeHtml(buildPreviewContentSecurityPolicy());
-  const mobileStylesheetMarkup =
-    normalizedPlatform === "mobile"
-      ? '\n    <link rel="stylesheet" href="/static/vendor/sillytavern/css/mobile-styles.css" />'
-      : "";
+  const stylesheetMarkup = buildVendoredStylesheetMarkup(normalizedPlatform);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1168,8 +805,7 @@ export function buildBeautifyPreviewDocument({
     <meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1" />
     <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}" />
     <title>Beautify Native ST Preview</title>
-    <link rel="stylesheet" href="/static/vendor/sillytavern/style.css" />
-    ${mobileStylesheetMarkup}
+${stylesheetMarkup}
     <style>:root{${serializedVars}}</style>
     <style>
       html, body {
@@ -1197,21 +833,14 @@ export function buildBeautifyPreviewDocument({
         position: relative;
       }
 
-      .st-preview-wallpaper,
-      .st-preview-overlay {
+      #bg1 {
         position: absolute;
         inset: 0;
         pointer-events: none;
-      }
-
-      .st-preview-wallpaper {
         background-image: var(--wallpaperUrl);
         background-size: cover;
         background-position: center;
-      }
-
-      .st-preview-overlay {
-        background: linear-gradient(var(--SmartThemeBlurTintColor), var(--SmartThemeBlurTintColor));
+        filter: saturate(0.92);
       }
 
       .st-preview-shell {
@@ -1222,36 +851,6 @@ export function buildBeautifyPreviewDocument({
         display: flex;
         flex-direction: column;
         padding: 20px;
-      }
-
-      .st-preview-workbench {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin: 0 0 12px;
-        position: relative;
-        z-index: 2;
-      }
-
-      .st-preview-scene-switcher {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin: 0;
-      }
-
-      .st-preview-scene-button {
-        border: 1px solid var(--SmartThemeBorderColor);
-        background: var(--SmartThemeChatTintColor);
-        color: var(--SmartThemeBodyColor);
-        border-radius: 999px;
-        padding: 6px 12px;
-        font: inherit;
-        cursor: default;
-      }
-
-      .st-preview-scene-button.is-active {
-        background: var(--SmartThemeUserMesBlurTintColor);
       }
 
       #top-bar {
@@ -1266,11 +865,7 @@ export function buildBeautifyPreviewDocument({
         z-index: 4;
       }
 
-      .drawer-content.st-preview-drawer-panel[style*='display:none'] {
-        display: none !important;
-      }
-
-      [data-panel-shell] {
+      .drawer {
         position: absolute;
         top: 0;
         width: 100%;
@@ -1280,13 +875,17 @@ export function buildBeautifyPreviewDocument({
         z-index: 4;
       }
 
-      [data-panel-shell='settings'],
-      [data-panel-shell='formatting'] {
+      #ai-config-button,
+      #advanced-formatting-button {
         left: var(--st-preview-left-panel-offset);
       }
 
-      [data-panel-shell='character'] {
+      #right-nav-drawer {
         right: var(--st-preview-right-panel-offset);
+      }
+
+      .drawer-toggle {
+        pointer-events: auto;
       }
 
       .st-preview-panel-body {
@@ -1301,12 +900,7 @@ export function buildBeautifyPreviewDocument({
       .st-preview-root[data-active-panel='formatting'] [data-panel-surface='formatting'],
       .st-preview-root[data-active-panel='character'] [data-panel-surface='character'] {
         display: block;
-      }
-
-      .st-preview-root[data-active-panel='settings'] [data-panel-shell='settings'],
-      .st-preview-root[data-active-panel='formatting'] [data-panel-shell='formatting'],
-      .st-preview-root[data-active-panel='character'] [data-panel-shell='character'] {
-        display: block;
+        pointer-events: auto;
       }
 
       #sheld {

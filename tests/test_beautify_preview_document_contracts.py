@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -6,6 +7,46 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / 'static/js/components/beautifyPreviewDocument.js'
+VENDOR_SHELL_MODULE_PATH = ROOT / 'static/vendor/sillytavern/preview-shell.js'
+
+
+def test_vendored_sillytavern_shell_assets_exist_for_vendor_first_preview():
+    root = ROOT / 'static' / 'vendor' / 'sillytavern'
+    required_paths = [
+        root / 'index.html',
+        root / 'style.css',
+        root / 'css' / 'fontawesome.min.css',
+        root / 'css' / 'solid.min.css',
+        root / 'css' / 'brands.min.css',
+        root / 'webfonts',
+    ]
+
+    missing = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
+    assert not missing, f'Missing required vendored ST preview assets: {missing}'
+
+
+def test_vendored_sillytavern_index_html_direct_local_dependencies_exist():
+    root = ROOT / 'static' / 'vendor' / 'sillytavern'
+    index_html = (root / 'index.html').read_text(encoding='utf-8')
+    dependency_pattern = re.compile(r'(?:href|src)="(?!https?:|//|/|#|data:|mailto:|javascript:)([^"]+)"')
+    expected_dependencies = sorted(set(dependency_pattern.findall(index_html)))
+
+    missing = [
+        str((root / relative_path).relative_to(ROOT)).replace('\\', '/')
+        for relative_path in expected_dependencies
+        if not (root / relative_path).exists()
+    ]
+
+    assert expected_dependencies, 'Expected vendored index.html to declare local relative dependencies'
+    assert not missing, f'Missing direct local vendored index.html dependencies: {missing}'
+
+
+def test_vendor_first_preview_shell_artifact_exists_and_tracks_provenance():
+    shell_module = ROOT / 'static' / 'vendor' / 'sillytavern' / 'preview-shell.js'
+    source_md = (ROOT / 'static' / 'vendor' / 'sillytavern' / 'SOURCE.md').read_text(encoding='utf-8')
+
+    assert shell_module.exists(), 'Expected vendor-derived preview shell artifact to exist'
+    assert 'preview-shell.js' in source_md, 'Expected SOURCE.md to document preview-shell.js provenance'
 
 
 def run_preview_document_check(script_body: str) -> None:
@@ -57,6 +98,160 @@ def test_build_beautify_preview_document_loads_mobile_stylesheet_only_for_mobile
 
         if (!html.includes('/static/vendor/sillytavern/style.css')) throw new Error('missing vendored ST style.css');
         if (!html.includes('/static/vendor/sillytavern/css/mobile-styles.css')) throw new Error('missing vendored ST mobile stylesheet');
+        '''
+    )
+
+
+def test_build_beautify_preview_document_loads_vendored_icon_stylesheets():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        for (const token of [
+          '/static/vendor/sillytavern/style.css',
+          '/static/vendor/sillytavern/css/fontawesome.min.css',
+          '/static/vendor/sillytavern/css/solid.min.css',
+          '/static/vendor/sillytavern/css/brands.min.css',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing vendored stylesheet: ${token}`);
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_imports_vendor_derived_shell_artifact():
+    source = MODULE_PATH.read_text(encoding='utf-8')
+
+    assert 'vendor/sillytavern/preview-shell.js' in source
+    assert 'buildVendorFirstPreviewShell' in source
+
+
+def test_vendor_derived_preview_shell_module_exposes_vendor_shell_template():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const shellModule = await import(pathToFileURL({json.dumps(str(VENDOR_SHELL_MODULE_PATH.resolve()))}).href);
+        if (typeof shellModule.buildVendorFirstPreviewShell !== 'function') {{
+          throw new Error('missing buildVendorFirstPreviewShell export');
+        }}
+        const markup = shellModule.buildVendorFirstPreviewShell({{
+          activeSceneId: 'daily',
+          chatMarkup: '<div>chat</div>',
+          sendFormMarkup: '<div>form</div>',
+          topBarStaticActionsMarkup: '<div>topbar</div>',
+          settingsDrawerContentMarkup: '<div>settings</div>',
+          formattingDrawerContentMarkup: '<div>formatting</div>',
+          characterDrawerContentMarkup: '<div>character</div>',
+        }});
+        for (const token of ['id="bg1"', 'id="top-bar"', 'id="top-settings-holder"', 'id="sheld"', 'id="chat"', 'id="form_sheld"']) {{
+          if (!markup.includes(token)) throw new Error(`missing shell token: ${{token}}`);
+        }}
+        for (const token of ['<div>topbar</div>', '<div>settings</div>', '<div>formatting</div>', '<div>character</div>', '<div>chat</div>', '<div>form</div>']) {{
+          if (!markup.includes(token)) throw new Error(`missing inserted slot token: ${{token}}`);
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_build_beautify_preview_document_exports_host_scene_catalog_contract():
+    run_preview_document_check(
+        '''
+        if (module.DEFAULT_PREVIEW_SCENE_ID !== 'daily') {
+          throw new Error(`expected exported default preview scene id, got ${module.DEFAULT_PREVIEW_SCENE_ID}`);
+        }
+
+        if (!Array.isArray(module.PREVIEW_SCENE_OPTIONS)) {
+          throw new Error('expected PREVIEW_SCENE_OPTIONS export to be an array');
+        }
+
+        const sceneIds = module.PREVIEW_SCENE_OPTIONS.map((scene) => scene.id);
+        const expectedIds = ['daily', 'flirty', 'lore', 'story', 'system'];
+        if (JSON.stringify(sceneIds) !== JSON.stringify(expectedIds)) {
+          throw new Error(`unexpected exported preview scene ids: ${JSON.stringify(sceneIds)}`);
+        }
+
+        for (const scene of module.PREVIEW_SCENE_OPTIONS) {
+          if (!scene.label || !scene.description) {
+            throw new Error(`scene metadata should include label and description: ${JSON.stringify(scene)}`);
+          }
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_keeps_vendor_shell_owner_and_small_preview_fragments():
+    source = MODULE_PATH.read_text(encoding='utf-8')
+
+    for token in [
+        'buildSettingsDrawerPreviewMarkup',
+        'buildFormattingDrawerPreviewMarkup',
+        'buildCharacterDrawerPreviewMarkup',
+    ]:
+        assert token in source, f'missing thin preview fragment helper: {token}'
+
+    for removed in [
+        'const settingsDrawerContentMarkup = `',
+        'const formattingDrawerContentMarkup = `',
+        'const characterDrawerContentMarkup = `',
+    ]:
+        assert removed not in source, f'stale large inline drawer fragment remains: {removed}'
+
+
+def test_build_beautify_preview_document_uses_vendored_shell_without_preview_scene_switcher_markup():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        for (const token of [
+          'id="bg1"',
+          'id="top-bar"',
+          'id="top-settings-holder"',
+          'id="leftNavDrawerIcon"',
+          'id="left-nav-panel"',
+          'id="rightNavDrawerIcon"',
+          'id="right-nav-panel"',
+          'id="sheld"',
+          'id="chat"',
+          'id="form_sheld"',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing vendored shell anchor: ${token}`);
+        }
+
+        for (const forbidden of [
+          'st-preview-scene-switcher',
+          'data-preview-scene-button',
+          'data-preview-scene-description',
+        ]) {
+          if (html.includes(forbidden)) throw new Error(`scene switcher must stay outside isolated ST frame: ${forbidden}`);
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_keeps_real_drawer_relationships_for_core_drawers():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        const requiredPairs = [
+          ['leftNavDrawerIcon', 'left-nav-panel'],
+          ['rightNavDrawerIcon', 'right-nav-panel'],
+        ];
+
+        for (const [iconId, panelId] of requiredPairs) {
+          const iconIndex = html.indexOf(`id="${iconId}"`);
+          const panelIndex = html.indexOf(`id="${panelId}"`);
+          if (iconIndex === -1 || panelIndex === -1) throw new Error(`missing drawer pair ${iconId}/${panelId}`);
+          if (iconIndex > panelIndex) throw new Error(`expected icon ${iconId} before panel ${panelId} in vendored shell structure`);
+        }
         '''
     )
 
@@ -285,12 +480,13 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
         const html = module.buildBeautifyPreviewSampleMarkup('pc');
 
         for (const token of [
-          'class="st-preview-workbench"',
+          'id="bg1"',
           'id="top-bar"',
           'id="top-settings-holder"',
+          'id="ai-config-button"',
           'id="left-nav-panel"',
           'id="AdvancedFormatting"',
-          'id="character_popup"',
+          'id="right-nav-panel"',
           'id="sheld"',
           'id="sheldheader"',
           'id="chat"',
@@ -313,9 +509,9 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
           'data-panel-surface="settings"',
           'data-panel-surface="formatting"',
           'data-panel-surface="character"',
-          'data-panel-shell="settings"',
-          'data-panel-shell="formatting"',
-          'data-panel-shell="character"',
+          'class="drawer-toggle drawer-header" data-panel-target="settings"',
+          'class="drawer-toggle drawer-header" data-panel-target="formatting"',
+          'class="drawer-toggle drawer-header" data-panel-target="character"',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);
         }
@@ -419,52 +615,31 @@ def test_build_beautify_preview_sample_markup_contains_st_right_send_form_action
 def test_build_beautify_preview_sample_markup_contains_scene_switcher_and_default_scene():
     run_preview_document_check(
         '''
-        const html = module.buildBeautifyPreviewSampleMarkup('pc');
+        const html = module.buildBeautifyPreviewSampleMarkup('pc', {}, {}, 'flirty');
 
         for (const token of [
-          'data-preview-scene-switcher',
-          'data-preview-scene-button="daily"',
-          'data-preview-scene-button="flirty"',
-          'data-preview-scene-button="lore"',
-          'data-preview-scene-button="story"',
-          'data-preview-scene-button="system"',
-          'data-preview-default-scene="daily"',
-          'data-preview-chat-messages',
-          'data-preview-scene-template="daily"',
-          'data-preview-scene-template="flirty"',
-          'data-preview-scene-template="lore"',
-          'data-preview-scene-template="story"',
-          'data-preview-scene-template="system"',
-          '日常陪伴',
-          '暧昧互动',
-          '设定说明',
-          '剧情推进',
-          '系统提示',
+          'data-active-scene="flirty"',
+          'ch_name="苏眠"',
+          'mesid="1"',
+          'mesid="2"',
+          '你刚刚那句“只看一眼消息”听起来，可不像真的只看一眼。',
+          '被你发现了。我本来只是想确认你睡了没。',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);
         }
 
-        const switcherIndex = html.indexOf('data-preview-scene-switcher');
-        const workbenchIndex = html.indexOf('class="st-preview-workbench"');
-        const sheldIndex = html.indexOf('id="sheld"');
-        const chatIndex = html.indexOf('id="chat"');
-        const formSheldIndex = html.indexOf('id="form_sheld"');
-        const sheldMarkup = html.slice(sheldIndex, formSheldIndex + 'id="form_sheld"'.length);
-
-        if (!(switcherIndex < chatIndex && chatIndex < formSheldIndex)) {
-          throw new Error('scene switcher should render before #chat and #form_sheld');
-        }
-
-        if (!(workbenchIndex < sheldIndex && switcherIndex > workbenchIndex && switcherIndex < sheldIndex)) {
-          throw new Error('scene switcher should render inside the outer workbench before #sheld');
-        }
-
-        if (!(switcherIndex < sheldIndex)) {
-          throw new Error('scene switcher should render outside the simulated #sheld frame');
-        }
-
-        if (sheldMarkup.includes('data-preview-scene-switcher')) {
-          throw new Error('scene switcher should not render inside #sheld');
+        for (const forbidden of [
+          'data-preview-scene-switcher',
+          'data-preview-scene-button=',
+          'data-preview-default-scene=',
+          'data-preview-chat-messages',
+          'data-preview-scene-template=',
+          '日常陪伴',
+          '设定说明',
+          '剧情推进',
+          '系统提示',
+        ]) {
+          if (html.includes(forbidden)) throw new Error(`unexpected in-frame scene-switcher token: ${forbidden}`);
         }
         '''
     )
@@ -610,227 +785,35 @@ def test_build_beautify_preview_document_disables_navigation_for_marked_example_
     )
 
 
-def test_build_beautify_preview_document_renders_and_switches_preview_scenes_at_runtime():
+def test_build_beautify_preview_document_uses_host_owned_active_scene_for_initial_message_render():
     run_preview_document_check(
         '''
         const html = module.buildBeautifyPreviewDocument({
           platform: 'pc',
           theme: {},
           wallpaperUrl: '',
+          activeScene: 'flirty',
         });
 
-        const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
-        if (!scriptMatch) throw new Error('missing preview behavior script');
-
-        let loadHandler = null;
-        let requestAnimationFrameCalls = 0;
-        let scrollCalls = 0;
-        let chatMarkup = '';
-        let descriptionText = '';
-        const previewLinkHandlers = [];
-
-        const root = { dataset: { activePanel: 'none', defaultScene: 'daily' } };
-        const chat = {
-          scrollTop: 0,
-          scrollHeight: 120,
-          get innerHTML() {
-            return chatMarkup;
-          },
-          set innerHTML(value) {
-            chatMarkup = value;
-          },
-        };
-        const description = {
-          get textContent() {
-            return descriptionText;
-          },
-          set textContent(value) {
-            descriptionText = value;
-          },
-        };
-
-        function createClassList(initial = []) {
-          const set = new Set(initial);
-          return {
-            add(...tokens) {
-              tokens.forEach((token) => set.add(token));
-            },
-            remove(...tokens) {
-              tokens.forEach((token) => set.delete(token));
-            },
-            toggle(token, force) {
-              if (force === undefined) {
-                if (set.has(token)) {
-                  set.delete(token);
-                  return false;
-                }
-                set.add(token);
-                return true;
-              }
-              if (force) {
-                set.add(token);
-                return true;
-              }
-              set.delete(token);
-              return false;
-            },
-            contains(token) {
-              return set.has(token);
-            },
-          };
+        for (const token of [
+          'data-active-scene="flirty"',
+          'ch_name="苏眠"',
+          'mesid="1"',
+          'mesid="2"',
+          '你刚刚那句“只看一眼消息”听起来，可不像真的只看一眼。',
+          '被你发现了。我本来只是想确认你睡了没。',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing host-owned active scene token: ${token}`);
         }
 
-        function createSceneButton(sceneId) {
-          let clickHandler = null;
-          return {
-            dataset: { previewSceneButton: sceneId },
-            classList: createClassList(sceneId === 'daily' ? ['is-active'] : []),
-            attributes: { 'aria-pressed': sceneId === 'daily' ? 'true' : 'false' },
-            addEventListener(type, handler) {
-              if (type === 'click') {
-                clickHandler = handler;
-              }
-            },
-            setAttribute(name, value) {
-              this.attributes[name] = String(value);
-            },
-            getAttribute(name) {
-              return this.attributes[name] ?? null;
-            },
-            click() {
-              if (typeof clickHandler !== 'function') {
-                throw new Error(`scene button ${sceneId} missing click handler`);
-              }
-              clickHandler();
-            },
-          };
+        for (const forbidden of [
+          'data-preview-scene-button=',
+          'data-preview-scene-template=',
+          '轻松自然的日常聊天',
+          '日常节奏不需要铺满屏幕，留一些安静给角色的呼吸。',
+        ]) {
+          if (html.includes(forbidden)) throw new Error(`unexpected in-frame runtime scene token: ${forbidden}`);
         }
-
-        function createPreviewLink(label) {
-          return {
-            label,
-            addEventListener(type, handler) {
-              if (type === 'click') {
-                previewLinkHandlers.push({ label, handler });
-              }
-            },
-          };
-        }
-
-        const previewLinkByScene = {
-          daily: createPreviewLink('daily-link'),
-          flirty: createPreviewLink('flirty-link'),
-        };
-
-        const templateByScene = {
-          daily: {
-            innerHTML: '<div class="mes">daily markup <a href="#" data-preview-link="disabled">Daily link</a></div>',
-            dataset: { previewSceneDescription: '轻松自然的日常聊天' },
-          },
-          flirty: {
-            innerHTML: '<div class="mes">flirty markup <a href="#" data-preview-link="disabled">Flirty link</a></div>',
-            dataset: { previewSceneDescription: '更柔和的情绪和停顿' },
-          },
-        };
-
-        const sceneButtons = [createSceneButton('daily'), createSceneButton('flirty')];
-
-        const document = {
-          querySelector(selector) {
-            if (selector === '.st-preview-root') return root;
-            if (selector === '#chat') return chat;
-            if (selector === '[data-preview-chat-messages]') return chat;
-            if (selector === '[data-preview-scene-description]') return description;
-            if (selector === '[data-preview-scene-template="daily"]') return templateByScene.daily;
-            if (selector === '[data-preview-scene-template="flirty"]') return templateByScene.flirty;
-            return null;
-          },
-          querySelectorAll(selector) {
-            if (selector === '[data-panel-target]' || selector === '[data-panel-surface]' || selector === '[data-panel-shell]' || selector === '.inline-drawer') {
-              return [];
-            }
-            if (selector === '[data-preview-scene-button]') return sceneButtons;
-            if (selector === '[data-preview-link="disabled"]') {
-              if (chatMarkup.includes('daily markup')) return [previewLinkByScene.daily];
-              if (chatMarkup.includes('flirty markup')) return [previewLinkByScene.flirty];
-              return [];
-            }
-            return [];
-          },
-        };
-
-        const window = {
-          requestAnimationFrame(callback) {
-            requestAnimationFrameCalls += 1;
-            callback();
-          },
-          addEventListener(type, handler) {
-            if (type === 'load') {
-              loadHandler = handler;
-            }
-          },
-        };
-
-        class CustomEvent {
-          constructor(type, options = {}) {
-            this.type = type;
-            this.bubbles = Boolean(options.bubbles);
-          }
-        }
-
-        Object.defineProperty(chat, 'scrollTop', {
-          get() {
-            return this._scrollTop || 0;
-          },
-          set(value) {
-            this._scrollTop = value;
-            scrollCalls += 1;
-          },
-        });
-
-        const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
-        runScript(document, window, CustomEvent);
-
-        if (root.dataset.activeScene !== 'daily') throw new Error(`expected default active scene to be stored on root, got ${root.dataset.activeScene}`);
-        if (!chat.innerHTML.includes('daily markup')) throw new Error('default daily scene was not rendered into chat host');
-        if (description.textContent !== '轻松自然的日常聊天') throw new Error(`expected default scene description, got ${description.textContent}`);
-        if (previewLinkHandlers.length !== 1) throw new Error(`expected one disabled-link handler after default render, got ${previewLinkHandlers.length}`);
-        if (sceneButtons[0].getAttribute('aria-pressed') !== 'true') throw new Error('default scene button should be active');
-        if (sceneButtons[1].getAttribute('aria-pressed') !== 'false') throw new Error('inactive scene button should be false before click');
-
-        const dailyEvent = {
-          defaultPrevented: false,
-          preventDefault() {
-            this.defaultPrevented = true;
-          },
-        };
-        previewLinkHandlers[0].handler(dailyEvent);
-        if (!dailyEvent.defaultPrevented) throw new Error('default scene disabled link click was not prevented');
-
-        sceneButtons[1].click();
-
-        if (root.dataset.activeScene !== 'flirty') throw new Error(`expected active scene to switch to flirty, got ${root.dataset.activeScene}`);
-        if (!chat.innerHTML.includes('flirty markup')) throw new Error('flirty scene was not rendered into chat host');
-        if (chat.innerHTML.includes('daily markup')) throw new Error('previous scene markup should be replaced on switch');
-        if (description.textContent !== '更柔和的情绪和停顿') throw new Error(`expected flirty scene description, got ${description.textContent}`);
-        if (previewLinkHandlers.length !== 2) throw new Error(`expected disabled links to be rebound after scene switch, got ${previewLinkHandlers.length}`);
-        if (sceneButtons[0].getAttribute('aria-pressed') !== 'false') throw new Error('daily scene button should be inactive after switch');
-        if (sceneButtons[1].getAttribute('aria-pressed') !== 'true') throw new Error('flirty scene button should be active after switch');
-        if (!sceneButtons[1].classList.contains('is-active')) throw new Error('flirty scene button should gain active class after switch');
-        if (sceneButtons[0].classList.contains('is-active')) throw new Error('daily scene button should lose active class after switch');
-        if (chat.scrollTop !== chat.scrollHeight) throw new Error('chat should re-scroll to bottom after scene switch');
-        if (scrollCalls < 2) throw new Error(`expected initial and switch scrolls, got ${scrollCalls}`);
-        if (requestAnimationFrameCalls < 2) throw new Error(`expected initial and switch animation frame scrolls, got ${requestAnimationFrameCalls}`);
-        if (typeof loadHandler !== 'function') throw new Error('preview script did not preserve load scroll handler');
-
-        const flirtyEvent = {
-          defaultPrevented: false,
-          preventDefault() {
-            this.defaultPrevented = true;
-          },
-        };
-        previewLinkHandlers[1].handler(flirtyEvent);
-        if (!flirtyEvent.defaultPrevented) throw new Error('switched scene disabled link click was not prevented');
         '''
     )
 
@@ -1068,7 +1051,8 @@ def test_build_beautify_preview_document_wires_panel_toggle_script_and_default_s
           'aria-pressed',
           "panel.classList.toggle('openDrawer', isActive);",
           "panel.classList.toggle('closedDrawer', !isActive);",
-          "shell.classList.toggle('openDrawer', isActive);",
+          "const drawer = panel.closest('.drawer');",
+          "drawer.classList.toggle('openDrawer', isActive);",
           "drawer.classList.toggle('open', isActive);",
           "drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true }));",
         ]) {
@@ -1137,14 +1121,14 @@ def test_build_beautify_preview_document_styles_overlay_drawers_inside_preview_r
         'position: absolute;',
         'inset: 72px 20px auto 20px;',
         'pointer-events: none;',
-        '[data-panel-shell] {',
+        '.drawer {',
         'max-width: var(--st-preview-panel-width);',
         'min-width: 0;',
         'pointer-events: none;',
-        "[data-panel-shell='settings'],",
-        "[data-panel-shell='formatting'] {",
+        '#ai-config-button,',
+        '#advanced-formatting-button {',
         'left: var(--st-preview-left-panel-offset);',
-        "[data-panel-shell='character'] {",
+        '#right-nav-drawer {',
         'right: var(--st-preview-right-panel-offset);',
         '.st-preview-panel-body {',
         'min-width: 0;',

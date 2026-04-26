@@ -3,7 +3,11 @@ import {
   clearIsolatedHtml,
   renderIsolatedHtml,
 } from "../runtime/renderRuntime.js";
-import { buildBeautifyPreviewDocument } from "./beautifyPreviewDocument.js";
+import {
+  buildBeautifyPreviewDocument,
+  DEFAULT_PREVIEW_SCENE_ID,
+  PREVIEW_SCENE_OPTIONS,
+} from "./beautifyPreviewDocument.js";
 
 function resolvePreviewRenderMinHeight(platform) {
   return platform === "mobile" ? 420 : 520;
@@ -23,14 +27,39 @@ function resolvePreviewIdentityValue(
   };
 }
 
-function resolveVariantWallpaper(detail = {}, variant = {}) {
-  const selectedWallpaperId = String(
-    variant?.selected_wallpaper_id || "",
-  ).trim();
-  if (!selectedWallpaperId) {
-    return null;
-  }
-  return detail?.wallpapers?.[selectedWallpaperId] || null;
+function resolveVariantWallpaper(
+  detail = {},
+  variant = {},
+  selectedWallpaperId = "",
+  activeWallpaper = null,
+) {
+  const allowedWallpaperIds = Array.isArray(variant?.wallpaper_ids)
+    ? variant.wallpaper_ids
+    : [];
+  const resolveWallpaperById = (wallpaperId) => {
+    const normalizedWallpaperId = String(wallpaperId || "").trim();
+    if (!normalizedWallpaperId) {
+      return null;
+    }
+    return detail?.wallpapers?.[normalizedWallpaperId] || null;
+  };
+
+  const resolveAllowedWallpaper = (wallpaperId) => {
+    const normalizedWallpaperId = String(wallpaperId || "").trim();
+    if (!normalizedWallpaperId) {
+      return null;
+    }
+    if (!allowedWallpaperIds.includes(normalizedWallpaperId)) {
+      return null;
+    }
+    return resolveWallpaperById(normalizedWallpaperId);
+  };
+
+  return (
+    resolveWallpaperById(variant?.selected_wallpaper_id) ||
+    resolveAllowedWallpaper(selectedWallpaperId) ||
+    resolveAllowedWallpaper(activeWallpaper?.id)
+  );
 }
 
 const MAX_PREVIEW_HOST_RETRIES = 3;
@@ -51,6 +80,19 @@ export default function beautifyPreviewFrame() {
 
     get previewShellMode() {
       return this.$store.global.beautifyPreviewDevice || "pc";
+    },
+
+    get previewScenes() {
+      return PREVIEW_SCENE_OPTIONS;
+    },
+
+    get activePreviewScene() {
+      const activeSceneId = this.$store.global.beautifyActiveScene;
+      return (
+        this.previewScenes.find((scene) => scene.id === activeSceneId) ||
+        this.previewScenes.find((scene) => scene.id === DEFAULT_PREVIEW_SCENE_ID) ||
+        this.previewScenes[0]
+      );
     },
 
     get hasActiveDetail() {
@@ -95,6 +137,20 @@ export default function beautifyPreviewFrame() {
       this.$watch("$store.global.beautifyPreviewDevice", () => {
         if (this.isPreviewLoaded) this.renderPreview();
       });
+      this.$watch("$store.global.beautifyActiveScene", () => {
+        if (this.isPreviewLoaded) this.renderPreview();
+      });
+    },
+
+    setPreviewScene(sceneId) {
+      const normalizedSceneId = String(sceneId || "").trim();
+      const nextScene = this.previewScenes.find(
+        (scene) => scene.id === normalizedSceneId,
+      );
+      if (!nextScene) {
+        return;
+      }
+      this.$store.global.beautifyActiveScene = nextScene.id;
     },
 
     startPreviewHostObserver() {
@@ -171,7 +227,12 @@ export default function beautifyPreviewFrame() {
       const globalSettings = this.$store.global.beautifyGlobalSettings || {};
       const detail = this.$store.global.beautifyActiveDetail || {};
       const variant = this.$store.global.beautifyActiveVariant || {};
-      const variantWallpaper = resolveVariantWallpaper(detail, variant);
+      const variantWallpaper = resolveVariantWallpaper(
+        detail,
+        variant,
+        this.$store.global.beautifySelectedWallpaperId,
+        this.$store.global.beautifyActiveWallpaper,
+      );
       const globalWallpaper = globalSettings.wallpaper || {};
       const packageIdentities = detail.identity_overrides || {};
       const globalIdentities = globalSettings.identities || {};
@@ -183,6 +244,7 @@ export default function beautifyPreviewFrame() {
       return {
         platform: this.previewShellMode === "mobile" ? "mobile" : "pc",
         theme: useGlobalOnly ? {} : variant.theme_data || {},
+        activeScene: this.activePreviewScene?.id || DEFAULT_PREVIEW_SCENE_ID,
         wallpaperUrl: resolvedWallpaperFile
           ? buildBeautifyPreviewAssetUrl(resolvedWallpaperFile)
           : "",

@@ -331,6 +331,26 @@
             <div class="beautify-preview-column">
               <template x-if="stageMode === 'preview'">
                 <div class="beautify-preview-stage">
+                  <div class="beautify-preview-scene-switcher">
+                    <template x-for="scene in previewScenes" :key="scene.id">
+                      <button
+                        type="button"
+                        class="beautify-preview-scene-btn"
+                        :class="activePreviewScene?.id === scene.id ? 'is-active' : ''"
+                        @click="setPreviewScene(scene.id)"
+                      >
+                        <span
+                          class="beautify-preview-scene-label"
+                          x-text="scene.label"
+                        ></span>
+                        <span
+                          class="beautify-preview-scene-description"
+                          x-text="scene.description"
+                        ></span>
+                      </button>
+                    </template>
+                  </div>
+
                   <template x-if="isMobileFullscreenEnabled()">
                     <div
                       class="beautify-preview-unloaded-card beautify-mobile-entry-card"

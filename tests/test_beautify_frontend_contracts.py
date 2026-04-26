@@ -38,6 +38,14 @@ def run_beautify_preview_frame_runtime_check(script_body):
           host.__events.push({{ type: 'render', options }});
           host.innerHTML = String(options.htmlPayload || '');
         }};
+        const DEFAULT_PREVIEW_SCENE_ID = 'daily';
+        const PREVIEW_SCENE_OPTIONS = [
+          {{ id: 'daily', label: '日常陪伴', description: '轻松自然的日常聊天' }},
+          {{ id: 'flirty', label: '暧昧互动', description: '更柔和的情绪和停顿' }},
+          {{ id: 'lore', label: '设定说明', description: '长段落和说明性文本' }},
+          {{ id: 'story', label: '剧情推进', description: '带动作与状态变化的连续片段' }},
+          {{ id: 'system', label: '系统提示', description: '系统通知与规则提醒' }},
+        ];
         const buildBeautifyPreviewDocument = (options = {{}}) => JSON.stringify(options);
         `;
 
@@ -1984,6 +1992,98 @@ def test_beautify_preview_frame_prefers_selected_package_wallpaper_over_global_f
         }
         '''
     )
+
+
+def test_beautify_preview_frame_uses_effective_bound_package_wallpaper_when_persisted_variant_selection_is_empty():
+    run_beautify_preview_frame_runtime_check(
+        '''
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'mobile',
+            beautifySelectedWallpaperId: 'package_embedded:04a85e07a1e6',
+            beautifyActiveDetail: {
+              identity_overrides: {},
+              wallpapers: {
+                'package_embedded:04a85e07a1e6': {
+                  id: 'package_embedded:04a85e07a1e6',
+                  file: 'data/library/wallpapers/package_embedded/pkg_crying/var_mobile/demo.webp',
+                },
+              },
+            },
+            beautifyActiveVariant: {
+              theme_data: { name: 'crying' },
+              wallpaper_ids: ['package_embedded:04a85e07a1e6'],
+              selected_wallpaper_id: '',
+            },
+            beautifyActiveWallpaper: {
+              id: 'package_embedded:04a85e07a1e6',
+              file: 'data/library/wallpapers/package_embedded/pkg_crying/var_mobile/demo.webp',
+            },
+            beautifyGlobalSettings: {
+              wallpaper: {
+                id: 'wall_global',
+                file: 'static/assets/wallpapers/builtin/fallback.png',
+              },
+              identities: {
+                character: { name: '全局角色', avatar_file: '' },
+                user: { name: '全局用户', avatar_file: '' },
+              },
+            },
+          },
+        };
+
+        const state = component.resolvePreviewState();
+        if (state.wallpaperUrl !== 'data/library/wallpapers/package_embedded/pkg_crying/var_mobile/demo.webp') {
+          throw new Error(`expected effective bound package wallpaper to win, got ${state.wallpaperUrl}`);
+        }
+        '''
+    )
+
+
+def test_beautify_preview_frame_resolve_preview_state_includes_host_owned_active_scene():
+    run_beautify_preview_frame_runtime_check(
+        '''
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'pc',
+            beautifyActiveScene: 'flirty',
+            beautifyActiveDetail: {
+              identity_overrides: {},
+              wallpapers: {},
+            },
+            beautifyActiveVariant: {
+              theme_data: { name: 'Demo' },
+              selected_wallpaper_id: '',
+            },
+            beautifyGlobalSettings: {
+              wallpaper: null,
+              identities: {
+                character: { name: '全局角色', avatar_file: '' },
+                user: { name: '全局用户', avatar_file: '' },
+              },
+            },
+          },
+        };
+
+        const state = component.resolvePreviewState();
+        if (state.activeScene !== 'flirty') {
+          throw new Error(`expected host-owned active scene to flow into preview state, got ${state.activeScene}`);
+        }
+        '''
+    )
+
+
+def test_beautify_preview_frame_reuses_document_scene_catalog_for_host_switcher():
+    preview_frame_source = read_project_file('static/js/components/beautifyPreviewFrame.js')
+
+    assert 'import {' in preview_frame_source
+    assert 'DEFAULT_PREVIEW_SCENE_ID' in preview_frame_source
+    assert 'PREVIEW_SCENE_OPTIONS' in preview_frame_source
+    assert 'const HOST_PREVIEW_SCENES' not in preview_frame_source
 
 
 def test_beautify_preview_frame_falls_back_to_global_wallpaper_when_variant_selection_has_no_resolved_wallpaper():
