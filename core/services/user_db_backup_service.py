@@ -74,7 +74,7 @@ class UserDbBackupService:
                     'is_favorite': bool(row['is_favorite']),
                 }
                 for row in conn.execute(
-                    'SELECT id, is_favorite FROM card_metadata ORDER BY id ASC'
+                    'SELECT id, is_favorite FROM card_metadata WHERE is_favorite = 1 ORDER BY id ASC'
                 ).fetchall()
             ]
             wi_clipboard = [
