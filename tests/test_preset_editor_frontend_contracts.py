@@ -939,7 +939,7 @@ def test_preset_editor_runtime_uses_scalar_workspace_storage_key_helpers_with_ca
             ],
             items: [],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
                 { id: 'penalties', label: '惩罚参数' },
@@ -999,7 +999,7 @@ def test_preset_editor_runtime_scalar_workspace_section_entries_exclude_hidden_f
             groups: [{ id: 'scalar_fields', label: '基础字段' }],
             items: [],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
               ],
@@ -1045,7 +1045,7 @@ def test_preset_editor_runtime_scalar_workspace_excludes_generic_scalar_items_fr
               },
             ],
             scalar_workspace: {
-              profile_id: 'st_textgen_parameter_workspace',
+              profile_id: 'legacy_scalar_workspace',
               sections: [
                 { id: 'core_sampling', label: '核心采样参数' },
               ],

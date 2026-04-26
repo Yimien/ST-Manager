@@ -53,15 +53,18 @@ def test_preset_detail_returns_source_revision_but_not_display_only_metadata(mon
     assert res.status_code == 200
     payload = res.get_json()
     assert payload['success'] is True
-    assert payload['preset']['preset_kind'] == 'textgen'
+    assert payload['preset']['preset_kind'] == 'generic'
     assert payload['preset']['source_revision']
-    assert payload['preset']['sections']['sampling'][0]['key'] == 'temp'
+    assert payload['preset']['sections'] == {}
+    assert payload['preset']['editor_profile']['id'] == 'generic_json'
     assert 'capabilities' not in payload['preset']
     assert 'has_unknown_fields' not in payload['preset']
     assert 'unknown_fields' not in payload['preset']
 
 
-def test_preset_detail_identifies_sysprompt_by_shape_when_folder_missing(monkeypatch, tmp_path):
+def test_preset_detail_falls_back_to_generic_for_legacy_sysprompt_shape_when_folder_missing(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'prompt.json',
@@ -85,12 +88,14 @@ def test_preset_detail_identifies_sysprompt_by_shape_when_folder_missing(monkeyp
     assert res.status_code == 200
     payload = res.get_json()
     assert payload['success'] is True
-    assert payload['preset']['preset_kind'] == 'sysprompt'
-    assert payload['preset']['preset_kind_label'] == '系统提示词'
-    assert payload['preset']['sections']['prompt'][0]['key'] == 'content'
+    assert payload['preset']['preset_kind'] == 'generic'
+    assert payload['preset']['preset_kind_label'] == '通用 JSON'
+    assert payload['preset']['reader_view']['family'] == 'generic'
 
 
-def test_preset_detail_identifies_instruct_context_and_reasoning(monkeypatch, tmp_path):
+def test_preset_detail_falls_back_to_generic_for_legacy_instruct_context_and_reasoning_shapes(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'instruct.json',
@@ -131,12 +136,13 @@ def test_preset_detail_identifies_instruct_context_and_reasoning(monkeypatch, tm
     context = client.get('/api/presets/detail/global::context.json').get_json()['preset']
     reasoning = client.get('/api/presets/detail/global::reasoning.json').get_json()['preset']
 
-    assert instruct['preset_kind'] == 'instruct'
-    assert 'sequences' in instruct['sections']
-    assert context['preset_kind'] == 'context'
-    assert 'story' in context['sections']
-    assert reasoning['preset_kind'] == 'reasoning'
-    assert 'template' in reasoning['sections']
+    assert instruct['preset_kind'] == 'generic'
+    assert instruct['preset_kind_label'] == '通用 JSON'
+    assert instruct['editor_profile']['id'] == 'generic_json'
+    assert context['preset_kind'] == 'generic'
+    assert context['editor_profile']['id'] == 'generic_json'
+    assert reasoning['preset_kind'] == 'generic'
+    assert reasoning['editor_profile']['id'] == 'generic_json'
 
 
 def test_preset_detail_reader_view_uses_prompt_manager_family_for_prompt_presets(monkeypatch, tmp_path):
@@ -212,6 +218,209 @@ def test_preset_detail_reader_view_uses_prompt_manager_family_for_prompt_presets
     assert '预留字段' in prompt_items[2]['summary']
 
 
+def test_preset_detail_reader_view_stays_generic_for_prompt_only_generic_preset(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'generic-prompt-only.json',
+        {
+            'name': 'Generic Prompt Only',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                }
+            ],
+            'custom_flag': {'keep': True},
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::generic-prompt-only.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload['success'] is True
+
+    preset = payload['preset']
+    prompt_items = [item for item in preset['reader_view']['items'] if item['type'] == 'prompt']
+
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+    assert preset['reader_view']['family'] == 'generic'
+    assert preset['reader_view']['family_label'] == '通用预设'
+    assert preset['reader_view']['scalar_workspace'] is None
+    assert len(prompt_items) == 1
+    assert prompt_items[0]['payload']['identifier'] == 'main'
+    assert prompt_items[0]['editor']['kind'] == 'raw-json'
+    assert 'prompt_meta' not in prompt_items[0]
+    assert 'reorderable' not in prompt_items[0]
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+
+
+def test_preset_detail_detects_openai_profile_from_prompt_metadata_without_prompt_order(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'prompt-metadata-openai.json',
+        {
+            'name': 'Prompt Metadata OpenAI',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                    'system_prompt': True,
+                },
+                {
+                    'identifier': 'worldInfoAfter',
+                    'name': 'World Info (after)',
+                    'system_prompt': True,
+                    'marker': True,
+                },
+            ],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::prompt-metadata-openai.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_stays_generic_when_prompts_only_use_enabled_without_st_metadata(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'prompt-enabled-generic.json',
+        {
+            'name': 'Prompt Enabled Generic',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                    'enabled': False,
+                }
+            ],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::prompt-enabled-generic.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+
+
+def test_preset_detail_uses_openai_prompt_manager_when_enabled_and_simple_prompt_order_are_present(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'prompt-enabled-order-generic.json',
+        {
+            'name': 'Prompt Enabled Order Generic',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                    'enabled': False,
+                }
+            ],
+            'prompt_order': ['main'],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::prompt-enabled-order-generic.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_reader_view_stays_generic_for_prompt_and_prompt_order_without_openai_markers(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'generic-prompt-order.json',
+        {
+            'name': 'Generic Prompt Order',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                }
+            ],
+            'prompt_order': ['main'],
+            'custom_flag': {'keep': True},
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::generic-prompt-order.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+    assert preset['reader_view']['family'] == 'generic'
+
+
 def test_preset_detail_reader_view_reads_enabled_state_from_nested_st_prompt_order(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(
@@ -264,6 +473,56 @@ def test_preset_detail_reader_view_reads_enabled_state_from_nested_st_prompt_ord
     assert prompt_items[0]['prompt_meta']['uses_prompt_order'] is True
     assert prompt_items[0]['content_editable'] is False
     assert '禁用' in prompt_items[0]['summary']
+
+
+def test_preset_detail_uses_openai_prompt_manager_for_object_prompt_order_entries(
+    monkeypatch, tmp_path
+):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'object-prompt-order.json',
+        {
+            'name': 'Object Prompt Order',
+            'prompts': [
+                {
+                    'identifier': 'main',
+                    'name': 'Main Prompt',
+                    'role': 'system',
+                    'content': '你是助手',
+                },
+                {
+                    'identifier': 'summary',
+                    'name': 'Summary',
+                    'role': 'assistant',
+                    'content': '总结要点',
+                },
+            ],
+            'prompt_order': [
+                {'identifier': 'summary'},
+                {'identifier': 'main', 'enabled': False},
+            ],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::object-prompt-order.json')
+
+    assert res.status_code == 200
+    payload = res.get_json()['preset']
+    prompt_items = [item for item in payload['reader_view']['items'] if item['type'] == 'prompt']
+
+    assert payload['preset_kind'] == 'openai'
+    assert payload['reader_view']['family'] == 'prompt_manager'
+    assert [item['payload']['identifier'] for item in prompt_items] == ['summary', 'main']
+    assert prompt_items[0]['prompt_meta']['is_enabled'] is True
+    assert prompt_items[1]['prompt_meta']['is_enabled'] is False
 
 
 def test_preset_detail_reader_view_uses_prompt_enabled_state_for_simple_prompt_order(monkeypatch, tmp_path):
@@ -328,6 +587,7 @@ def test_preset_detail_reader_view_handles_malformed_prompt_position_values(monk
                     'injection_depth': 'NaN',
                 },
             ],
+            'prompt_order': ['main'],
         },
     )
 
@@ -349,7 +609,9 @@ def test_preset_detail_reader_view_handles_malformed_prompt_position_values(monk
     assert '相对位置' in prompt_items[0]['summary']
 
 
-def test_preset_detail_reader_view_exposes_scalar_workspace_for_textgen_prompt_manager(monkeypatch, tmp_path):
+def test_preset_detail_reader_view_uses_generic_fallback_for_legacy_textgen_prompt_manager(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'st-params.json',
@@ -404,23 +666,16 @@ def test_preset_detail_reader_view_exposes_scalar_workspace_for_textgen_prompt_m
     assert res.status_code == 200
     payload = res.get_json()
     reader_view = payload['preset']['reader_view']
-    scalar_workspace = reader_view['scalar_workspace']
+    scalar_field_keys = {
+        item['payload']['key']
+        for item in reader_view['items']
+        if item.get('group') == 'scalar_fields' and item.get('type') == 'field'
+    }
 
-    assert reader_view['family'] == 'prompt_manager'
-    assert scalar_workspace['profile_id'] == 'st_textgen_parameter_workspace'
-    assert [section['id'] for section in scalar_workspace['sections']] == [
-        'core_sampling',
-        'penalties',
-        'advanced_sampling',
-        'constraints_and_control',
-        'sampler_ordering',
-    ]
-    assert scalar_workspace['field_map']['temp']['label'] == '温度'
-    assert scalar_workspace['field_map']['rep_pen']['label'] == '重复惩罚'
-    assert scalar_workspace['field_map']['guidance_scale']['section'] == 'constraints_and_control'
-    assert scalar_workspace['field_map']['sampler_order']['section'] == 'sampler_ordering'
-    assert 'top_a' in scalar_workspace['hidden_fields']
-    assert 'typical_p' in scalar_workspace['hidden_fields']
+    assert payload['preset']['preset_kind'] == 'generic'
+    assert reader_view['family'] == 'generic'
+    assert reader_view['scalar_workspace'] is None
+    assert {'temp', 'top_p', 'rep_pen', 'temperature_last'} <= scalar_field_keys
 
 
 def test_preset_detail_exposes_chat_completion_editor_profile(monkeypatch, tmp_path):
@@ -459,17 +714,20 @@ def test_preset_detail_exposes_chat_completion_editor_profile(monkeypatch, tmp_p
     profile = preset['editor_profile']
 
     assert profile['id'] == 'st_chat_completion_preset'
+    assert profile['id'] != 'st_textgen_preset'
     assert profile['family'] == 'st_mirror'
     assert profile['supports_prompt_workspace'] is True
     assert profile['save_target'] == 'st_openai_preset_dir'
     assert profile['reader_layout'] == 'mirrored_sections'
     assert [section['id'] for section in profile['sections']] == [
+        'provider_and_models',
+        'connection_and_endpoints',
         'output_and_reasoning',
         'core_sampling',
-        'penalties',
+        'penalties_and_behavior',
         'prompt_manager',
-        'formatting_and_templates',
-        'extensions_and_advanced',
+        'templates_and_features',
+        'images_and_advanced',
     ]
     assert profile['fields']['temperature']['canonical_key'] == 'temperature'
     assert profile['fields']['temperature']['storage_keys'] == ['temperature', 'temp']
@@ -488,7 +746,7 @@ def test_preset_detail_exposes_chat_completion_editor_profile(monkeypatch, tmp_p
     assert profile['fields']['logit_bias']['control'] == 'key_value_list'
 
 
-def test_preset_detail_exposes_textgen_editor_profile(monkeypatch, tmp_path):
+def test_preset_detail_uses_generic_editor_profile_for_legacy_textgen_shape(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'textgen-mirror.json',
@@ -525,22 +783,13 @@ def test_preset_detail_exposes_textgen_editor_profile(monkeypatch, tmp_path):
     preset = res.get_json()['preset']
     profile = preset['editor_profile']
 
-    assert profile['id'] == 'st_textgen_preset'
-    assert profile['family'] == 'st_mirror'
-    assert profile['supports_prompt_workspace'] is True
-    assert profile['save_target'] == 'st_textgen_preset_dir'
-    assert profile['reader_layout'] == 'mirrored_sections'
-    assert profile['fields']['temp']['control'] == 'range_with_number'
-    assert profile['fields']['temp']['canonical_key'] == 'temp'
-    assert profile['fields']['temp']['min'] == 0
-    assert profile['fields']['temp']['max'] == 5
-    assert profile['fields']['temp']['step'] == 0.01
-    assert profile['fields']['rep_pen']['storage_key'] == 'rep_pen'
-    assert profile['fields']['streaming']['control'] == 'checkbox'
-    assert profile['fields']['mirostat_mode']['control'] == 'number'
-    assert profile['fields']['sampler_order']['control'] == 'sortable_string_list'
-    assert profile['fields']['samplers']['control'] == 'sortable_string_list'
-    assert profile['fields']['prompt_order']['control'] == 'prompt_workspace'
+    assert preset['preset_kind'] == 'generic'
+    assert profile['id'] == 'generic_json'
+    assert profile['family'] == 'generic'
+    assert profile['supports_prompt_workspace'] is False
+    assert profile['save_target'] == 'presets_dir'
+    assert profile['reader_layout'] == 'generic'
+    assert profile['fields'] == {}
 
 
 def test_preset_detail_editor_profile_fields_use_canonical_keys_and_hide_absent_present_only_fields(
@@ -581,7 +830,9 @@ def test_preset_detail_editor_profile_fields_use_canonical_keys_and_hide_absent_
     assert 'logit_bias' not in fields
 
 
-def test_preset_detail_prefers_textgen_editor_profile_for_mixed_legacy_textgen_shapes(monkeypatch, tmp_path):
+def test_preset_detail_falls_back_to_chat_completion_editor_profile_for_mixed_legacy_textgen_shapes(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'legacy-mixed-textgen.json',
@@ -609,12 +860,15 @@ def test_preset_detail_prefers_textgen_editor_profile_for_mixed_legacy_textgen_s
 
     assert res.status_code == 200
     preset = res.get_json()['preset']
-    assert preset['editor_profile']['id'] == 'st_textgen_preset'
-    assert 'rep_pen' in preset['editor_profile']['fields']
-    assert preset['editor_profile']['fields']['rep_pen']['control'] == 'range_with_number'
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+    assert 'repetition_penalty' in preset['editor_profile']['fields']
+    assert preset['editor_profile']['fields']['repetition_penalty']['control'] == 'range_with_number'
 
 
-def test_preset_detail_prefers_textgen_editor_profile_for_temperature_alias_shape(monkeypatch, tmp_path):
+def test_preset_detail_falls_back_to_generic_editor_profile_for_temperature_alias_shape(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'temperature-alias-textgen.json',
@@ -637,8 +891,9 @@ def test_preset_detail_prefers_textgen_editor_profile_for_temperature_alias_shap
 
     assert res.status_code == 200
     preset = res.get_json()['preset']
-    assert preset['editor_profile']['id'] == 'st_textgen_preset'
-    assert 'temp' in preset['editor_profile']['fields']
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+    assert preset['editor_profile']['fields'] == {}
 
 
 def test_preset_detail_prefers_chat_completion_editor_profile_when_chat_markers_dominate_alias_overlap(monkeypatch, tmp_path):
@@ -672,6 +927,350 @@ def test_preset_detail_prefers_chat_completion_editor_profile_when_chat_markers_
     preset = res.get_json()['preset']
     assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
     assert 'openai_max_context' in preset['editor_profile']['fields']
+
+
+def test_preset_detail_detects_openai_profile_from_new_st_provider_field_only(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'openrouter-only.json',
+        {
+            'name': 'OpenRouter Only',
+            'openrouter_model': 'openrouter/auto',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::openrouter-only.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_detects_openai_profile_from_openai_model_only(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'openai-model-only.json',
+        {
+            'name': 'OpenAI Model Only',
+            'openai_model': 'gpt-4.1',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::openai-model-only.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_detects_openai_profile_from_verbosity_only(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'verbosity-only.json',
+        {
+            'name': 'Verbosity Only',
+            'verbosity': 'high',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::verbosity-only.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_uses_openai_alt_root_path_hint_for_sparse_preset(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    openai_dir = tmp_path / 'st-openai-presets'
+    _write_json(
+        openai_dir / 'sparse-openai.json',
+        {
+            'name': 'Sparse OpenAI',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {
+            'presets_dir': str(presets_dir),
+            'resources_dir': str(tmp_path / 'resources'),
+            'st_openai_preset_dir': str(openai_dir),
+            'st_textgen_preset_dir': '',
+            'st_instruct_preset_dir': '',
+            'st_context_preset_dir': '',
+            'st_sysprompt_dir': '',
+            'st_reasoning_dir': '',
+        },
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global-alt::st_openai_preset_dir::sparse-openai.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+
+
+def test_preset_detail_does_not_use_normal_openai_folder_name_as_openai_hint(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'openai' / 'sparse-generic.json',
+        {
+            'name': 'Sparse Generic',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {
+            'presets_dir': str(presets_dir),
+            'resources_dir': str(tmp_path / 'resources'),
+            'st_openai_preset_dir': '',
+            'st_textgen_preset_dir': '',
+            'st_instruct_preset_dir': '',
+            'st_context_preset_dir': '',
+            'st_sysprompt_dir': '',
+            'st_reasoning_dir': '',
+        },
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::openai/sparse-generic.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'generic'
+    assert preset['editor_profile']['id'] == 'generic_json'
+
+
+def test_preset_detail_exposes_new_openai_provider_fields_in_sections(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'custom-url-openai.json',
+        {
+            'name': 'Custom URL OpenAI',
+            'custom_url': 'https://example.invalid/v1',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::custom-url-openai.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['sections']['connection_and_endpoints'] == [
+        {
+            'key': 'custom_url',
+            'source_key': 'custom_url',
+            'label': '自定义接口地址',
+            'value': 'https://example.invalid/v1',
+        }
+    ]
+
+
+def test_preset_detail_exposes_aligned_openai_output_and_behavior_sections(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'aligned-openai-sections.json',
+        {
+            'name': 'Aligned OpenAI Sections',
+            'openai_max_context': 8192,
+            'reasoning_effort': 'medium',
+            'verbosity': 'high',
+            'names_behavior': 'always',
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::aligned-openai-sections.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['sections']['output_and_reasoning'] == [
+        {
+            'key': 'openai_max_context',
+            'source_key': 'openai_max_context',
+            'label': '上下文长度',
+            'value': 8192,
+        },
+        {
+            'key': 'reasoning_effort',
+            'source_key': 'reasoning_effort',
+            'label': '推理强度',
+            'value': 'medium',
+        },
+        {
+            'key': 'verbosity',
+            'source_key': 'verbosity',
+            'label': '输出冗长度',
+            'value': 'high',
+        },
+    ]
+    assert preset['sections']['penalties_and_behavior'] == [
+        {
+            'key': 'names_behavior',
+            'source_key': 'names_behavior',
+            'label': '名称行为',
+            'value': 'always',
+        }
+    ]
+
+    reader_item = next(
+        item for item in preset['reader_view']['items'] if item['payload'].get('key') == 'names_behavior'
+    )
+    assert reader_item['editor']['kind'] == 'select'
+    assert reader_item['editor']['options'] == ['default', 'always', 'never']
+
+
+def test_preset_detail_uses_canonical_openai_section_keys(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'canonical-openai-keys.json',
+        {
+            'name': 'Canonical OpenAI Keys',
+            'openai_max_tokens': 1200,
+            'temp': 0.8,
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::canonical-openai-keys.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+    assert preset['sections']['output_and_reasoning'] == [
+        {
+            'key': 'openai_max_tokens',
+            'source_key': 'openai_max_tokens',
+            'label': '最大生成长度',
+            'value': 1200,
+        }
+    ]
+    assert preset['sections']['core_sampling'] == [
+        {
+            'key': 'temperature',
+            'source_key': 'temp',
+            'label': '温度',
+            'value': 0.8,
+        }
+    ]
+    assert all(item['key'] != 'max_tokens' for item in preset['sections']['output_and_reasoning'])
+    assert all(item['key'] != 'temp' for item in preset['sections']['core_sampling'])
+
+
+def test_preset_detail_uses_only_aligned_openai_section_ids_for_advanced_fields(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    _write_json(
+        presets_dir / 'aligned-openai-advanced-sections.json',
+        {
+            'name': 'Aligned OpenAI Advanced Sections',
+            'openai_model': 'gpt-4.1',
+            'dynamic_temperature': True,
+            'mirostat_mode': 2,
+            'mirostat_tau': 5,
+            'mirostat_eta': 0.1,
+            'guidance_scale': 1.5,
+            'negative_prompt': 'avoid repetition',
+            'wrap_in_quotes': True,
+            'json_schema': '{"type":"object"}',
+            'grammar': 'root ::= "ok"',
+            'logit_bias': [{'text': 'forbidden', 'value': -10}],
+            'sampler_order': ['temperature', 'top_p'],
+            'samplers': ['top_p', 'min_p'],
+        },
+    )
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {'presets_dir': str(presets_dir), 'resources_dir': str(tmp_path / 'resources')},
+    )
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/detail/global::aligned-openai-advanced-sections.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['preset_kind'] == 'openai'
+
+    assert 'images_and_advanced' in preset['sections']
+    assert {item['key'] for item in preset['sections']['images_and_advanced']} >= {
+        'dynamic_temperature',
+        'mirostat_mode',
+        'mirostat_tau',
+        'mirostat_eta',
+        'guidance_scale',
+        'negative_prompt',
+        'wrap_in_quotes',
+        'json_schema',
+        'grammar',
+        'logit_bias',
+        'sampler_order',
+        'samplers',
+    }
+
+    assert 'core_sampling_advanced' not in preset['sections']
+    assert 'schema_and_grammar' not in preset['sections']
+    assert 'bans_and_bias' not in preset['sections']
+    assert 'sampler_ordering' not in preset['sections']
 
 
 def test_preset_detail_reader_view_flattens_all_nested_prompt_order_buckets(monkeypatch, tmp_path):
@@ -777,7 +1376,7 @@ def test_preset_detail_reader_view_deduplicates_prompt_identifiers_across_nested
     assert prompt_items[0]['prompt_meta']['is_enabled'] is False
 
 
-def test_preset_detail_scalar_workspace_field_map_resolves_aliases_to_canonical_entries(monkeypatch, tmp_path):
+def test_preset_detail_openai_prompt_manager_does_not_expose_legacy_scalar_workspace(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'alias-params.json',
@@ -806,18 +1405,15 @@ def test_preset_detail_scalar_workspace_field_map_resolves_aliases_to_canonical_
     res = client.get('/api/presets/detail/global::alias-params.json')
 
     assert res.status_code == 200
-    scalar_workspace = res.get_json()['preset']['reader_view']['scalar_workspace']
+    preset = res.get_json()['preset']
 
-    assert scalar_workspace['field_map']['rep_pen']['canonical_key'] == 'repetition_penalty'
-    assert scalar_workspace['field_map']['freq_pen']['canonical_key'] == 'frequency_penalty'
-    assert scalar_workspace['field_map']['pres_pen']['canonical_key'] == 'presence_penalty'
-    assert scalar_workspace['field_map']['dynatemp']['canonical_key'] == 'dynamic_temperature'
-    assert scalar_workspace['field_map']['min_temp']['canonical_key'] == 'dynatemp_low'
-    assert scalar_workspace['field_map']['max_temp']['canonical_key'] == 'dynatemp_high'
-    assert scalar_workspace['field_map']['grammar_string']['canonical_key'] == 'grammar'
+    assert preset['preset_kind'] == 'generic'
+    assert preset['reader_view']['scalar_workspace'] is None
 
 
-def test_preset_detail_scalar_workspace_hides_non_st_scalar_fields_from_reader_items(monkeypatch, tmp_path):
+def test_preset_detail_openai_prompt_manager_keeps_legacy_scalar_fields_in_reader_items(
+    monkeypatch, tmp_path
+):
     presets_dir = tmp_path / 'presets'
     _write_json(
         presets_dir / 'hidden-params.json',
@@ -859,13 +1455,13 @@ def test_preset_detail_scalar_workspace_hides_non_st_scalar_fields_from_reader_i
     ]
 
     assert 'temp' in scalar_item_keys
-    assert 'top_a' not in scalar_item_keys
-    assert 'typical_p' not in scalar_item_keys
-    assert 'xtc_threshold' not in scalar_item_keys
+    assert 'top_a' in scalar_item_keys
+    assert 'typical_p' in scalar_item_keys
+    assert 'xtc_threshold' in scalar_item_keys
     assert preset['raw_data']['top_a'] == 0.4
 
 
-def test_preset_detail_reader_view_does_not_expose_scalar_workspace_for_non_textgen_prompt_manager(
+def test_preset_detail_reader_view_stays_generic_for_instruct_overlap_without_st_prompt_markers(
     monkeypatch, tmp_path
 ):
     presets_dir = tmp_path / 'presets'
@@ -902,8 +1498,8 @@ def test_preset_detail_reader_view_does_not_expose_scalar_workspace_for_non_text
     assert res.status_code == 200
     payload = res.get_json()
     preset = payload['preset']
-    assert preset['preset_kind'] == 'instruct'
-    assert preset['reader_view']['family'] == 'prompt_manager'
+    assert preset['preset_kind'] == 'generic'
+    assert preset['reader_view']['family'] == 'generic'
     assert preset['reader_view']['scalar_workspace'] is None
 
 
@@ -918,7 +1514,7 @@ def test_merge_preset_content_preserves_hidden_textgen_fields_when_visible_works
 
     merged = presets_api.merge_preset_content(
         raw_data,
-        'textgen',
+        'generic',
         {
             'temp': 1.05,
             'prompts': [{'identifier': 'main', 'content': 'hello'}],

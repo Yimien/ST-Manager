@@ -48,6 +48,15 @@ from core.utils.hash import _calculate_data_hash
 
 bp = Blueprint('system', __name__)
 
+
+REMOVED_ST_PRESET_DIRECTORY_KEYS = (
+    'st_textgen_preset_dir',
+    'st_instruct_preset_dir',
+    'st_context_preset_dir',
+    'st_sysprompt_dir',
+    'st_reasoning_dir',
+)
+
 logger = logging.getLogger(__name__)
 
 _shared_wallpaper_service = None
@@ -277,6 +286,8 @@ def api_save_settings():
         config_payload = dict(new_config or {})
         config_payload.pop('manager_wallpaper_id', None)
         config_payload.pop('shared_wallpapers', None)
+        for key in REMOVED_ST_PRESET_DIRECTORY_KEYS:
+            config_payload.pop(key, None)
         if not save_config(config_payload):
             return jsonify({'success': False, 'msg': '保存配置失败'}), 500
 
@@ -330,7 +341,10 @@ def api_save_settings():
 
 @bp.route('/api/get_settings')
 def api_get_settings():
-    cfg = load_config()
+    cfg = dict(load_config())
+    for key in REMOVED_ST_PRESET_DIRECTORY_KEYS:
+        cfg.pop(key, None)
+
     # 确保有默认值，防止前端 undefined
     if 'cards_dir' not in cfg:
         cfg['cards_dir'] = 'data/library/characters'
@@ -342,16 +356,6 @@ def api_get_settings():
         cfg['presets_dir'] = 'data/library/presets'
     if 'st_openai_preset_dir' not in cfg:
         cfg['st_openai_preset_dir'] = ''
-    if 'st_textgen_preset_dir' not in cfg:
-        cfg['st_textgen_preset_dir'] = ''
-    if 'st_instruct_preset_dir' not in cfg:
-        cfg['st_instruct_preset_dir'] = ''
-    if 'st_context_preset_dir' not in cfg:
-        cfg['st_context_preset_dir'] = ''
-    if 'st_sysprompt_dir' not in cfg:
-        cfg['st_sysprompt_dir'] = ''
-    if 'st_reasoning_dir' not in cfg:
-        cfg['st_reasoning_dir'] = ''
     if 'quick_replies_dir' not in cfg:
         cfg['quick_replies_dir'] = 'data/library/extensions/quick-replies'
     if 'default_sort' not in cfg:

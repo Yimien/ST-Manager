@@ -4,11 +4,6 @@ import copy
 
 
 CHAT_COMPLETION_PROFILE_ID = 'st_chat_completion_preset'
-TEXTGEN_PROFILE_ID = 'st_textgen_preset'
-INSTRUCT_PROFILE_ID = 'st_instruct_template'
-CONTEXT_PROFILE_ID = 'st_context_template'
-SYSPROMPT_PROFILE_ID = 'st_sysprompt_template'
-REASONING_PROFILE_ID = 'st_reasoning_template'
 GENERIC_PROFILE_ID = 'generic_json'
 
 
@@ -24,42 +19,6 @@ CHAT_COMPLETION_MARKER_FIELDS = {
     'personality_format',
 }
 
-TEXTGEN_MARKER_FIELDS = {
-    'temp',
-    'rep_pen',
-    'freq_pen',
-    'pres_pen',
-    'streaming',
-    'dynatemp',
-    'min_temp',
-    'max_temp',
-    'sampler_order',
-}
-
-CHAT_COMPLETION_STRONG_MARKERS = {
-    'openai_max_context',
-    'openai_max_tokens',
-    'stream_openai',
-    'show_thoughts',
-    'reasoning_effort',
-}
-
-TEXTGEN_STRONG_MARKERS = {
-    'rep_pen',
-    'streaming',
-    'dynatemp',
-    'min_temp',
-    'max_temp',
-    'sampler_order',
-}
-
-TEXTGEN_ALIAS_OVERLAP_MARKERS = {
-    'temp',
-    'temperature',
-    'freq_pen',
-    'pres_pen',
-}
-
 ALLOWED_PASSTHROUGH_SAVE_KEYS = {
     'name',
     'title',
@@ -67,6 +26,12 @@ ALLOWED_PASSTHROUGH_SAVE_KEYS = {
     'note',
     'extensions',
 }
+
+OPENAI_RUNTIME_ONLY_SAVE_KEYS = {
+    'api_url',
+}
+
+MANAGED_PRESET_KIND_KEY = '__st_manager_preset_kind'
 
 
 def _field(
@@ -113,12 +78,14 @@ def _field(
 
 
 CHAT_COMPLETION_SECTIONS = [
+    {'id': 'provider_and_models', 'label': '提供商与模型', 'description': '来源、模型选择与提供商相关配置'},
+    {'id': 'connection_and_endpoints', 'label': '连接与端点', 'description': 'API 地址、代理与鉴权等连接配置'},
     {'id': 'output_and_reasoning', 'label': '输出与推理', 'description': '上下文、回复长度、流式与推理配置'},
     {'id': 'core_sampling', 'label': '核心采样', 'description': '温度、Top P、Top K 与相关采样参数'},
-    {'id': 'penalties', 'label': '惩罚', 'description': '频率、存在与重复惩罚'},
+    {'id': 'penalties_and_behavior', 'label': '惩罚与行为', 'description': '频率、存在、命名与系统提示等行为配置'},
     {'id': 'prompt_manager', 'label': '提示词管理', 'description': 'Prompt 顺序、启用状态与正文编辑'},
-    {'id': 'formatting_and_templates', 'label': '格式与模板', 'description': '格式化提示词与模板字段'},
-    {'id': 'extensions_and_advanced', 'label': '扩展与高级', 'description': '扩展、bias、seed 与附加高级参数'},
+    {'id': 'templates_and_features', 'label': '模板与特性', 'description': '模板字段、函数调用与多模态特性'},
+    {'id': 'images_and_advanced', 'label': '图像与高级', 'description': '图像请求、扩展、bias、seed 与高级参数'},
 ]
 
 
@@ -135,6 +102,50 @@ TEXTGEN_SECTIONS = [
 
 
 CHAT_COMPLETION_FIELDS = {
+    'chat_completion_source': _field(
+        'chat_completion_source',
+        ['chat_completion_source'],
+        section='provider_and_models',
+        label='聊天补全来源',
+        control='select',
+        default='openai',
+        options=['openai', 'openrouter', 'custom', 'claude', 'azure_openai', 'zai'],
+    ),
+    'openai_model': _field(
+        'openai_model',
+        ['openai_model'],
+        section='provider_and_models',
+        label='OpenAI 模型',
+        control='text',
+    ),
+    'openrouter_model': _field(
+        'openrouter_model',
+        ['openrouter_model'],
+        section='provider_and_models',
+        label='OpenRouter 模型',
+        control='text',
+    ),
+    'custom_url': _field(
+        'custom_url',
+        ['custom_url'],
+        section='connection_and_endpoints',
+        label='自定义接口地址',
+        control='text',
+    ),
+    'reverse_proxy': _field(
+        'reverse_proxy',
+        ['reverse_proxy'],
+        section='connection_and_endpoints',
+        label='反向代理',
+        control='text',
+    ),
+    'proxy_password': _field(
+        'proxy_password',
+        ['proxy_password'],
+        section='connection_and_endpoints',
+        label='代理密码',
+        control='password',
+    ),
     'openai_max_context': _field(
         'openai_max_context',
         ['openai_max_context'],
@@ -193,6 +204,14 @@ CHAT_COMPLETION_FIELDS = {
         default='auto',
         options=['auto', 'low', 'medium', 'high'],
         visibility_rule='present_or_core',
+    ),
+    'use_sysprompt': _field(
+        'use_sysprompt',
+        ['use_sysprompt'],
+        section='templates_and_features',
+        label='使用系统提示词',
+        control='checkbox',
+        default=True,
     ),
     'temperature': _field(
         'temperature',
@@ -260,7 +279,7 @@ CHAT_COMPLETION_FIELDS = {
     'frequency_penalty': _field(
         'frequency_penalty',
         ['frequency_penalty', 'freq_pen'],
-        section='penalties',
+        section='penalties_and_behavior',
         label='频率惩罚',
         control='range_with_number',
         min_value=-2,
@@ -272,7 +291,7 @@ CHAT_COMPLETION_FIELDS = {
     'presence_penalty': _field(
         'presence_penalty',
         ['presence_penalty', 'pres_pen'],
-        section='penalties',
+        section='penalties_and_behavior',
         label='存在惩罚',
         control='range_with_number',
         min_value=-2,
@@ -284,7 +303,7 @@ CHAT_COMPLETION_FIELDS = {
     'repetition_penalty': _field(
         'repetition_penalty',
         ['repetition_penalty', 'rep_pen'],
-        section='penalties',
+        section='penalties_and_behavior',
         label='重复惩罚',
         control='range_with_number',
         min_value=1,
@@ -293,6 +312,15 @@ CHAT_COMPLETION_FIELDS = {
         default=1,
         visibility_rule='present_only',
         reader_style='slider_snapshot',
+    ),
+    'names_behavior': _field(
+        'names_behavior',
+        ['names_behavior'],
+        section='penalties_and_behavior',
+        label='名称行为',
+        control='select',
+        default='default',
+        options=['default', 'always', 'never'],
     ),
     'prompts': _field(
         'prompts',
@@ -313,7 +341,7 @@ CHAT_COMPLETION_FIELDS = {
     'wi_format': _field(
         'wi_format',
         ['wi_format'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='世界书格式',
         control='textarea',
         visibility_rule='present_or_core',
@@ -321,7 +349,7 @@ CHAT_COMPLETION_FIELDS = {
     'scenario_format': _field(
         'scenario_format',
         ['scenario_format'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='场景格式',
         control='textarea',
         visibility_rule='present_or_core',
@@ -329,7 +357,7 @@ CHAT_COMPLETION_FIELDS = {
     'personality_format': _field(
         'personality_format',
         ['personality_format'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='人格格式',
         control='textarea',
         visibility_rule='present_or_core',
@@ -337,7 +365,7 @@ CHAT_COMPLETION_FIELDS = {
     'assistant_prefill': _field(
         'assistant_prefill',
         ['assistant_prefill'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='Assistant Prefill',
         control='textarea',
         visibility_rule='present_only',
@@ -345,7 +373,7 @@ CHAT_COMPLETION_FIELDS = {
     'assistant_impersonation': _field(
         'assistant_impersonation',
         ['assistant_impersonation'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='Assistant Impersonation',
         control='textarea',
         visibility_rule='present_only',
@@ -353,7 +381,7 @@ CHAT_COMPLETION_FIELDS = {
     'impersonation_prompt': _field(
         'impersonation_prompt',
         ['impersonation_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='Impersonation Prompt',
         control='textarea',
         visibility_rule='present_only',
@@ -361,7 +389,7 @@ CHAT_COMPLETION_FIELDS = {
     'new_chat_prompt': _field(
         'new_chat_prompt',
         ['new_chat_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='New Chat Prompt',
         control='textarea',
         visibility_rule='present_or_core',
@@ -369,7 +397,7 @@ CHAT_COMPLETION_FIELDS = {
     'new_group_chat_prompt': _field(
         'new_group_chat_prompt',
         ['new_group_chat_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='New Group Chat Prompt',
         control='textarea',
         visibility_rule='present_only',
@@ -377,7 +405,7 @@ CHAT_COMPLETION_FIELDS = {
     'new_example_chat_prompt': _field(
         'new_example_chat_prompt',
         ['new_example_chat_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='New Example Chat Prompt',
         control='textarea',
         visibility_rule='present_only',
@@ -385,7 +413,7 @@ CHAT_COMPLETION_FIELDS = {
     'continue_nudge_prompt': _field(
         'continue_nudge_prompt',
         ['continue_nudge_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='Continue Nudge Prompt',
         control='textarea',
         visibility_rule='present_or_core',
@@ -393,15 +421,53 @@ CHAT_COMPLETION_FIELDS = {
     'group_nudge_prompt': _field(
         'group_nudge_prompt',
         ['group_nudge_prompt'],
-        section='formatting_and_templates',
+        section='templates_and_features',
         label='Group Nudge Prompt',
         control='textarea',
         visibility_rule='present_only',
     ),
+    'function_calling': _field(
+        'function_calling',
+        ['function_calling'],
+        section='templates_and_features',
+        label='函数调用',
+        control='checkbox',
+        default=False,
+    ),
+    'media_inlining': _field(
+        'media_inlining',
+        ['media_inlining'],
+        section='images_and_advanced',
+        label='媒体内联',
+        control='checkbox',
+        default=False,
+    ),
+    'request_images': _field(
+        'request_images',
+        ['request_images'],
+        section='images_and_advanced',
+        label='请求图像',
+        control='checkbox',
+        default=False,
+    ),
+    'request_image_aspect_ratio': _field(
+        'request_image_aspect_ratio',
+        ['request_image_aspect_ratio'],
+        section='images_and_advanced',
+        label='图像比例',
+        control='text',
+    ),
+    'request_image_resolution': _field(
+        'request_image_resolution',
+        ['request_image_resolution'],
+        section='images_and_advanced',
+        label='图像分辨率',
+        control='text',
+    ),
     'extensions': _field(
         'extensions',
         ['extensions'],
-        section='extensions_and_advanced',
+        section='images_and_advanced',
         label='扩展',
         control='raw_json',
         visibility_rule='present_or_core',
@@ -409,7 +475,7 @@ CHAT_COMPLETION_FIELDS = {
     'logit_bias': _field(
         'logit_bias',
         ['logit_bias'],
-        section='extensions_and_advanced',
+        section='images_and_advanced',
         label='Logit Bias',
         control='key_value_list',
         visibility_rule='present_only',
@@ -417,7 +483,7 @@ CHAT_COMPLETION_FIELDS = {
     'seed': _field(
         'seed',
         ['seed'],
-        section='extensions_and_advanced',
+        section='images_and_advanced',
         label='Seed',
         control='number',
         min_value=-1,
@@ -428,7 +494,7 @@ CHAT_COMPLETION_FIELDS = {
     'n': _field(
         'n',
         ['n'],
-        section='extensions_and_advanced',
+        section='images_and_advanced',
         label='生成分支数',
         control='number',
         min_value=1,
@@ -780,56 +846,6 @@ PROFILE_REGISTRY = {
         'sections': CHAT_COMPLETION_SECTIONS,
         'fields': CHAT_COMPLETION_FIELDS,
     },
-    TEXTGEN_PROFILE_ID: {
-        'id': TEXTGEN_PROFILE_ID,
-        'label': 'ST 文本生成预设',
-        'family': 'st_mirror',
-        'supports_prompt_workspace': True,
-        'reader_layout': 'mirrored_sections',
-        'save_target': 'st_textgen_preset_dir',
-        'sections': TEXTGEN_SECTIONS,
-        'fields': TEXTGEN_FIELDS,
-    },
-    INSTRUCT_PROFILE_ID: {
-        'id': INSTRUCT_PROFILE_ID,
-        'label': 'ST 指令模板',
-        'family': 'template',
-        'supports_prompt_workspace': False,
-        'reader_layout': 'generic',
-        'save_target': 'st_instruct_preset_dir',
-        'sections': [],
-        'fields': {},
-    },
-    CONTEXT_PROFILE_ID: {
-        'id': CONTEXT_PROFILE_ID,
-        'label': 'ST 上下文模板',
-        'family': 'template',
-        'supports_prompt_workspace': False,
-        'reader_layout': 'generic',
-        'save_target': 'st_context_preset_dir',
-        'sections': [],
-        'fields': {},
-    },
-    SYSPROMPT_PROFILE_ID: {
-        'id': SYSPROMPT_PROFILE_ID,
-        'label': 'ST 系统提示词',
-        'family': 'template',
-        'supports_prompt_workspace': False,
-        'reader_layout': 'generic',
-        'save_target': 'st_sysprompt_dir',
-        'sections': [],
-        'fields': {},
-    },
-    REASONING_PROFILE_ID: {
-        'id': REASONING_PROFILE_ID,
-        'label': 'ST 思维链模板',
-        'family': 'template',
-        'supports_prompt_workspace': False,
-        'reader_layout': 'generic',
-        'save_target': 'st_reasoning_dir',
-        'sections': [],
-        'fields': {},
-    },
     GENERIC_PROFILE_ID: {
         'id': GENERIC_PROFILE_ID,
         'label': 'Generic JSON',
@@ -890,50 +906,15 @@ def _resolve_dynamic_max_value(max_value, current_value, incoming_value=None):
     return fallback
 
 
-def _score_editor_profile_markers(data):
-    textgen_score = 0
-    chat_score = 0
-
-    for key in CHAT_COMPLETION_STRONG_MARKERS:
-        if key in data:
-            chat_score += 2
-
-    for key in TEXTGEN_STRONG_MARKERS:
-        if key in data:
-            textgen_score += 2
-
-    for key in TEXTGEN_ALIAS_OVERLAP_MARKERS:
-        if key in data:
-            textgen_score += 1
-
-    if 'top_p' in data:
-        textgen_score += 1
-        chat_score += 1
-
-    return textgen_score, chat_score
-
-
 def detect_editor_profile_id(raw_data, preset_kind):
-    if preset_kind == 'instruct':
-        return INSTRUCT_PROFILE_ID
-    if preset_kind == 'context':
-        return CONTEXT_PROFILE_ID
-    if preset_kind == 'sysprompt':
-        return SYSPROMPT_PROFILE_ID
-    if preset_kind == 'reasoning':
-        return REASONING_PROFILE_ID
-    if preset_kind != 'textgen':
-        return GENERIC_PROFILE_ID
-
     data = raw_data if isinstance(raw_data, dict) else {}
-    textgen_score, chat_score = _score_editor_profile_markers(data)
-    if textgen_score > chat_score and textgen_score > 0:
-        return TEXTGEN_PROFILE_ID
-    if chat_score > 0:
+    if preset_kind == 'openai':
         return CHAT_COMPLETION_PROFILE_ID
-    if any(field in data for field in TEXTGEN_MARKER_FIELDS):
-        return TEXTGEN_PROFILE_ID
+    if preset_kind == 'generic':
+        return GENERIC_PROFILE_ID
     if any(field in data for field in CHAT_COMPLETION_MARKER_FIELDS):
+        return CHAT_COMPLETION_PROFILE_ID
+    if isinstance(data.get('prompts'), list):
         return CHAT_COMPLETION_PROFILE_ID
     return GENERIC_PROFILE_ID
 
@@ -980,7 +961,8 @@ def normalize_preset_content_for_save(raw_data, preset_kind, content):
     profile_data = dict(source_data)
     if isinstance(normalized, dict):
         profile_data.update(normalized)
-    profile_def = get_editor_profile_definition(profile_data, preset_kind)
+    profile_id = detect_editor_profile_id(profile_data, preset_kind)
+    profile_def = PROFILE_REGISTRY[profile_id]
     if not profile_def.get('fields'):
         return normalized
 
@@ -989,7 +971,12 @@ def normalize_preset_content_for_save(raw_data, preset_kind, content):
     for key in list(normalized.keys()):
         field_def = _resolve_field_def(profile_def, key)
         if field_def is None:
+            if key == MANAGED_PRESET_KIND_KEY:
+                continue
             if key in ALLOWED_PASSTHROUGH_SAVE_KEYS:
+                filtered[key] = copy.deepcopy(normalized[key])
+                continue
+            if profile_id == CHAT_COMPLETION_PROFILE_ID and key not in OPENAI_RUNTIME_ONLY_SAVE_KEYS:
                 filtered[key] = copy.deepcopy(normalized[key])
             continue
 

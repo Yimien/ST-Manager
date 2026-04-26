@@ -239,6 +239,73 @@ def test_preset_same_name_different_global_folders_do_not_conflict(monkeypatch, 
     }
 
 
+def test_list_presets_includes_openai_alternate_root_files_in_global_results(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    openai_dir = tmp_path / 'st-openai-presets'
+    presets_dir.mkdir(parents=True, exist_ok=True)
+    openai_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {
+            'presets_dir': str(presets_dir),
+            'resources_dir': str(tmp_path / 'resources'),
+            'st_openai_preset_dir': str(openai_dir),
+        },
+    )
+    monkeypatch.setattr(presets_api, 'load_ui_data', lambda: {}, raising=False)
+    monkeypatch.setattr(presets_api, 'get_resource_item_categories', ui_store_module.get_resource_item_categories, raising=False)
+    monkeypatch.setattr(presets_api, '_get_cards_by_resource_folder', lambda: {}, raising=False)
+
+    _write_json(openai_dir / 'OpenAI' / 'chat.json', {'name': 'Chat Preset', 'openai_model': 'gpt-4.1'})
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/list?filter_type=global')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert len(payload['items']) == 1
+    item = payload['items'][0]
+    assert item['id'] == 'global-alt::st_openai_preset_dir::OpenAI/chat.json'
+    assert item['type'] == 'global'
+    assert item['source_type'] == 'global'
+    assert item['source_folder'] == 'st_openai_preset_dir'
+    assert item['display_category'] == 'OpenAI'
+    assert item['physical_category'] == 'OpenAI'
+
+
+def test_list_presets_deduplicates_overlapping_openai_alternate_root_files(monkeypatch, tmp_path):
+    presets_dir = tmp_path / 'presets'
+    openai_dir = presets_dir / 'OpenAI'
+    openai_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(tmp_path))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {
+            'presets_dir': str(presets_dir),
+            'resources_dir': str(tmp_path / 'resources'),
+            'st_openai_preset_dir': str(openai_dir),
+        },
+    )
+    monkeypatch.setattr(presets_api, 'load_ui_data', lambda: {}, raising=False)
+    monkeypatch.setattr(presets_api, 'get_resource_item_categories', ui_store_module.get_resource_item_categories, raising=False)
+    monkeypatch.setattr(presets_api, '_get_cards_by_resource_folder', lambda: {}, raising=False)
+
+    _write_json(openai_dir / 'chat.json', {'name': 'Chat Preset', 'openai_model': 'gpt-4.1'})
+
+    client = _make_test_app().test_client()
+    res = client.get('/api/presets/list?filter_type=global')
+
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert len(payload['items']) == 1
+    assert payload['items'][0]['id'] == 'global::OpenAI/chat.json'
+
+
 def test_list_presets_returns_folder_capabilities(monkeypatch, tmp_path):
     presets_dir, resources_dir = _setup_preset_env(
         monkeypatch,

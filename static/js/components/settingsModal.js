@@ -241,11 +241,6 @@ export default function settingsModal() {
         "settingsForm.quick_replies_dir",
         "settingsForm.st_data_dir",
         "settingsForm.st_openai_preset_dir",
-        "settingsForm.st_textgen_preset_dir",
-        "settingsForm.st_instruct_preset_dir",
-        "settingsForm.st_context_preset_dir",
-        "settingsForm.st_sysprompt_dir",
-        "settingsForm.st_reasoning_dir",
       ].forEach((expression) => {
         this.$watch(expression, () => {
           if (!this.showSettingsModal) return;

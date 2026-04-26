@@ -223,26 +223,26 @@ def run_shared_wallpaper_picker_runtime_check(script_body):
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_state_settings_form_includes_profile_specific_preset_directories():
+def test_state_settings_form_only_includes_openai_preset_directory():
     source = read_project_file('static/js/state.js')
 
     assert 'st_openai_preset_dir:' in source
-    assert 'st_textgen_preset_dir:' in source
-    assert 'st_instruct_preset_dir:' in source
-    assert 'st_context_preset_dir:' in source
-    assert 'st_sysprompt_dir:' in source
-    assert 'st_reasoning_dir:' in source
+    assert 'st_textgen_preset_dir:' not in source
+    assert 'st_instruct_preset_dir:' not in source
+    assert 'st_context_preset_dir:' not in source
+    assert 'st_sysprompt_dir:' not in source
+    assert 'st_reasoning_dir:' not in source
 
 
-def test_settings_template_exposes_profile_specific_preset_directory_inputs():
+def test_settings_template_only_exposes_openai_preset_directory_input():
     source = read_project_file('templates/modals/settings.html')
 
     assert 'x-model="settingsForm.st_openai_preset_dir"' in source
-    assert 'x-model="settingsForm.st_textgen_preset_dir"' in source
-    assert 'x-model="settingsForm.st_instruct_preset_dir"' in source
-    assert 'x-model="settingsForm.st_context_preset_dir"' in source
-    assert 'x-model="settingsForm.st_sysprompt_dir"' in source
-    assert 'x-model="settingsForm.st_reasoning_dir"' in source
+    assert 'x-model="settingsForm.st_textgen_preset_dir"' not in source
+    assert 'x-model="settingsForm.st_instruct_preset_dir"' not in source
+    assert 'x-model="settingsForm.st_context_preset_dir"' not in source
+    assert 'x-model="settingsForm.st_sysprompt_dir"' not in source
+    assert 'x-model="settingsForm.st_reasoning_dir"' not in source
 
 
 def test_settings_template_exposes_path_safety_warning_and_sync_blocking_bindings():
@@ -1266,11 +1266,6 @@ def test_settings_modal_watches_st_compatibility_fields_for_live_path_safety_ref
             settingsForm: {
               st_data_dir: 'D:/SillyTavern',
               st_openai_preset_dir: 'D:/SillyTavern/data/default-user/openai',
-              st_textgen_preset_dir: '',
-              st_instruct_preset_dir: '',
-              st_context_preset_dir: '',
-              st_sysprompt_dir: '',
-              st_reasoning_dir: '',
               allowed_abs_resource_roots: [],
             },
           },
@@ -1280,11 +1275,6 @@ def test_settings_modal_watches_st_compatibility_fields_for_live_path_safety_ref
 
         const compatibilityFields = [
           'settingsForm.st_openai_preset_dir',
-          'settingsForm.st_textgen_preset_dir',
-          'settingsForm.st_instruct_preset_dir',
-          'settingsForm.st_context_preset_dir',
-          'settingsForm.st_sysprompt_dir',
-          'settingsForm.st_reasoning_dir',
         ];
 
         for (const expression of compatibilityFields) {

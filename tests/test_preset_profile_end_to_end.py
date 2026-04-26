@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+
 
 from core.api.v1 import presets as presets_api
 
@@ -33,118 +35,108 @@ def _configure(monkeypatch, tmp_path, presets_dir):
             'presets_dir': str(presets_dir),
             'resources_dir': str(tmp_path / 'resources'),
             'st_openai_preset_dir': '',
-            'st_textgen_preset_dir': '',
-            'st_instruct_preset_dir': '',
-            'st_context_preset_dir': '',
-            'st_sysprompt_dir': '',
-            'st_reasoning_dir': '',
         },
     )
 
 
-def test_chat_completion_mirror_detail_save_reload_round_trip(monkeypatch, tmp_path):
+def _configure_workspace_samples(monkeypatch):
+    monkeypatch.setattr(presets_api, 'BASE_DIR', str(WORKSPACE_ROOT))
+    monkeypatch.setattr(
+        presets_api,
+        'load_config',
+        lambda: {
+            'presets_dir': 'data/library/presets',
+            'resources_dir': 'data/assets/card_assets',
+            'st_openai_preset_dir': '',
+        },
+    )
+
+
+def test_sample_gemini_preset_is_detected_as_openai_profile(monkeypatch):
+    _configure_workspace_samples(monkeypatch)
+    client = _make_test_app().test_client()
+
+    res = client.get('/api/presets/detail/global::Ny-Gemini-1.3.9-pro_Sigon.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+    assert preset['preset_kind'] == 'openai'
+    assert preset['reader_view']['family'] == 'prompt_manager'
+
+
+def test_sample_prismfox_preset_is_detected_as_openai_profile(monkeypatch):
+    _configure_workspace_samples(monkeypatch)
+    client = _make_test_app().test_client()
+
+    res = client.get('/api/presets/detail/global::双人成行 V3.5 光头强—PrismFox.json')
+
+    assert res.status_code == 200
+    preset = res.get_json()['preset']
+    assert preset['editor_profile']['id'] == 'st_chat_completion_preset'
+    assert preset['preset_kind'] == 'openai'
+    assert preset['reader_view']['family'] == 'prompt_manager'
+
+
+def test_openai_profile_round_trip_preserves_reasoning_and_connection_fields(monkeypatch, tmp_path):
     presets_dir = tmp_path / 'presets'
-    preset_file = presets_dir / 'chat.json'
+    preset_file = presets_dir / 'round-trip.json'
     _write_json(
         preset_file,
         {
-            'name': 'Chat',
-            'temperature': 0.7,
-            'top_p': 0.9,
-            'frequency_penalty': 0.1,
-            'presence_penalty': 0.2,
+            'name': 'Round Trip',
+            'chat_completion_source': 'custom',
+            'custom_url': 'https://example.test/v1',
+            'proxy_password': 'secret',
             'openai_max_context': 8192,
             'openai_max_tokens': 1200,
             'stream_openai': True,
             'reasoning_effort': 'medium',
-            'prompts': [{'identifier': 'main', 'content': 'hello'}],
+            'prompts': [{'identifier': 'main', 'role': 'system', 'content': 'hello'}],
+            'prompt_order': ['main'],
         },
     )
 
     _configure(monkeypatch, tmp_path, presets_dir)
     client = _make_test_app().test_client()
 
-    detail = client.get('/api/presets/detail/global::chat.json').get_json()['preset']
+    detail = client.get('/api/presets/detail/global::round-trip.json').get_json()['preset']
+    assert detail['preset_kind'] == 'openai'
     assert detail['editor_profile']['id'] == 'st_chat_completion_preset'
     revision = detail['source_revision']
 
     save_res = client.post(
         '/api/presets/save',
         json={
-            'preset_id': 'global::chat.json',
-            'preset_kind': 'textgen',
+            'preset_id': detail['id'],
+            'preset_kind': 'openai',
             'save_mode': 'overwrite',
             'source_revision': revision,
             'content': {
-                'name': 'Chat',
-                'temperature': 1.25,
-                'top_p': 0.75,
-                'frequency_penalty': 0.5,
-                'presence_penalty': 0.4,
-                'openai_max_context': 12288,
+                'name': 'Round Trip',
+                'chat_completion_source': 'custom',
+                'custom_url': 'https://example.test/v2',
+                'proxy_password': 'secret-2',
                 'openai_max_tokens': 1400,
                 'stream_openai': False,
                 'reasoning_effort': 'high',
-                'prompts': [{'identifier': 'main', 'content': 'hello'}],
+                'openai_max_context': 8192,
+                'prompts': [{'identifier': 'main', 'role': 'system', 'content': 'hello'}],
+                'prompt_order': ['main'],
             },
         },
     )
 
     assert save_res.status_code == 200
-    reloaded = client.get('/api/presets/detail/global::chat.json').get_json()['preset']
+    reloaded = client.get('/api/presets/detail/global::round-trip.json').get_json()['preset']
+    payload = json.loads(preset_file.read_text(encoding='utf-8'))
+
     assert reloaded['editor_profile']['id'] == 'st_chat_completion_preset'
-    assert reloaded['raw_data']['temperature'] == 1.25
-    assert reloaded['raw_data']['top_p'] == 0.75
+    assert reloaded['preset_kind'] == 'openai'
+    assert reloaded['raw_data']['custom_url'] == 'https://example.test/v2'
+    assert reloaded['raw_data']['proxy_password'] == 'secret-2'
     assert reloaded['raw_data']['stream_openai'] is False
     assert reloaded['raw_data']['reasoning_effort'] == 'high'
-
-
-def test_textgen_mirror_detail_save_reload_preserves_alias_storage_key(monkeypatch, tmp_path):
-    presets_dir = tmp_path / 'presets'
-    preset_file = presets_dir / 'textgen.json'
-    _write_json(
-        preset_file,
-        {
-            'name': 'Textgen',
-            'temp': 0.7,
-            'rep_pen': 1.1,
-            'top_p': 0.92,
-            'streaming': True,
-            'prompts': [{'identifier': 'main', 'content': 'hello'}],
-        },
-    )
-
-    _configure(monkeypatch, tmp_path, presets_dir)
-    client = _make_test_app().test_client()
-
-    detail = client.get('/api/presets/detail/global::textgen.json').get_json()['preset']
-    assert detail['editor_profile']['id'] == 'st_textgen_preset'
-    revision = detail['source_revision']
-
-    save_res = client.post(
-        '/api/presets/save',
-        json={
-            'preset_id': 'global::textgen.json',
-            'preset_kind': 'textgen',
-            'save_mode': 'overwrite',
-            'source_revision': revision,
-            'content': {
-                'name': 'Textgen',
-                'temp': 0.95,
-                'repetition_penalty': 1.45,
-                'top_p': 0.88,
-                'streaming': False,
-                'prompts': [{'identifier': 'main', 'content': 'hello'}],
-            },
-        },
-    )
-
-    assert save_res.status_code == 200
-    payload = json.loads(preset_file.read_text(encoding='utf-8'))
-    assert payload['rep_pen'] == 1.45
-    assert 'repetition_penalty' not in payload
-
-    reloaded = client.get('/api/presets/detail/global::textgen.json').get_json()['preset']
-    assert reloaded['editor_profile']['id'] == 'st_textgen_preset'
-    assert reloaded['raw_data']['rep_pen'] == 1.45
-    assert reloaded['raw_data']['streaming'] is False
+    assert payload['custom_url'] == 'https://example.test/v2'
+    assert payload['proxy_password'] == 'secret-2'
+    assert payload['reasoning_effort'] == 'high'

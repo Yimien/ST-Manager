@@ -22,6 +22,7 @@ from core.services.preset_editor_schema import normalize_preset_content_for_save
 from core.services.preset_editor_schema import resolve_global_save_dir_config_key
 from core.services.preset_model import build_preset_detail
 from core.services.preset_model import detect_preset_kind, merge_preset_content
+from core.services.preset_model import strip_managed_kind_marker
 from core.services.preset_storage import (
     PresetConflictError,
     build_renamed_path,
@@ -40,21 +41,17 @@ bp = Blueprint('presets', __name__)
 
 ALTERNATE_GLOBAL_ROOT_CONFIG_KEYS = (
     'st_openai_preset_dir',
-    'st_textgen_preset_dir',
-    'st_instruct_preset_dir',
-    'st_context_preset_dir',
-    'st_sysprompt_dir',
-    'st_reasoning_dir',
 )
 
-VALID_PRESET_KINDS = {'textgen', 'instruct', 'context', 'sysprompt', 'reasoning'}
+VALID_PRESET_KINDS = {'openai', 'generic'}
 
 
 def _resolve_requested_preset_kind(requested_kind: str, fallback_data, *, source_folder='', file_path='') -> str:
     kind = str(requested_kind or '').strip()
     if kind in VALID_PRESET_KINDS:
         return kind
-    return detect_preset_kind(fallback_data, source_folder=source_folder, file_path=file_path)
+    sanitized_fallback = strip_managed_kind_marker(fallback_data)
+    return detect_preset_kind(sanitized_fallback, source_folder=source_folder, file_path=file_path)
 
 
 def _normalize_category_path(value) -> str:
@@ -296,6 +293,12 @@ def _get_alternate_global_roots():
     return roots
 
 
+def _iter_global_preset_roots(presets_root: str):
+    yield None, presets_root
+    for config_key, root_path in _get_alternate_global_roots().items():
+        yield config_key, root_path
+
+
 def _resolve_preset_file_path(preset_id, presets_root):
     if not preset_id:
         return '', None, None
@@ -334,7 +337,7 @@ def _resolve_preset_file_path(preset_id, presets_root):
         root_path = _get_alternate_global_roots().get(config_key)
         if not root_path:
             return '', None, None
-        return _safe_join(root_path, rel_path), 'global', None
+        return _safe_join(root_path, rel_path), 'global', config_key
 
     return _safe_join(presets_root, f'{preset_id}.json'), 'global', None
 
@@ -368,6 +371,15 @@ def _build_canonical_preset_id(file_path, preset_type, source_folder, presets_ro
 
     rel_path = os.path.basename(file_abs)
     return f'global::{rel_path}'
+
+
+def _build_preset_kind_source_hint(preset_id: str, source_folder):
+    if str(source_folder or '').strip():
+        return source_folder
+    preset_id = str(preset_id or '').strip()
+    if preset_id.startswith('global-alt::st_openai_preset_dir::'):
+        return 'st_openai_preset_dir'
+    return source_folder
 
 def _safe_join(base_dir: str, rel_path: str) -> str:
     """在 base_dir 下安全拼接相对路径，返回绝对路径；不安全则返回空字符串"""
@@ -412,7 +424,9 @@ def _get_presets_path():
 def _resolve_global_save_dir(preset_kind: str, raw_data=None) -> str:
     cfg = load_config()
     config_key = resolve_global_save_dir_config_key(raw_data, preset_kind)
-    raw_path = cfg.get(config_key) or cfg.get('presets_dir', 'data/library/presets')
+    raw_path = cfg.get(config_key)
+    if not raw_path:
+        raw_path = cfg.get('presets_dir', 'data/library/presets')
     target_root = raw_path if os.path.isabs(raw_path) else os.path.join(BASE_DIR, raw_path)
     if not os.path.exists(target_root):
         try:
@@ -449,6 +463,7 @@ def _save_preset_legacy(data):
             content_to_write = json.loads(content)
         except json.JSONDecodeError:
             return jsonify({"success": False, "msg": "JSON格式无效"}), 400
+    content_to_write = strip_managed_kind_marker(content_to_write)
 
     presets_root = _get_presets_path()
     file_path, _preset_type, _source_folder = _resolve_preset_file_path(preset_id, presets_root)
@@ -749,6 +764,7 @@ def list_presets():
         selected_category = _normalize_category_path(request.args.get('category', ''))
 
         source_items = []
+        seen_global_ids = set()
         items = []
         presets_root = _get_presets_path()
         ui_data = load_ui_data()
@@ -757,8 +773,11 @@ def list_presets():
 
         # 1. 扫描全局目录
         if filter_type in ['all', 'global']:
-            if os.path.exists(presets_root):
-                for root, _dirs, files in os.walk(presets_root):
+            for config_key, root_dir in _iter_global_preset_roots(presets_root):
+                if not root_dir or not os.path.exists(root_dir):
+                    continue
+
+                for root, _dirs, files in os.walk(root_dir):
                     for f in files:
                         if not f.lower().endswith('.json'):
                             continue
@@ -771,13 +790,21 @@ def list_presets():
                         if not parsed:
                             continue
 
-                        rel_path = os.path.relpath(full_path, presets_root).replace('\\', '/')
+                        rel_path = os.path.relpath(full_path, root_dir).replace('\\', '/')
                         physical_category = _get_parent_category(rel_path)
                         item = parsed['summary']
-                        item['id'] = f'global::{rel_path}'
+                        canonical_id = _build_canonical_preset_id(full_path, 'global', config_key, presets_root)
+                        if canonical_id in seen_global_ids:
+                            continue
+                        seen_global_ids.add(canonical_id)
+                        if config_key:
+                            item['id'] = canonical_id
+                            item['source_folder'] = config_key
+                        else:
+                            item['id'] = canonical_id
+                            item['source_folder'] = None
                         item['type'] = 'global'
                         item['source_type'] = 'global'
-                        item['source_folder'] = None
                         item['path'] = os.path.relpath(full_path, BASE_DIR)
                         item['display_category'] = physical_category
                         item['physical_category'] = physical_category
@@ -901,7 +928,7 @@ def get_preset_detail(preset_id):
             file_path=file_path,
             filename=os.path.basename(file_path),
             source_type=preset_type,
-            source_folder=source_folder,
+            source_folder=_build_preset_kind_source_hint(preset_id, source_folder),
             raw_data=raw_data,
             base_dir=BASE_DIR,
         )
