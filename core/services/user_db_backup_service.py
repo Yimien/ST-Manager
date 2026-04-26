@@ -33,6 +33,33 @@ def _apply_card_index_increment_now(card_id, source_path):
 
 
 class UserDbBackupService:
+    def _table_exists(self, conn, table_name):
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def _read_history_rows(self, conn):
+        if not self._table_exists(conn, 'wi_entry_history'):
+            return []
+        return [
+            {
+                'scope_key': row['scope_key'],
+                'entry_uid': row['entry_uid'],
+                'snapshot_json': row['snapshot_json'],
+                'snapshot_hash': row['snapshot_hash'],
+                'created_at': row['created_at'],
+            }
+            for row in conn.execute(
+                '''
+                SELECT scope_key, entry_uid, snapshot_json, snapshot_hash, created_at
+                FROM wi_entry_history
+                ORDER BY created_at ASC, id ASC
+                '''
+            ).fetchall()
+        ]
+
     def export_backup(self):
         file_name = f'user_db_backup_{_timestamp_for_file()}.json'
         relative_path = os.path.join(BACKUP_DIR, file_name).replace('\\', '/')
@@ -60,22 +87,7 @@ class UserDbBackupService:
                     'SELECT content_json, sort_order, created_at FROM wi_clipboard ORDER BY sort_order ASC, id ASC'
                 ).fetchall()
             ]
-            wi_entry_history = [
-                {
-                    'scope_key': row['scope_key'],
-                    'entry_uid': row['entry_uid'],
-                    'snapshot_json': row['snapshot_json'],
-                    'snapshot_hash': row['snapshot_hash'],
-                    'created_at': row['created_at'],
-                }
-                for row in conn.execute(
-                    '''
-                    SELECT scope_key, entry_uid, snapshot_json, snapshot_hash, created_at
-                    FROM wi_entry_history
-                    ORDER BY created_at ASC, id ASC
-                    '''
-                ).fetchall()
-            ]
+            wi_entry_history = self._read_history_rows(conn)
 
         payload = {
             'schema_version': 1,
@@ -130,6 +142,7 @@ class UserDbBackupService:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('BEGIN')
+            has_history_table = self._table_exists(conn, 'wi_entry_history')
 
             for item in favorites:
                 row = cursor.execute(
@@ -190,59 +203,60 @@ class UserDbBackupService:
                     (index, row['id']),
                 )
 
-            existing_history = {
-                (row['scope_key'], row['entry_uid'], row['snapshot_hash'])
-                for row in cursor.execute(
-                    'SELECT scope_key, entry_uid, snapshot_hash FROM wi_entry_history'
-                ).fetchall()
-            }
-            for item in wi_entry_history:
-                key = (item['scope_key'], item['entry_uid'], item['snapshot_hash'])
-                if key in existing_history:
-                    stats['wi_entry_history']['deduplicated'] += 1
-                    continue
-                cursor.execute(
-                    '''
-                    INSERT INTO wi_entry_history (scope_key, entry_uid, snapshot_json, snapshot_hash, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ''',
-                    (
-                        item['scope_key'],
-                        item['entry_uid'],
-                        item['snapshot_json'],
-                        item['snapshot_hash'],
-                        item['created_at'],
-                    ),
-                )
-                existing_history.add(key)
-                stats['wi_entry_history']['imported'] += 1
+            if has_history_table:
+                existing_history = {
+                    (row['scope_key'], row['entry_uid'], row['snapshot_hash'])
+                    for row in cursor.execute(
+                        'SELECT scope_key, entry_uid, snapshot_hash FROM wi_entry_history'
+                    ).fetchall()
+                }
+                for item in wi_entry_history:
+                    key = (item['scope_key'], item['entry_uid'], item['snapshot_hash'])
+                    if key in existing_history:
+                        stats['wi_entry_history']['deduplicated'] += 1
+                        continue
+                    cursor.execute(
+                        '''
+                        INSERT INTO wi_entry_history (scope_key, entry_uid, snapshot_json, snapshot_hash, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ''',
+                        (
+                            item['scope_key'],
+                            item['entry_uid'],
+                            item['snapshot_json'],
+                            item['snapshot_hash'],
+                            item['created_at'],
+                        ),
+                    )
+                    existing_history.add(key)
+                    stats['wi_entry_history']['imported'] += 1
 
-            history_limit = get_history_limit()
-            history_groups = cursor.execute(
-                '''
-                SELECT scope_key, entry_uid
-                FROM wi_entry_history
-                GROUP BY scope_key, entry_uid
-                '''
-            ).fetchall()
-            for group in history_groups:
-                overflow = cursor.execute(
+                history_limit = get_history_limit()
+                history_groups = cursor.execute(
                     '''
-                    SELECT id
+                    SELECT scope_key, entry_uid
                     FROM wi_entry_history
-                    WHERE scope_key = ? AND entry_uid = ?
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT -1 OFFSET ?
-                    ''',
-                    (group['scope_key'], group['entry_uid'], history_limit),
+                    GROUP BY scope_key, entry_uid
+                    '''
                 ).fetchall()
-                if not overflow:
-                    continue
-                stats['wi_entry_history']['trimmed'] += len(overflow)
-                cursor.executemany(
-                    'DELETE FROM wi_entry_history WHERE id = ?',
-                    [(row['id'],) for row in overflow],
-                )
+                for group in history_groups:
+                    overflow = cursor.execute(
+                        '''
+                        SELECT id
+                        FROM wi_entry_history
+                        WHERE scope_key = ? AND entry_uid = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT -1 OFFSET ?
+                        ''',
+                        (group['scope_key'], group['entry_uid'], history_limit),
+                    ).fetchall()
+                    if not overflow:
+                        continue
+                    stats['wi_entry_history']['trimmed'] += len(overflow)
+                    cursor.executemany(
+                        'DELETE FROM wi_entry_history WHERE id = ?',
+                        [(row['id'],) for row in overflow],
+                    )
 
             conn.commit()
 
@@ -354,6 +368,7 @@ class UserDbBackupService:
             'favorites': [],
             'wi_clipboard': [],
             'wi_entry_history': [],
+            'has_wi_entry_history_table': False,
         }
 
         with sqlite3.connect(DEFAULT_DB_PATH, timeout=30) as conn:
@@ -375,22 +390,8 @@ class UserDbBackupService:
                     'SELECT content_json, sort_order, created_at FROM wi_clipboard ORDER BY sort_order ASC, id ASC'
                 ).fetchall()
             ]
-            snapshot['wi_entry_history'] = [
-                {
-                    'scope_key': row['scope_key'],
-                    'entry_uid': row['entry_uid'],
-                    'snapshot_json': row['snapshot_json'],
-                    'snapshot_hash': row['snapshot_hash'],
-                    'created_at': row['created_at'],
-                }
-                for row in conn.execute(
-                    '''
-                    SELECT scope_key, entry_uid, snapshot_json, snapshot_hash, created_at
-                    FROM wi_entry_history
-                    ORDER BY created_at ASC, id ASC
-                    '''
-                ).fetchall()
-            ]
+            snapshot['has_wi_entry_history_table'] = self._table_exists(conn, 'wi_entry_history')
+            snapshot['wi_entry_history'] = self._read_history_rows(conn)
 
         return snapshot
 
@@ -401,9 +402,11 @@ class UserDbBackupService:
         with sqlite3.connect(DEFAULT_DB_PATH, timeout=30) as conn:
             cursor = conn.cursor()
             cursor.execute('BEGIN')
+            has_history_table = self._table_exists(conn, 'wi_entry_history')
 
             cursor.execute('DELETE FROM wi_clipboard')
-            cursor.execute('DELETE FROM wi_entry_history')
+            if snapshot.get('has_wi_entry_history_table') and has_history_table:
+                cursor.execute('DELETE FROM wi_entry_history')
             for favorite in snapshot.get('favorites', []):
                 cursor.execute(
                     'UPDATE card_metadata SET is_favorite = ? WHERE id = ?',
@@ -414,20 +417,21 @@ class UserDbBackupService:
                     'INSERT INTO wi_clipboard (content_json, sort_order, created_at) VALUES (?, ?, ?)',
                     (row['content_json'], row['sort_order'], row['created_at']),
                 )
-            for row in snapshot.get('wi_entry_history', []):
-                cursor.execute(
-                    '''
-                    INSERT INTO wi_entry_history (scope_key, entry_uid, snapshot_json, snapshot_hash, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ''',
-                    (
-                        row['scope_key'],
-                        row['entry_uid'],
-                        row['snapshot_json'],
-                        row['snapshot_hash'],
-                        row['created_at'],
-                    ),
-                )
+            if snapshot.get('has_wi_entry_history_table') and has_history_table:
+                for row in snapshot.get('wi_entry_history', []):
+                    cursor.execute(
+                        '''
+                        INSERT INTO wi_entry_history (scope_key, entry_uid, snapshot_json, snapshot_hash, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ''',
+                        (
+                            row['scope_key'],
+                            row['entry_uid'],
+                            row['snapshot_json'],
+                            row['snapshot_hash'],
+                            row['created_at'],
+                        ),
+                    )
 
             conn.commit()
 

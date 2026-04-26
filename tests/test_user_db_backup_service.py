@@ -55,6 +55,28 @@ def _create_tables(conn):
     conn.commit()
 
 
+def _create_tables_without_history(conn):
+    conn.execute(
+        '''
+        CREATE TABLE card_metadata (
+            id TEXT PRIMARY KEY,
+            is_favorite INTEGER DEFAULT 0
+        )
+        '''
+    )
+    conn.execute(
+        '''
+        CREATE TABLE wi_clipboard (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_json TEXT NOT NULL,
+            sort_order INTEGER NOT NULL,
+            created_at REAL NOT NULL
+        )
+        '''
+    )
+    conn.commit()
+
+
 def _fetch_all(conn, sql, params=()):
     return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
@@ -159,6 +181,44 @@ def test_export_backup_includes_only_db_sections_and_counts(tmp_path, monkeypatc
     ]
 
 
+def test_export_backup_tolerates_missing_history_table(tmp_path, monkeypatch):
+    from core.services.user_db_backup_service import UserDbBackupService
+
+    db_path = tmp_path / 'app.db'
+    with _open_db(db_path) as conn:
+        _create_tables_without_history(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, is_favorite) VALUES (?, ?)',
+            ('hero.png', 1),
+        )
+        conn.execute(
+            'INSERT INTO wi_clipboard (content_json, sort_order, created_at) VALUES (?, ?, ?)',
+            (json.dumps({'text': 'alpha'}, ensure_ascii=False), 0, 100.0),
+        )
+        conn.commit()
+
+    monkeypatch.setattr('core.services.user_db_backup_service.DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr('core.services.user_db_backup_service.BASE_DIR', str(tmp_path))
+
+    result = UserDbBackupService().export_backup()
+
+    export_path = tmp_path / result['file_path']
+    payload = json.loads(export_path.read_text(encoding='utf-8'))
+
+    assert result['stats'] == {
+        'favorites': 1,
+        'wi_clipboard': 1,
+        'wi_entry_history': 0,
+    }
+    assert payload['data']['favorites'] == [
+        {'card_id': 'hero.png', 'is_favorite': True},
+    ]
+    assert payload['data']['wi_clipboard'] == [
+        {'content': {'text': 'alpha'}, 'sort_order': 0, 'created_at': 100.0},
+    ]
+    assert payload['data']['wi_entry_history'] == []
+
+
 def test_import_backup_merges_favorites_skips_missing_cards_and_syncs_side_effects(tmp_path, monkeypatch):
     from core.services.user_db_backup_service import UserDbBackupService
 
@@ -241,6 +301,93 @@ def test_import_backup_merges_favorites_skips_missing_cards_and_syncs_side_effec
         }
     ]
     assert apply_calls == [('hero.png', str(source_path))]
+
+
+def test_import_backup_skips_history_when_table_is_missing(tmp_path, monkeypatch):
+    from core.services.user_db_backup_service import UserDbBackupService
+
+    db_path = tmp_path / 'app.db'
+    source_path = tmp_path / 'cards' / 'hero.png'
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text('hero', encoding='utf-8')
+
+    with _open_db(db_path) as conn:
+        _create_tables_without_history(conn)
+        conn.execute('INSERT INTO card_metadata (id, is_favorite) VALUES (?, ?)', ('hero.png', 0))
+        conn.execute(
+            'INSERT INTO wi_clipboard (content_json, sort_order, created_at) VALUES (?, ?, ?)',
+            (json.dumps({'text': 'existing'}, ensure_ascii=False), 0, 10.0),
+        )
+        conn.commit()
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': '2026-04-26T10:00:00Z',
+        'app': 'ST-Manager',
+        'data': {
+            'favorites': [
+                {'card_id': 'hero.png', 'is_favorite': True},
+            ],
+            'wi_clipboard': [
+                {'content': {'text': 'imported'}, 'sort_order': 99, 'created_at': 11.0},
+            ],
+            'wi_entry_history': [
+                {
+                    'scope_key': 'scope-a',
+                    'entry_uid': 'entry-1',
+                    'snapshot_json': json.dumps({'value': 'imported'}, ensure_ascii=False),
+                    'snapshot_hash': 'hash-imported',
+                    'created_at': 12.0,
+                },
+            ],
+        },
+    }
+    backup_file = tmp_path / 'missing-history-import.json'
+    backup_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr('core.services.user_db_backup_service.DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr('core.services.user_db_backup_service.ctx.cache', None)
+    monkeypatch.setattr('core.services.user_db_backup_service.sync_card_index_jobs', lambda **_kwargs: {})
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service._apply_card_index_increment_now',
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service.UserDbBackupService._resolve_card_source_path',
+        lambda self, card_id: str(source_path),
+    )
+
+    result = UserDbBackupService().import_backup(str(backup_file), source_name='missing-history-import.json')
+
+    with _open_db(db_path) as conn:
+        favorites = _fetch_all(conn, 'SELECT id, is_favorite FROM card_metadata ORDER BY id')
+        clipboard = _fetch_all(
+            conn,
+            'SELECT content_json, sort_order, created_at FROM wi_clipboard ORDER BY sort_order ASC, id ASC',
+        )
+
+    assert favorites == [
+        {'id': 'hero.png', 'is_favorite': 1},
+    ]
+    assert clipboard == [
+        {
+            'content_json': json.dumps({'text': 'existing'}, ensure_ascii=False),
+            'sort_order': 0,
+            'created_at': 10.0,
+        },
+        {
+            'content_json': json.dumps({'text': 'imported'}, ensure_ascii=False),
+            'sort_order': 1,
+            'created_at': 11.0,
+        },
+    ]
+    assert result['stats']['favorites'] == {
+        'imported': 1,
+        'skipped_missing_cards': 0,
+        'unchanged': 0,
+    }
+    assert result['stats']['wi_clipboard'] == {'imported': 1, 'deduplicated': 0}
+    assert result['stats']['wi_entry_history'] == {'imported': 0, 'deduplicated': 0, 'trimmed': 0}
 
 
 def test_import_backup_reverts_favorite_db_state_when_side_effect_fails(tmp_path, monkeypatch):
@@ -683,6 +830,89 @@ def test_import_backup_post_commit_favorite_failure_restores_all_db_only_modules
         ('hero.png', str(source_path)),
         ('hero.png', str(source_path)),
     ]
+
+
+def test_import_backup_rollback_tolerates_missing_history_table(tmp_path, monkeypatch):
+    from core.services.user_db_backup_service import UserDbBackupService
+
+    db_path = tmp_path / 'app.db'
+    source_path = tmp_path / 'cards' / 'hero.png'
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text('hero', encoding='utf-8')
+
+    with _open_db(db_path) as conn:
+        _create_tables_without_history(conn)
+        conn.execute('INSERT INTO card_metadata (id, is_favorite) VALUES (?, ?)', ('hero.png', 0))
+        conn.execute(
+            'INSERT INTO wi_clipboard (content_json, sort_order, created_at) VALUES (?, ?, ?)',
+            (json.dumps({'text': 'existing'}, ensure_ascii=False), 0, 10.0),
+        )
+        conn.commit()
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': '2026-04-26T10:00:00Z',
+        'app': 'ST-Manager',
+        'data': {
+            'favorites': [
+                {'card_id': 'hero.png', 'is_favorite': True},
+            ],
+            'wi_clipboard': [
+                {'content': {'text': 'imported'}, 'sort_order': 99, 'created_at': 11.0},
+            ],
+            'wi_entry_history': [
+                {
+                    'scope_key': 'scope-a',
+                    'entry_uid': 'entry-1',
+                    'snapshot_json': json.dumps({'value': 'imported'}, ensure_ascii=False),
+                    'snapshot_hash': 'hash-imported',
+                    'created_at': 12.0,
+                },
+            ],
+        },
+    }
+    backup_file = tmp_path / 'missing-history-rollback.json'
+    backup_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    cache_calls = []
+
+    class _FakeCache:
+        def toggle_favorite_update(self, card_id, value):
+            cache_calls.append((card_id, value))
+
+    monkeypatch.setattr('core.services.user_db_backup_service.DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr('core.services.user_db_backup_service.ctx.cache', _FakeCache())
+    monkeypatch.setattr('core.services.user_db_backup_service.sync_card_index_jobs', lambda **_kwargs: {})
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service._apply_card_index_increment_now',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError('apply failed')),
+    )
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service.UserDbBackupService._resolve_card_source_path',
+        lambda self, card_id: str(source_path),
+    )
+
+    with pytest.raises(RuntimeError, match='apply failed'):
+        UserDbBackupService().import_backup(str(backup_file), source_name='missing-history-rollback.json')
+
+    with _open_db(db_path) as conn:
+        favorites = _fetch_all(conn, 'SELECT id, is_favorite FROM card_metadata ORDER BY id')
+        clipboard = _fetch_all(
+            conn,
+            'SELECT content_json, sort_order, created_at FROM wi_clipboard ORDER BY sort_order ASC, id ASC',
+        )
+
+    assert favorites == [
+        {'id': 'hero.png', 'is_favorite': 0},
+    ]
+    assert clipboard == [
+        {
+            'content_json': json.dumps({'text': 'existing'}, ensure_ascii=False),
+            'sort_order': 0,
+            'created_at': 10.0,
+        },
+    ]
+    assert cache_calls == [('hero.png', True), ('hero.png', False)]
 
 
 def test_import_backup_deduplicates_clipboard_and_history_and_trims_history(tmp_path, monkeypatch):
