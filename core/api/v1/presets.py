@@ -293,6 +293,12 @@ def _get_alternate_global_roots():
     return roots
 
 
+def _iter_global_preset_roots(presets_root: str):
+    yield None, presets_root
+    for config_key, root_path in _get_alternate_global_roots().items():
+        yield config_key, root_path
+
+
 def _resolve_preset_file_path(preset_id, presets_root):
     if not preset_id:
         return '', None, None
@@ -766,8 +772,11 @@ def list_presets():
 
         # 1. 扫描全局目录
         if filter_type in ['all', 'global']:
-            if os.path.exists(presets_root):
-                for root, _dirs, files in os.walk(presets_root):
+            for config_key, root_dir in _iter_global_preset_roots(presets_root):
+                if not root_dir or not os.path.exists(root_dir):
+                    continue
+
+                for root, _dirs, files in os.walk(root_dir):
                     for f in files:
                         if not f.lower().endswith('.json'):
                             continue
@@ -780,13 +789,17 @@ def list_presets():
                         if not parsed:
                             continue
 
-                        rel_path = os.path.relpath(full_path, presets_root).replace('\\', '/')
+                        rel_path = os.path.relpath(full_path, root_dir).replace('\\', '/')
                         physical_category = _get_parent_category(rel_path)
                         item = parsed['summary']
-                        item['id'] = f'global::{rel_path}'
+                        if config_key:
+                            item['id'] = f'global-alt::{config_key}::{rel_path}'
+                            item['source_folder'] = config_key
+                        else:
+                            item['id'] = f'global::{rel_path}'
+                            item['source_folder'] = None
                         item['type'] = 'global'
                         item['source_type'] = 'global'
-                        item['source_folder'] = None
                         item['path'] = os.path.relpath(full_path, BASE_DIR)
                         item['display_category'] = physical_category
                         item['physical_category'] = physical_category

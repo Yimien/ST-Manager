@@ -380,6 +380,39 @@ def test_save_settings_does_not_forward_shared_wallpaper_ui_fields_to_config(mon
     assert 'shared_wallpapers' not in captured_configs[-1]
 
 
+def test_save_settings_drops_removed_legacy_st_preset_directory_keys(monkeypatch):
+    captured_configs = []
+
+    monkeypatch.setattr(system_api, 'save_config', lambda cfg: captured_configs.append(dict(cfg)) or True)
+    monkeypatch.setattr(system_api, 'refresh_st_client', lambda: None)
+    monkeypatch.setattr(system_api, 'get_cards_folder', lambda: 'cards')
+    monkeypatch.setattr(system_api, 'BASE_DIR', 'D:/Workspace/MyOwn/ST-Manager')
+    monkeypatch.setattr(system_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(system_api, 'save_ui_data', lambda data: True)
+
+    client = _make_test_app().test_client()
+    response = client.post(
+        '/api/save_settings',
+        json={
+            'st_openai_preset_dir': 'st/openai',
+            'st_textgen_preset_dir': 'st/textgen',
+            'st_instruct_preset_dir': 'st/instruct',
+            'st_context_preset_dir': 'st/context',
+            'st_sysprompt_dir': 'st/sysprompt',
+            'st_reasoning_dir': 'st/reasoning',
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_configs
+    assert captured_configs[-1]['st_openai_preset_dir'] == 'st/openai'
+    assert 'st_textgen_preset_dir' not in captured_configs[-1]
+    assert 'st_instruct_preset_dir' not in captured_configs[-1]
+    assert 'st_context_preset_dir' not in captured_configs[-1]
+    assert 'st_sysprompt_dir' not in captured_configs[-1]
+    assert 'st_reasoning_dir' not in captured_configs[-1]
+
+
 def test_settings_path_safety_endpoint_returns_evaluator_payload(monkeypatch):
     evaluation = {
         'risk_level': 'warning',
