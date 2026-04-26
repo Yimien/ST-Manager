@@ -193,6 +193,20 @@ function buildTopBarAction(label, panelTarget, icon) {
   `;
 }
 
+function buildTopBarStaticAction(label, action, iconClass, iconFallback) {
+  return `
+    <button
+      type="button"
+      class="drawer-icon closedIcon st-preview-topbar-action ${escapeHtml(iconClass)}"
+      data-preview-static-action="${escapeHtml(action)}"
+      data-icon-fallback="${escapeHtml(iconFallback)}"
+      aria-disabled="true"
+      tabindex="-1"
+      title="${escapeHtml(label)}"
+    ></button>
+  `;
+}
+
 function buildMessageActions() {
   return `
     <div class="mes_buttons">
@@ -499,12 +513,22 @@ function buildPreviewSceneTemplates(scenes, previewIdentities) {
   `;
 }
 
+function buildPreviewWorkbenchMarkup(scenes, defaultPreviewScene) {
+  return `
+    <div class="st-preview-workbench">
+      ${buildPreviewSceneSwitcher(scenes)}
+      <div class="st-preview-scene-description" data-preview-scene-description>${escapeHtml(defaultPreviewScene.description || "")}</div>
+    </div>
+  `;
+}
+
 function buildPreviewBehaviorScript() {
   return `
     (() => {
       const root = document.querySelector('.st-preview-root');
       if (!root) return;
       const buttons = Array.from(document.querySelectorAll('[data-panel-target]'));
+      const staticButtons = Array.from(document.querySelectorAll('[data-preview-static-action]'));
       const panels = Array.from(document.querySelectorAll('[data-panel-surface]'));
       const shells = Array.from(document.querySelectorAll('[data-panel-shell]'));
       const drawers = Array.from(document.querySelectorAll('.inline-drawer'));
@@ -616,6 +640,15 @@ function buildPreviewBehaviorScript() {
         });
       });
 
+      staticButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        });
+      });
+
       drawers.forEach((drawer) => {
         const toggle = drawer.querySelector(':scope > .inline-drawer-toggle');
         if (!toggle) return;
@@ -709,15 +742,25 @@ export function buildBeautifyPreviewSampleMarkup(
     : "";
   const noConnectionText = "Not connected to API!";
   const connectedText = "Type a message, or /? for help";
-  const topSettingsMarkup = `
-    <div id="top-settings-holder">
-      <div class="drawer st-preview-topbar-drawer">
-        <div id="ai-config-button" class="left-drawer">
-        ${buildTopBarAction("AI Response Configuration", "settings")}
-        ${buildTopBarAction("AI Response Formatting", "formatting")}
-        ${buildTopBarAction("Character Management", "character")}
+  const topBarMarkup = `
+    <div id="top-bar">
+      <div class="st-preview-topbar-strip">
+        <div class="st-preview-topbar-section st-preview-topbar-section-left">
+          ${buildTopBarStaticAction("Menu / Options", "menu", "fa-solid fa-bars fa-fw", "Menu")}
+          ${buildTopBarAction("AI Response Configuration", "settings")}
+          ${buildTopBarStaticAction("API Connections", "api", "fa-solid fa-plug fa-fw", "API")}
+          ${buildTopBarStaticAction("World Info", "world-info", "fa-solid fa-globe fa-fw", "WI")}
+          ${buildTopBarAction("AI Response Formatting", "formatting")}
+          ${buildTopBarStaticAction("Extensions", "extensions", "fa-solid fa-puzzle-piece fa-fw", "Ext")}
+          ${buildTopBarAction("Character Management", "character")}
+          ${buildTopBarStaticAction("Moving UI", "moving-ui", "fa-solid fa-up-down-left-right fa-fw", "Move")}
+          ${buildTopBarStaticAction("Notes", "notes", "fa-solid fa-notebook fa-fw", "Note")}
         </div>
       </div>
+    </div>
+  `;
+  const topSettingsMarkup = `
+    <div id="top-settings-holder">
       <div class="drawer-content fillLeft closedDrawer left-drawer" id="left-nav-panel" data-panel-shell="settings">
         <div id="left-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
         <div class="scrollableInner">
@@ -1014,9 +1057,11 @@ export function buildBeautifyPreviewSampleMarkup(
       </div>
     </div>
   `;
+  const workbenchMarkup = buildPreviewWorkbenchMarkup(
+    previewScenes,
+    defaultPreviewScene,
+  );
   const chatMarkup = `
-    ${buildPreviewSceneSwitcher(previewScenes)}
-    <div class="st-preview-scene-description" data-preview-scene-description>${escapeHtml(defaultPreviewScene.description || "")}</div>
     <div id="chat" data-preview-default-scene="${escapeHtml(defaultPreviewScene.id)}">
       <div data-preview-chat-messages>
         ${buildPreviewSceneMessages(defaultPreviewScene, previewIdentities)}
@@ -1075,8 +1120,9 @@ export function buildBeautifyPreviewSampleMarkup(
       <div class="st-preview-wallpaper"></div>
       <div class="st-preview-overlay"></div>
       <div class="st-preview-shell">
-        <div id="top-bar"></div>
+        ${topBarMarkup}
         ${topSettingsMarkup}
+        ${workbenchMarkup}
         <div id="sheld">
           <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
           ${chatMarkup}
@@ -1140,6 +1186,9 @@ export function buildBeautifyPreviewDocument({
       }
 
       .st-preview-root {
+        --st-preview-panel-width: min(420px, calc(100vw - 48px));
+        --st-preview-left-panel-offset: 20px;
+        --st-preview-right-panel-offset: 20px;
         display: flex;
         flex-direction: column;
         width: 100%;
@@ -1175,11 +1224,20 @@ export function buildBeautifyPreviewDocument({
         padding: 20px;
       }
 
+      .st-preview-workbench {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 0 0 12px;
+        position: relative;
+        z-index: 2;
+      }
+
       .st-preview-scene-switcher {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
-        margin: 0 0 12px;
+        margin: 0;
       }
 
       .st-preview-scene-button {
@@ -1197,19 +1255,46 @@ export function buildBeautifyPreviewDocument({
       }
 
       #top-bar {
-        display: none;
+        display: block;
       }
 
       #top-settings-holder {
-        display: none;
+        display: block;
+        position: absolute;
+        inset: 72px 20px auto 20px;
+        pointer-events: none;
+        z-index: 4;
       }
 
       .drawer-content.st-preview-drawer-panel[style*='display:none'] {
         display: none !important;
       }
 
+      [data-panel-shell] {
+        position: absolute;
+        top: 0;
+        width: 100%;
+        max-width: var(--st-preview-panel-width);
+        min-width: 0;
+        pointer-events: none;
+        z-index: 4;
+      }
+
+      [data-panel-shell='settings'],
+      [data-panel-shell='formatting'] {
+        left: var(--st-preview-left-panel-offset);
+      }
+
+      [data-panel-shell='character'] {
+        right: var(--st-preview-right-panel-offset);
+      }
+
       .st-preview-panel-body {
         display: none;
+        min-width: 0;
+        pointer-events: auto;
+        max-height: min(680px, calc(100vh - 160px));
+        overflow: auto;
       }
 
       .st-preview-root[data-active-panel='settings'] [data-panel-surface='settings'],
@@ -1222,6 +1307,11 @@ export function buildBeautifyPreviewDocument({
       .st-preview-root[data-active-panel='formatting'] [data-panel-shell='formatting'],
       .st-preview-root[data-active-panel='character'] [data-panel-shell='character'] {
         display: block;
+      }
+
+      #sheld {
+        width: min(var(--sheldWidth), 100%);
+        margin: 0 auto;
       }
 
       .flex-container {

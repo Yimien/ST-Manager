@@ -57,14 +57,39 @@ class BeautifyService:
 
     def _load_library_state(self, ui_data: Optional[Dict] = None):
         state = ui_data if isinstance(ui_data, dict) else self._load_ui_data()
+        legacy_selected_wallpaper_ids = self._snapshot_legacy_selected_wallpaper_ids(state)
         library = get_beautify_library(state)
-        if not self._should_recover_library_from_disk(state, library):
-            return self._reconcile_variant_wallpaper_references(state, library)
-        recovered_library = self._recover_library_from_disk(library)
-        reconciled_library = self._reconcile_variant_wallpaper_references(state, recovered_library, persist=False)
+        if self._should_recover_library_from_disk(state, library):
+            library = self._recover_library_from_disk(library)
+
+        library = self._recover_variant_wallpaper_bindings(
+            state,
+            library,
+            persist=False,
+            legacy_selected_wallpaper_ids=legacy_selected_wallpaper_ids,
+        )
+        reconciled_library = self._reconcile_variant_wallpaper_references(state, library, persist=False)
         if self._save_library(state, reconciled_library):
             return get_beautify_library(state)
         return reconciled_library
+
+    def _snapshot_legacy_selected_wallpaper_ids(self, ui_data: Dict):
+        raw_library = ui_data.get('_beautify_library_v1') if isinstance(ui_data, dict) else {}
+        if not isinstance(raw_library, dict):
+            return {}
+
+        selections = {}
+        for package_id, package_info in (raw_library.get('packages') or {}).items():
+            if not isinstance(package_info, dict):
+                continue
+            for variant_id, variant in ((package_info.get('variants') or {}).items()):
+                if not isinstance(variant, dict):
+                    continue
+                selected_wallpaper_id = str(variant.get('selected_wallpaper_id') or '').strip()
+                if not selected_wallpaper_id:
+                    continue
+                selections[(str(package_id).strip(), str(variant_id).strip())] = selected_wallpaper_id
+        return selections
 
     def _should_recover_library_from_disk(self, ui_data: Dict, library: Dict):
         return not bool(library.get('packages'))
@@ -110,6 +135,84 @@ class BeautifyService:
         if persist and changed and self._save_library(ui_data, reconciled_library):
             return get_beautify_library(ui_data)
         return reconciled_library
+
+    def _recover_variant_wallpaper_bindings(
+        self,
+        ui_data: Dict,
+        library: Dict,
+        persist: bool = True,
+        legacy_selected_wallpaper_ids: Optional[Dict] = None,
+    ):
+        shared_service = SharedWallpaperService(
+            project_root=self._project_root_for_library(),
+            ui_data_loader=lambda: ui_data,
+            ui_data_saver=self._ui_data_saver,
+        )
+        packages = copy.deepcopy(library.get('packages') or {})
+        changed = False
+        legacy_selected_wallpaper_ids = legacy_selected_wallpaper_ids or {}
+
+        for package_id, package_info in packages.items():
+            variants = copy.deepcopy(package_info.get('variants') or {})
+            legacy_wallpapers = copy.deepcopy(package_info.get('wallpapers') or {})
+            if not variants or not legacy_wallpapers:
+                package_info['variants'] = variants
+                packages[package_id] = package_info
+                continue
+
+            single_variant_id = next(iter(variants.keys())) if len(variants) == 1 else ''
+            legacy_wallpapers_by_variant = {variant_id: [] for variant_id in variants}
+            for legacy_wallpaper in legacy_wallpapers.values():
+                target_variant_id = str(legacy_wallpaper.get('variant_id') or '').strip()
+                if target_variant_id and target_variant_id not in variants:
+                    continue
+                if not target_variant_id:
+                    if not single_variant_id:
+                        continue
+                    target_variant_id = single_variant_id
+                legacy_wallpapers_by_variant.setdefault(target_variant_id, []).append(copy.deepcopy(legacy_wallpaper))
+
+            for variant_id, variant in list(variants.items()):
+                variant = copy.deepcopy(variant)
+                wallpaper_ids = list(variant.get('wallpaper_ids') or [])
+                selected_wallpaper_id = str(variant.get('selected_wallpaper_id') or '').strip()
+                legacy_selected_wallpaper_id = str(
+                    legacy_selected_wallpaper_ids.get((str(package_id).strip(), str(variant_id).strip())) or ''
+                ).strip()
+
+                for legacy_wallpaper in legacy_wallpapers_by_variant.get(variant_id, []):
+                    source_path = self._resolve_project_relative_path(legacy_wallpaper.get('file', ''))
+                    if not source_path or not os.path.isfile(source_path):
+                        continue
+
+                    recovered = shared_service.ensure_package_embedded_wallpaper(
+                        source_path,
+                        package_id=package_id,
+                        variant_id=variant_id,
+                        source_name=legacy_wallpaper.get('filename') or os.path.basename(source_path),
+                    )
+                    recovered_id = str((recovered or {}).get('id') or '').strip()
+                    if not recovered_id:
+                        continue
+                    if recovered_id not in wallpaper_ids:
+                        wallpaper_ids.append(recovered_id)
+                    if legacy_selected_wallpaper_id == str(legacy_wallpaper.get('id') or '').strip():
+                        selected_wallpaper_id = recovered_id
+
+                if wallpaper_ids != list(variant.get('wallpaper_ids') or []) or selected_wallpaper_id != str(variant.get('selected_wallpaper_id') or '').strip():
+                    changed = True
+                    variant['wallpaper_ids'] = wallpaper_ids
+                    variant['selected_wallpaper_id'] = selected_wallpaper_id
+                variants[variant_id] = variant
+
+            package_info['variants'] = variants
+            packages[package_id] = package_info
+
+        recovered_library = copy.deepcopy(library)
+        recovered_library['packages'] = packages
+        if persist and changed and self._save_library(ui_data, recovered_library):
+            return get_beautify_library(ui_data)
+        return recovered_library
 
     def get_global_settings(self):
         ui_data = self._load_ui_data()
@@ -202,7 +305,6 @@ class BeautifyService:
         package_info['name'] = package_info.get('name') or package_name
 
         existing_variant = self._find_variant_by_platform(package_info, resolved_platform)
-        variant_id = existing_variant['id'] if existing_variant else f'var_{resolved_platform}_{self._short_hash(source_path + str(time.time()))}'
         themes_dir = os.path.join(self.library_root, 'packages', resolved_package_id, 'themes')
         os.makedirs(themes_dir, exist_ok=True)
 
@@ -212,6 +314,7 @@ class BeautifyService:
 
         preview_accuracy = 'approx' if self._theme_has_custom_css(theme_payload) else ('approx' if resolved_platform in ('pc', 'mobile') else 'base')
         relative_theme_file = os.path.relpath(target_file, self._project_root_for_library()).replace('\\', '/')
+        variant_id = existing_variant['id'] if existing_variant else f'var_{resolved_platform}_{self._short_hash(relative_theme_file)}'
         package_info['variants'][variant_id] = {
             'id': variant_id,
             'platform': resolved_platform,

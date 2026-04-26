@@ -82,6 +82,38 @@ class SharedWallpaperService:
         self._upsert_item(item, selection_target=selection_target)
         return item
 
+    def ensure_package_embedded_wallpaper(self, source_path, package_id, variant_id, source_name=None):
+        if not source_path or not os.path.isfile(source_path):
+            return {}
+
+        resolved_package_id = str(package_id or '').strip()
+        resolved_variant_id = str(variant_id or '').strip()
+        if not resolved_package_id or not resolved_variant_id:
+            return {}
+
+        library = self.load_library()
+        for item in (library.get('items') or {}).values():
+            if item.get('source_type') != 'package_embedded':
+                continue
+            if str(item.get('origin_package_id') or '').strip() != resolved_package_id:
+                continue
+            if str(item.get('origin_variant_id') or '').strip() != resolved_variant_id:
+                continue
+
+            existing_path = os.path.join(
+                self.project_root,
+                str(item.get('file') or '').replace('/', os.sep),
+            )
+            if self._files_match(existing_path, source_path):
+                return item
+
+        return self.import_wallpaper(
+            source_path,
+            source_name=source_name,
+            package_id=resolved_package_id,
+            variant_id=resolved_variant_id,
+        )
+
     def select_wallpaper(self, wallpaper_id, selection_target):
         selection_target = str(selection_target or '').strip()
         if selection_target not in ('manager', 'preview'):

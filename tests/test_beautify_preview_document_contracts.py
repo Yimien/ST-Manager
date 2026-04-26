@@ -285,6 +285,7 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
         const html = module.buildBeautifyPreviewSampleMarkup('pc');
 
         for (const token of [
+          'class="st-preview-workbench"',
           'id="top-bar"',
           'id="top-settings-holder"',
           'id="left-nav-panel"',
@@ -303,6 +304,12 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
           'data-panel-target="settings"',
           'data-panel-target="formatting"',
           'data-panel-target="character"',
+          'data-preview-static-action="menu"',
+          'data-preview-static-action="api"',
+          'data-preview-static-action="world-info"',
+          'data-preview-static-action="extensions"',
+          'data-preview-static-action="moving-ui"',
+          'data-preview-static-action="notes"',
           'data-panel-surface="settings"',
           'data-panel-surface="formatting"',
           'data-panel-surface="character"',
@@ -317,9 +324,15 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
         const sheldHeaderIndex = html.indexOf('id="sheldheader"');
         const chatIndex = html.indexOf('id="chat"');
         const formSheldIndex = html.indexOf('id="form_sheld"');
+        const topBarIndex = html.indexOf('id="top-bar"');
+        const topSettingsHolderIndex = html.indexOf('id="top-settings-holder"');
 
         if (!(sheldIndex < sheldHeaderIndex && sheldHeaderIndex < chatIndex && chatIndex < formSheldIndex)) {
           throw new Error('preview #sheld should contain #sheldheader before #chat and #form_sheld');
+        }
+
+        if (!(topBarIndex < topSettingsHolderIndex && topSettingsHolderIndex < sheldIndex)) {
+          throw new Error('toolbar shell should render before the simulated #sheld frame');
         }
 
         for (const token of [
@@ -432,11 +445,26 @@ def test_build_beautify_preview_sample_markup_contains_scene_switcher_and_defaul
         }
 
         const switcherIndex = html.indexOf('data-preview-scene-switcher');
+        const workbenchIndex = html.indexOf('class="st-preview-workbench"');
+        const sheldIndex = html.indexOf('id="sheld"');
         const chatIndex = html.indexOf('id="chat"');
         const formSheldIndex = html.indexOf('id="form_sheld"');
+        const sheldMarkup = html.slice(sheldIndex, formSheldIndex + 'id="form_sheld"'.length);
 
         if (!(switcherIndex < chatIndex && chatIndex < formSheldIndex)) {
           throw new Error('scene switcher should render before #chat and #form_sheld');
+        }
+
+        if (!(workbenchIndex < sheldIndex && switcherIndex > workbenchIndex && switcherIndex < sheldIndex)) {
+          throw new Error('scene switcher should render inside the outer workbench before #sheld');
+        }
+
+        if (!(switcherIndex < sheldIndex)) {
+          throw new Error('scene switcher should render outside the simulated #sheld frame');
+        }
+
+        if (sheldMarkup.includes('data-preview-scene-switcher')) {
+          throw new Error('scene switcher should not render inside #sheld');
         }
         '''
     )
@@ -1036,6 +1064,7 @@ def test_build_beautify_preview_document_wires_panel_toggle_script_and_default_s
           'data-active-panel="none"',
           'root.dataset.activePanel',
           'button.dataset.panelTarget',
+          "const staticButtons = Array.from(document.querySelectorAll('[data-preview-static-action]'));",
           'aria-pressed',
           "panel.classList.toggle('openDrawer', isActive);",
           "panel.classList.toggle('closedDrawer', !isActive);",
@@ -1069,19 +1098,223 @@ def test_build_beautify_preview_document_does_not_leave_unmatched_topbar_panel_t
     run_preview_document_check(
         '''
         const html = module.buildBeautifyPreviewDocument({ platform: 'pc' });
+        if (html.includes('data-panel-target="menu"')) throw new Error('preview should not expose unmatched menu panel target');
         if (html.includes('data-panel-target="api"')) throw new Error('preview should not expose unmatched api panel target');
+        if (html.includes('data-panel-target="world-info"')) throw new Error('preview should not expose unmatched world info panel target');
+        if (html.includes('data-panel-target="extensions"')) throw new Error('preview should not expose unmatched extensions panel target');
+        if (html.includes('data-panel-target="moving-ui"')) throw new Error('preview should not expose unmatched moving ui panel target');
+        if (html.includes('data-panel-target="notes"')) throw new Error('preview should not expose unmatched notes panel target');
+        if (html.includes('data-panel-shell="menu"')) throw new Error('unexpected menu panel shell');
         if (html.includes('data-panel-shell="api"')) throw new Error('unexpected api panel shell');
+        if (html.includes('data-panel-shell="world-info"')) throw new Error('unexpected world info panel shell');
+        if (html.includes('data-panel-shell="moving-ui"')) throw new Error('unexpected moving ui panel shell');
+        if (html.includes('data-panel-surface="menu"')) throw new Error('unexpected menu panel surface');
         if (html.includes('data-panel-surface="api"')) throw new Error('unexpected api panel surface');
+        if (html.includes('data-panel-surface="world-info"')) throw new Error('unexpected world info panel surface');
+        if (html.includes('data-panel-surface="moving-ui"')) throw new Error('unexpected moving ui panel surface');
+        for (const token of [
+          'data-preview-static-action="menu"',
+          'data-preview-static-action="api"',
+          'data-preview-static-action="world-info"',
+          'data-preview-static-action="extensions"',
+          'data-preview-static-action="moving-ui"',
+          'data-preview-static-action="notes"',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing static topbar placeholder: ${token}`);
+        }
         '''
     )
 
 
-def test_build_beautify_preview_document_hides_top_settings_holder_in_default_preview_state():
+def test_build_beautify_preview_document_styles_overlay_drawers_inside_preview_root():
+    source = (ROOT / 'static/js/components/beautifyPreviewDocument.js').read_text(encoding='utf-8')
+
+    for token in [
+        '--st-preview-panel-width: min(420px, calc(100vw - 48px));',
+        '--st-preview-left-panel-offset: 20px;',
+        '--st-preview-right-panel-offset: 20px;',
+        '#top-settings-holder {',
+        'position: absolute;',
+        'inset: 72px 20px auto 20px;',
+        'pointer-events: none;',
+        '[data-panel-shell] {',
+        'max-width: var(--st-preview-panel-width);',
+        'min-width: 0;',
+        'pointer-events: none;',
+        "[data-panel-shell='settings'],",
+        "[data-panel-shell='formatting'] {",
+        'left: var(--st-preview-left-panel-offset);',
+        "[data-panel-shell='character'] {",
+        'right: var(--st-preview-right-panel-offset);',
+        '.st-preview-panel-body {',
+        'min-width: 0;',
+        'max-height: min(680px, calc(100vh - 160px));',
+        '#sheld {',
+        'width: min(var(--sheldWidth), 100%);',
+        'margin: 0 auto;',
+    ]:
+        assert token in source, f'missing overlay drawer token: {token}'
+
+
+def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_controls():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc' });
+
+        const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
+        if (!scriptMatch) throw new Error('missing preview behavior script');
+
+        let loadHandler = null;
+        let requestAnimationFrameCalls = 0;
+        const staticClickHandlers = [];
+        const interactiveClickHandlers = [];
+
+        const root = { dataset: { activePanel: 'none', defaultScene: 'daily' } };
+        const chat = {
+          scrollTop: 0,
+          scrollHeight: 40,
+          innerHTML: '',
+        };
+        const description = { textContent: '' };
+
+        function createClassList(initial = []) {
+          const set = new Set(initial);
+          return {
+            add(...tokens) {
+              tokens.forEach((token) => set.add(token));
+            },
+            remove(...tokens) {
+              tokens.forEach((token) => set.delete(token));
+            },
+            toggle(token, force) {
+              if (force === undefined) {
+                if (set.has(token)) {
+                  set.delete(token);
+                  return false;
+                }
+                set.add(token);
+                return true;
+              }
+              if (force) {
+                set.add(token);
+                return true;
+              }
+              set.delete(token);
+              return false;
+            },
+            contains(token) {
+              return set.has(token);
+            },
+          };
+        }
+
+        function createStaticButton(action) {
+          return {
+            dataset: { previewStaticAction: action },
+            addEventListener(type, handler) {
+              if (type === 'click') {
+                staticClickHandlers.push({ action, handler });
+              }
+            },
+          };
+        }
+
+        function createPanelButton(panelTarget) {
+          return {
+            dataset: { panelTarget },
+            classList: createClassList(),
+            attributes: {},
+            addEventListener(type, handler) {
+              if (type === 'click') {
+                interactiveClickHandlers.push({ panelTarget, handler });
+              }
+            },
+            setAttribute(name, value) {
+              this.attributes[name] = String(value);
+            },
+          };
+        }
+
+        const staticButtons = [createStaticButton('menu'), createStaticButton('notes')];
+        const panelButtons = [createPanelButton('settings')];
+
+        const document = {
+          querySelector(selector) {
+            if (selector === '.st-preview-root') return root;
+            if (selector === '#chat') return chat;
+            if (selector === '[data-preview-chat-messages]') return chat;
+            if (selector === '[data-preview-scene-description]') return description;
+            if (selector === '[data-preview-scene-template="daily"]') {
+              return { innerHTML: '<div>daily</div>', dataset: { previewSceneDescription: 'daily desc' } };
+            }
+            return null;
+          },
+          querySelectorAll(selector) {
+            if (selector === '[data-panel-target]') return panelButtons;
+            if (selector === '[data-preview-static-action]') return staticButtons;
+            if (selector === '[data-panel-surface]' || selector === '[data-panel-shell]' || selector === '.inline-drawer' || selector === '[data-preview-scene-button]' || selector === '[data-preview-link="disabled"]') {
+              return [];
+            }
+            return [];
+          },
+        };
+
+        const window = {
+          requestAnimationFrame(callback) {
+            requestAnimationFrameCalls += 1;
+            callback();
+          },
+          addEventListener(type, handler) {
+            if (type === 'load') {
+              loadHandler = handler;
+            }
+          },
+        };
+
+        class CustomEvent {
+          constructor(type, options = {}) {
+            this.type = type;
+            this.bubbles = Boolean(options.bubbles);
+          }
+        }
+
+        const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
+        runScript(document, window, CustomEvent);
+
+        if (staticClickHandlers.length !== 2) throw new Error(`expected two static button handlers, got ${staticClickHandlers.length}`);
+        if (interactiveClickHandlers.length !== 1) throw new Error(`expected one interactive panel handler, got ${interactiveClickHandlers.length}`);
+        if (typeof loadHandler !== 'function') throw new Error('preview script did not bind load handler');
+        if (requestAnimationFrameCalls === 0) throw new Error('preview script did not schedule initial chat scroll');
+
+        const event = {
+          defaultPrevented: false,
+          preventDefault() {
+            this.defaultPrevented = true;
+          },
+          stopPropagationCalled: false,
+          stopPropagation() {
+            this.stopPropagationCalled = true;
+          },
+        };
+
+        staticClickHandlers[0].handler(event);
+
+        if (!event.defaultPrevented) throw new Error('static toolbar button should prevent default');
+        if (!event.stopPropagationCalled) throw new Error('static toolbar button should stop propagation');
+        if (root.dataset.activePanel !== 'none') throw new Error(`static toolbar button should not activate a panel, got ${root.dataset.activePanel}`);
+        if (Object.prototype.hasOwnProperty.call(root.dataset, 'previewStaticAction')) {
+          throw new Error('static toolbar button should not mutate preview placeholder state');
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_shows_top_settings_holder_in_default_preview_state():
     source = (ROOT / 'static/js/components/beautifyPreviewDocument.js').read_text(encoding='utf-8')
 
     assert '#top-settings-holder {' in source
     top_settings_block = source.split('#top-settings-holder {', 1)[1].split('}', 1)[0]
-    assert 'display: none;' in top_settings_block
+    assert 'display: block;' in top_settings_block
 
 
 def test_beautify_preview_identity_assets_exist_in_project_static_images():

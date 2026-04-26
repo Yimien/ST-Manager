@@ -981,24 +981,212 @@ def test_load_library_recovers_packages_from_disk_when_ui_index_missing(tmp_path
     assert get_beautify_library(ui_data)['packages'][package_id]['name'] == 'Recovered Demo'
 
 
-def test_load_library_recovery_does_not_rebuild_variant_wallpaper_truth_from_package_local_wallpapers(tmp_path):
+def test_load_library_recovery_rebuilds_variant_wallpaper_truth_from_package_local_wallpapers(tmp_path):
     ui_data = {}
     service = _build_service(tmp_path, ui_data)
 
     imported_theme = _import_theme_for_package(service, tmp_path, name='Recovered Local Wallpaper Demo', platform='pc')
     package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
     package_wallpaper_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'wallpapers'
     package_wallpaper_dir.mkdir(parents=True)
     Image.new('RGB', (1280, 720), '#445566').save(package_wallpaper_dir / 'legacy.png')
+    ui_data['_beautify_library_v1']['packages'][package_id]['variants'][variant_id]['selected_wallpaper_id'] = 'wp_selected'
+    ui_data['_beautify_library_v1']['packages'][package_id]['wallpapers'] = {
+        'wp_selected': {
+            'id': 'wp_selected',
+            'variant_id': variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/legacy.png',
+            'filename': 'legacy.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        }
+    }
+
+    ui_data.pop('_shared_wallpaper_library_v1', None)
+
+    recovered_library = service.load_library()
+    recovered_variant = next(iter(recovered_library['packages'][package_id]['variants'].values()))
+    recovered_id = recovered_variant['wallpaper_ids'][0]
+    package_detail = service.get_package(package_id)
+
+    assert recovered_id.startswith('package_embedded:')
+    assert recovered_variant['selected_wallpaper_id'] == recovered_id
+    assert package_detail['wallpapers'][recovered_id]['file'] == (
+        f'data/library/wallpapers/package_embedded/{package_id}/{variant_id}/legacy.png'
+    )
+    assert package_detail['wallpapers'][recovered_id]['origin_package_id'] == package_id
+    assert package_detail['wallpapers'][recovered_id]['origin_variant_id'] == variant_id
+
+
+def test_load_library_recovery_preserves_legacy_selected_wallpaper_end_to_end(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    imported_theme = _import_theme_for_package(service, tmp_path, name='Recovered Local Wallpaper Demo', platform='pc')
+    package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
+    package_wallpaper_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'wallpapers'
+    package_wallpaper_dir.mkdir(parents=True)
+    Image.new('RGB', (1280, 720), '#112233').save(package_wallpaper_dir / 'first.png')
+    Image.new('RGB', (1280, 720), '#445566').save(package_wallpaper_dir / 'selected.png')
+
+    ui_data['_beautify_library_v1']['packages'][package_id]['variants'][variant_id]['selected_wallpaper_id'] = 'wp_selected'
+    ui_data['_beautify_library_v1']['packages'][package_id]['wallpapers'] = {
+        'wp_first': {
+            'id': 'wp_first',
+            'variant_id': variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/first.png',
+            'filename': 'first.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        },
+        'wp_selected': {
+            'id': 'wp_selected',
+            'variant_id': variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/selected.png',
+            'filename': 'selected.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        },
+    }
+    ui_data.pop('_shared_wallpaper_library_v1', None)
+
+    recovered_library = service.load_library()
+    recovered_variant = recovered_library['packages'][package_id]['variants'][variant_id]
+    package_detail = service.get_package(package_id)
+
+    assert len(recovered_variant['wallpaper_ids']) == 2
+    assert recovered_variant['selected_wallpaper_id'].startswith('package_embedded:')
+    assert package_detail['wallpapers'][recovered_variant['selected_wallpaper_id']]['filename'] == 'selected.png'
+
+
+def test_load_library_recovery_keeps_empty_legacy_selection_empty_end_to_end(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    imported_theme = _import_theme_for_package(service, tmp_path, name='Recovered Local Wallpaper Demo', platform='pc')
+    package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
+    package_wallpaper_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'wallpapers'
+    package_wallpaper_dir.mkdir(parents=True)
+    Image.new('RGB', (1280, 720), '#112233').save(package_wallpaper_dir / 'first.png')
+    Image.new('RGB', (1280, 720), '#445566').save(package_wallpaper_dir / 'second.png')
+
+    ui_data['_beautify_library_v1']['packages'][package_id]['variants'][variant_id]['selected_wallpaper_id'] = ''
+    ui_data['_beautify_library_v1']['packages'][package_id]['wallpapers'] = {
+        'wp_first': {
+            'id': 'wp_first',
+            'variant_id': variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/first.png',
+            'filename': 'first.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        },
+        'wp_second': {
+            'id': 'wp_second',
+            'variant_id': variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/second.png',
+            'filename': 'second.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        },
+    }
+    ui_data.pop('_shared_wallpaper_library_v1', None)
+
+    recovered_library = service.load_library()
+    recovered_variant = recovered_library['packages'][package_id]['variants'][variant_id]
+
+    assert len(recovered_variant['wallpaper_ids']) == 2
+    assert recovered_variant['selected_wallpaper_id'] == ''
+
+
+def test_load_library_recovery_recovers_multi_variant_package_wallpapers_by_variant_id(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    imported_pc = _import_theme_for_package(service, tmp_path, filename='theme_pc.json', name='Multi Variant Demo', platform='pc')
+    package_id = imported_pc['package']['id']
+    mobile_theme_file = tmp_path / 'theme_mobile.json'
+    mobile_theme_file.write_text(
+        json.dumps({'name': 'Multi Variant Demo', 'main_text_color': '#fff'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    imported_mobile = service.import_theme(str(mobile_theme_file), package_id=package_id, platform='mobile')
+    pc_variant_id = imported_pc['variant']['id']
+    mobile_variant_id = imported_mobile['variant']['id']
+    package_wallpaper_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'wallpapers'
+    package_wallpaper_dir.mkdir(parents=True)
+    Image.new('RGB', (1280, 720), '#223344').save(package_wallpaper_dir / 'pc-only.png')
+    Image.new('RGB', (1080, 1920), '#556677').save(package_wallpaper_dir / 'mobile-only.png')
+
+    ui_data['_beautify_library_v1']['packages'][package_id]['variants'][pc_variant_id]['selected_wallpaper_id'] = 'wp_pc'
+    ui_data['_beautify_library_v1']['packages'][package_id]['wallpapers'] = {
+        'wp_pc': {
+            'id': 'wp_pc',
+            'variant_id': pc_variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/pc-only.png',
+            'filename': 'pc-only.png',
+            'width': 1280,
+            'height': 720,
+            'mtime': 1,
+        },
+        'wp_mobile': {
+            'id': 'wp_mobile',
+            'variant_id': mobile_variant_id,
+            'file': f'data/library/beautify/packages/{package_id}/wallpapers/mobile-only.png',
+            'filename': 'mobile-only.png',
+            'width': 1080,
+            'height': 1920,
+            'mtime': 1,
+        },
+    }
+
+    ui_data.pop('_shared_wallpaper_library_v1', None)
+
+    recovered_library = service.load_library()
+    recovered_package = recovered_library['packages'][package_id]
+    recovered_pc_variant = recovered_package['variants'][pc_variant_id]
+    recovered_mobile_variant = recovered_package['variants'][mobile_variant_id]
+    package_detail = service.get_package(package_id)
+
+    assert len(recovered_pc_variant['wallpaper_ids']) == 1
+    assert recovered_pc_variant['selected_wallpaper_id'] == recovered_pc_variant['wallpaper_ids'][0]
+    assert len(recovered_mobile_variant['wallpaper_ids']) == 1
+    assert recovered_mobile_variant['selected_wallpaper_id'] == ''
+    assert package_detail['wallpapers'][recovered_pc_variant['wallpaper_ids'][0]]['origin_variant_id'] == pc_variant_id
+    assert package_detail['wallpapers'][recovered_mobile_variant['wallpaper_ids'][0]]['origin_variant_id'] == mobile_variant_id
+
+
+def test_load_library_recovery_does_not_duplicate_package_local_wallpaper_imports(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    imported_theme = _import_theme_for_package(service, tmp_path, name='Recovered Local Wallpaper Demo', platform='pc')
+    package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
+
+    package_wallpaper_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'wallpapers'
+    package_wallpaper_dir.mkdir(parents=True)
+    Image.new('RGB', (1280, 720), '#556677').save(package_wallpaper_dir / 'legacy.png')
 
     ui_data.clear()
 
-    recovered_library = service.load_library()
+    first_library = service.load_library()
+    second_library = service.load_library()
+    first_variant = next(iter(first_library['packages'][package_id]['variants'].values()))
+    second_variant = next(iter(second_library['packages'][package_id]['variants'].values()))
+    embedded_dir = (
+        tmp_path / 'data' / 'library' / 'wallpapers' / 'package_embedded' / package_id / variant_id
+    )
 
-    recovered_package = recovered_library['packages'][package_id]
-    recovered_variant = next(iter(recovered_package['variants'].values()))
-    assert recovered_variant['wallpaper_ids'] == []
-    assert recovered_variant['selected_wallpaper_id'] == ''
+    assert first_variant['wallpaper_ids'] == second_variant['wallpaper_ids']
+    assert sorted(path.name for path in embedded_dir.iterdir()) == ['legacy.png']
 
 
 def test_load_library_skips_invalid_theme_files_during_disk_recovery(tmp_path):
