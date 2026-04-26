@@ -155,7 +155,7 @@ def test_export_backup_includes_only_db_sections_and_counts(tmp_path, monkeypatc
 
     assert result['file_name'].startswith('user_db_backup_')
     assert result['stats'] == {
-        'favorites': 2,
+        'favorites': 1,
         'wi_clipboard': 2,
         'wi_entry_history': 1,
     }
@@ -164,7 +164,6 @@ def test_export_backup_includes_only_db_sections_and_counts(tmp_path, monkeypatc
     assert set(payload['data'].keys()) == {'favorites', 'wi_clipboard', 'wi_entry_history'}
     assert payload['data']['favorites'] == [
         {'card_id': 'hero.png', 'is_favorite': True},
-        {'card_id': 'mage.png', 'is_favorite': False},
     ]
     assert payload['data']['wi_clipboard'] == [
         {'content': {'text': 'alpha'}, 'sort_order': 0, 'created_at': 100.0},
@@ -301,6 +300,126 @@ def test_import_backup_merges_favorites_skips_missing_cards_and_syncs_side_effec
         }
     ]
     assert apply_calls == [('hero.png', str(source_path))]
+
+
+def test_import_compact_favorites_backup_keeps_other_existing_favorites(tmp_path, monkeypatch):
+    from core.services.user_db_backup_service import UserDbBackupService
+
+    db_path = tmp_path / 'app.db'
+    source_path = tmp_path / 'cards' / 'hero.png'
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text('hero', encoding='utf-8')
+
+    with _open_db(db_path) as conn:
+        _create_tables(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, is_favorite) VALUES (?, ?), (?, ?)',
+            ('hero.png', 0, 'mage.png', 1),
+        )
+        conn.commit()
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': '2026-04-26T10:00:00Z',
+        'app': 'ST-Manager',
+        'data': {
+            'favorites': [
+                {'card_id': 'hero.png', 'is_favorite': True},
+            ],
+            'wi_clipboard': [],
+            'wi_entry_history': [],
+        },
+    }
+    backup_file = tmp_path / 'compact-favorites.json'
+    backup_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr('core.services.user_db_backup_service.DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr('core.services.user_db_backup_service.ctx.cache', None)
+    monkeypatch.setattr('core.services.user_db_backup_service.sync_card_index_jobs', lambda **_kwargs: {})
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service._apply_card_index_increment_now',
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service.UserDbBackupService._resolve_card_source_path',
+        lambda self, card_id: str(source_path) if card_id == 'hero.png' else '',
+    )
+
+    result = UserDbBackupService().import_backup(str(backup_file), source_name='compact-favorites.json')
+
+    with _open_db(db_path) as conn:
+        favorites = _fetch_all(conn, 'SELECT id, is_favorite FROM card_metadata ORDER BY id')
+
+    assert favorites == [
+        {'id': 'hero.png', 'is_favorite': 1},
+        {'id': 'mage.png', 'is_favorite': 1},
+    ]
+    assert result['stats']['favorites'] == {
+        'imported': 1,
+        'skipped_missing_cards': 0,
+        'unchanged': 0,
+    }
+    assert result['stats']['wi_clipboard'] == {'imported': 0, 'deduplicated': 0}
+    assert result['stats']['wi_entry_history'] == {'imported': 0, 'deduplicated': 0, 'trimmed': 0}
+
+
+def test_import_backup_accepts_legacy_full_favorites_snapshot(tmp_path, monkeypatch):
+    from core.services.user_db_backup_service import UserDbBackupService
+
+    db_path = tmp_path / 'app.db'
+
+    with _open_db(db_path) as conn:
+        _create_tables(conn)
+        conn.execute(
+            'INSERT INTO card_metadata (id, is_favorite) VALUES (?, ?), (?, ?)',
+            ('hero.png', 0, 'mage.png', 1),
+        )
+        conn.commit()
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': '2026-04-26T10:00:00Z',
+        'app': 'ST-Manager',
+        'data': {
+            'favorites': [
+                {'card_id': 'hero.png', 'is_favorite': True},
+                {'card_id': 'mage.png', 'is_favorite': False},
+            ],
+            'wi_clipboard': [],
+            'wi_entry_history': [],
+        },
+    }
+    backup_file = tmp_path / 'legacy-full-favorites.json'
+    backup_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    monkeypatch.setattr('core.services.user_db_backup_service.DEFAULT_DB_PATH', str(db_path))
+    monkeypatch.setattr('core.services.user_db_backup_service.ctx.cache', None)
+    monkeypatch.setattr('core.services.user_db_backup_service.sync_card_index_jobs', lambda **_kwargs: {})
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service._apply_card_index_increment_now',
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        'core.services.user_db_backup_service.UserDbBackupService._resolve_card_source_path',
+        lambda self, _card_id: '',
+    )
+
+    result = UserDbBackupService().import_backup(str(backup_file), source_name='legacy-full-favorites.json')
+
+    with _open_db(db_path) as conn:
+        favorites = _fetch_all(conn, 'SELECT id, is_favorite FROM card_metadata ORDER BY id')
+
+    assert favorites == [
+        {'id': 'hero.png', 'is_favorite': 1},
+        {'id': 'mage.png', 'is_favorite': 0},
+    ]
+    assert result['stats']['favorites'] == {
+        'imported': 2,
+        'skipped_missing_cards': 0,
+        'unchanged': 0,
+    }
+    assert result['stats']['wi_clipboard'] == {'imported': 0, 'deduplicated': 0}
+    assert result['stats']['wi_entry_history'] == {'imported': 0, 'deduplicated': 0, 'trimmed': 0}
 
 
 def test_import_backup_skips_history_when_table_is_missing(tmp_path, monkeypatch):
