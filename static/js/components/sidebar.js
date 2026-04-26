@@ -69,6 +69,44 @@ function buildFolderTree(list, expandedFolders, extra = {}) {
   });
 }
 
+function normalizeCategorySearchQuery(query) {
+  return String(query || "").trim().toLowerCase();
+}
+
+function filterFolderTreeByQuery(list, query) {
+  const normalizedQuery = normalizeCategorySearchQuery(query);
+  if (!normalizedQuery) {
+    return list || [];
+  }
+
+  const folders = list || [];
+  const folderMap = new Map(folders.map((folder) => [folder.path, folder]));
+  const includedPaths = new Set();
+
+  folders.forEach((folder) => {
+    const folderName = normalizeCategorySearchQuery(folder.name);
+    const folderPath = normalizeCategorySearchQuery(folder.path);
+    if (
+      !folderName.includes(normalizedQuery) &&
+      !folderPath.includes(normalizedQuery)
+    ) {
+      return;
+    }
+
+    let currentPath = folder.path;
+    while (currentPath) {
+      includedPaths.add(currentPath);
+      const lastSlashIndex = currentPath.lastIndexOf("/");
+      if (lastSlashIndex === -1) {
+        break;
+      }
+      currentPath = currentPath.slice(0, lastSlashIndex);
+    }
+  });
+
+  return folders.filter((folder) => includedPaths.has(folder.path));
+}
+
 export default function sidebar() {
   return {
     // 本地展开状态
@@ -204,25 +242,96 @@ export default function sidebar() {
       return this.$store.global.tagIndexActiveCategory || "";
     },
 
+    get cardCategorySearchQuery() {
+      return this.$store.global.cardCategorySearchQuery || "";
+    },
+    set cardCategorySearchQuery(val) {
+      this.$store.global.cardCategorySearchQuery = String(val || "");
+      return true;
+    },
+
+    get wiCategorySearchQuery() {
+      return this.$store.global.wiCategorySearchQuery || "";
+    },
+    set wiCategorySearchQuery(val) {
+      this.$store.global.wiCategorySearchQuery = String(val || "");
+      return true;
+    },
+
+    get presetCategorySearchQuery() {
+      return this.$store.global.presetCategorySearchQuery || "";
+    },
+    set presetCategorySearchQuery(val) {
+      this.$store.global.presetCategorySearchQuery = String(val || "");
+      return true;
+    },
+
+    get isCardCategorySearchActive() {
+      return !!normalizeCategorySearchQuery(this.cardCategorySearchQuery);
+    },
+
+    get isCardCategorySearchEmpty() {
+      return this.isCardCategorySearchActive && this.folderTree.length === 0;
+    },
+
+    get isWiCategorySearchActive() {
+      return !!normalizeCategorySearchQuery(this.wiCategorySearchQuery);
+    },
+
+    get isWiCategorySearchEmpty() {
+      return this.isWiCategorySearchActive && this.wiFolderTree.length === 0;
+    },
+
+    get isPresetCategorySearchActive() {
+      return !!normalizeCategorySearchQuery(this.presetCategorySearchQuery);
+    },
+
+    get isPresetCategorySearchEmpty() {
+      return this.isPresetCategorySearchActive && this.presetFolderTree.length === 0;
+    },
+
     // 计算属性：构建文件夹树 (依赖全局 Store 数据)
     get folderTree() {
-      const list = this.$store.global.allFoldersList || [];
+      const list = filterFolderTreeByQuery(
+        this.$store.global.allFoldersList || [],
+        this.cardCategorySearchQuery,
+      );
       return buildFolderTree(list, this.expandedFolders, {
         isIsolated: false,
         isInsideIsolatedBranch: false,
+        visible: this.isCardCategorySearchActive ? true : undefined,
       }).map((folder) => ({
         ...folder,
+        visible: this.isCardCategorySearchActive ? true : folder.visible,
         isIsolated: this.isIsolatedFolder(folder.path),
         isInsideIsolatedBranch: this.isInsideIsolatedBranch(folder.path),
       }));
     },
 
     get wiFolderTree() {
-      return buildFolderTree(this.wiFolderList, this.expandedFolders);
+      const list = filterFolderTreeByQuery(
+        this.wiFolderList,
+        this.wiCategorySearchQuery,
+      );
+      return buildFolderTree(list, this.expandedFolders, {
+        visible: this.isWiCategorySearchActive ? true : undefined,
+      }).map((folder) => ({
+        ...folder,
+        visible: this.isWiCategorySearchActive ? true : folder.visible,
+      }));
     },
 
     get presetFolderTree() {
-      return buildFolderTree(this.presetFolderList, this.expandedFolders);
+      const list = filterFolderTreeByQuery(
+        this.presetFolderList,
+        this.presetCategorySearchQuery,
+      );
+      return buildFolderTree(list, this.expandedFolders, {
+        visible: this.isPresetCategorySearchActive ? true : undefined,
+      }).map((folder) => ({
+        ...folder,
+        visible: this.isPresetCategorySearchActive ? true : folder.visible,
+      }));
     },
 
     get wiFolderList() {
@@ -370,6 +479,18 @@ export default function sidebar() {
       this.expandedFolders[path] = !this.expandedFolders[path];
       // 强制更新 (Alpine sometimes needs help with deep object mutation reactivity)
       this.expandedFolders = { ...this.expandedFolders };
+    },
+
+    clearCategorySearch(mode = this.currentMode) {
+      if (mode === "worldinfo") {
+        this.wiCategorySearchQuery = "";
+        return;
+      }
+      if (mode === "presets") {
+        this.presetCategorySearchQuery = "";
+        return;
+      }
+      this.cardCategorySearchQuery = "";
     },
 
     // 设置当前分类

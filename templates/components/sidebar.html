@@ -130,6 +130,24 @@
         </button>
       </div>
       <div class="sidebar-content custom-scrollbar p-2">
+        <div class="sidebar-category-search-wrap">
+          <div class="sidebar-category-search">
+            <input
+              x-model="cardCategorySearchQuery"
+              type="text"
+              class="sidebar-category-search-input"
+              placeholder="搜索分类或路径..."
+            />
+            <button
+              x-show="cardCategorySearchQuery"
+              @click="clearCategorySearch('cards')"
+              class="sidebar-category-search-clear"
+              type="button"
+            >
+              清除
+            </button>
+          </div>
+        </div>
         <div
           @click="setCategory('')"
           @dragover.prevent="handleDragOverRoot($event)"
@@ -229,6 +247,12 @@
             </div>
           </div>
         </template>
+        <div
+          x-show="isCardCategorySearchActive && isCardCategorySearchEmpty"
+          class="sidebar-search-empty"
+        >
+          未找到匹配分类
+        </div>
       </div>
     </div>
     <div
@@ -389,6 +413,24 @@
         >
           世界书分类
         </div>
+        <div class="sidebar-category-search-wrap">
+          <div class="sidebar-category-search">
+            <input
+              x-model="wiCategorySearchQuery"
+              type="text"
+              class="sidebar-category-search-input"
+              placeholder="搜索分类或路径..."
+            />
+            <button
+              x-show="wiCategorySearchQuery"
+              @click="clearCategorySearch('worldinfo')"
+              class="sidebar-category-search-clear"
+              type="button"
+            >
+              清除
+            </button>
+          </div>
+        </div>
         <div class="sidebar-content custom-scrollbar worldinfo-sidebar-tree">
           <div
             @click="setWiCategory('')"
@@ -443,6 +485,12 @@
               </div>
             </div>
           </template>
+          <div
+            x-show="isWiCategorySearchActive && isWiCategorySearchEmpty"
+            class="sidebar-search-empty"
+          >
+            未找到匹配分类
+          </div>
         </div>
       </div>
     </div>
@@ -560,6 +608,24 @@
         >
           预设分类
         </div>
+        <div class="sidebar-category-search-wrap">
+          <div class="sidebar-category-search">
+            <input
+              x-model="presetCategorySearchQuery"
+              type="text"
+              class="sidebar-category-search-input"
+              placeholder="搜索分类或路径..."
+            />
+            <button
+              x-show="presetCategorySearchQuery"
+              @click="clearCategorySearch('presets')"
+              class="sidebar-category-search-clear"
+              type="button"
+            >
+              清除
+            </button>
+          </div>
+        </div>
         <div class="sidebar-content custom-scrollbar preset-sidebar-tree">
           <div
             @click="setPresetCategory('')"
@@ -617,6 +683,12 @@
               </div>
             </div>
           </template>
+          <div
+            x-show="isPresetCategorySearchActive && isPresetCategorySearchEmpty"
+            class="sidebar-search-empty"
+          >
+            未找到匹配分类
+          </div>
         </div>
       </div>
     </div>

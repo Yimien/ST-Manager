@@ -281,6 +281,9 @@ export function initState() {
     // 分页配置
     itemsPerPage: 20,
 
+    // 卡片侧边栏分类搜索
+    cardCategorySearchQuery: "",
+
     // 当前会话排序（仅影响当前列表，不写入配置）
     currentSort: "date_desc",
 
@@ -298,6 +301,7 @@ export function initState() {
     },
     wiFilterType: "all", // 筛选类型: 'all', 'global', 'resource', 'embedded'
     wiFilterCategory: "",
+    wiCategorySearchQuery: "",
     wiAllFolders: [],
     wiCategoryCounts: {},
     wiFolderCapabilities: {},
@@ -338,6 +342,7 @@ export function initState() {
     // 预设筛选状态
     presetFilterType: "all", // 'all', 'global', 'resource'
     presetFilterCategory: "",
+    presetCategorySearchQuery: "",
     presetAllFolders: [],
     presetCategoryCounts: {},
     presetFolderCapabilities: {},
