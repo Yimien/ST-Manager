@@ -764,6 +764,7 @@ def list_presets():
         selected_category = _normalize_category_path(request.args.get('category', ''))
 
         source_items = []
+        seen_global_ids = set()
         items = []
         presets_root = _get_presets_path()
         ui_data = load_ui_data()
@@ -792,11 +793,15 @@ def list_presets():
                         rel_path = os.path.relpath(full_path, root_dir).replace('\\', '/')
                         physical_category = _get_parent_category(rel_path)
                         item = parsed['summary']
+                        canonical_id = _build_canonical_preset_id(full_path, 'global', config_key, presets_root)
+                        if canonical_id in seen_global_ids:
+                            continue
+                        seen_global_ids.add(canonical_id)
                         if config_key:
-                            item['id'] = f'global-alt::{config_key}::{rel_path}'
+                            item['id'] = canonical_id
                             item['source_folder'] = config_key
                         else:
-                            item['id'] = f'global::{rel_path}'
+                            item['id'] = canonical_id
                             item['source_folder'] = None
                         item['type'] = 'global'
                         item['source_type'] = 'global'
