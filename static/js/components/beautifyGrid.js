@@ -500,6 +500,7 @@ export default function beautifyGrid() {
       }
 
       const currentPlatform = this.selectedVariantPlatform;
+      const isMobileViewport = this.isMobileBeautifyViewport();
       const hasPc = !!this.findVariantForPreviewPlatform("pc", detail);
       const hasMobile = !!this.findVariantForPreviewPlatform("mobile", detail);
       const hasDual = !!this.findVariantByPlatform("dual", detail);
@@ -513,10 +514,16 @@ export default function beautifyGrid() {
       if (currentPlatform === "mobile" && hasMobile) {
         return "mobile";
       }
+       if (currentPlatform === "mobile" && isMobileViewport) {
+        return "mobile";
+      }
       if (currentPlatform === "pc" && hasPc) {
         return "pc";
       }
       if (hasMobile && !hasPc) {
+        return "mobile";
+      }
+      if (isMobileViewport && hasPc && !hasMobile) {
         return "mobile";
       }
       if (hasPc && !hasMobile) {

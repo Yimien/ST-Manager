@@ -313,7 +313,7 @@ def test_beautify_grid_template_settings_workspace_preview_stage_keeps_balanced_
 def test_beautify_grid_template_disables_preview_only_controls_in_screenshot_mode():
     template = read_project_file('templates/components/grid_beautify.html')
 
-    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasPcVariant"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant || isMobileBeautifyViewport()\"" in template or ':disabled="stageMode === \"screenshot\" || !hasPcVariant || isMobileBeautifyViewport()"' in template
     assert ":disabled=\"stageMode === 'screenshot' || !hasMobileVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasMobileVariant"' in template
     assert ":disabled=\"stageMode === 'screenshot' || !hasDualVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasDualVariant"' in template
     assert ":disabled=\"stageMode === 'screenshot' || wallpaperOptions.length === 0\"" in template or ':disabled="stageMode === \"screenshot\" || wallpaperOptions.length === 0"' in template
@@ -340,7 +340,7 @@ def test_beautify_grid_template_uses_manual_native_preview_trigger():
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert '加载原生 ST 预览' in template
-    assert 'x-if="!isPreviewLoaded"' in template or "x-if='!isPreviewLoaded'" in template
+    assert '!$store.global.beautifyPreviewUnavailableReason && !isPreviewLoaded' in template
     assert '@click="loadPreview()"' in template or "@click='loadPreview()'" in template
     assert 'previewHost' in template
     assert 'previewApproximateNoticeVisible' not in template
@@ -350,11 +350,11 @@ def test_beautify_grid_template_uses_combined_desktop_preview_conditions_for_pac
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert re.search(
-        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*!isPreviewLoaded\1''',
+        r'''x-if=(["'])!\$store\.global\.beautifyPreviewUnavailableReason\s*&&\s*!isMobileFullscreenEnabled\(\)\s*&&\s*!isPreviewLoaded\1''',
         template,
     )
     assert re.search(
-        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*isPreviewLoaded\1''',
+        r'''x-if=(["'])!\$store\.global\.beautifyPreviewUnavailableReason\s*&&\s*!isMobileFullscreenEnabled\(\)\s*&&\s*isPreviewLoaded\1''',
         template,
     )
     assert not re.search(

@@ -2739,6 +2739,90 @@ def test_beautify_grid_recomputes_preview_unavailable_reason_across_device_works
     )
 
 
+def test_beautify_grid_mobile_viewport_keeps_mobile_preview_target_unavailable_for_pc_only_package_reload_and_workspace_return():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = { innerWidth: 390, addEventListener: () => {} };
+        globalThis.__gridStubs = {
+          getBeautifyPackage: async (packageId) => ({
+            success: true,
+            item: {
+              id: packageId,
+              variants: {
+                pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+          }),
+          getBeautifySettings: async () => ({ success: true, item: null }),
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'mobile',
+            beautifyPreviewUnavailableReason: '',
+            beautifyVariantSelectionByDevice: {},
+            beautifySelectedPackageId: 'pkg_pc_only',
+            beautifySelectedVariantId: 'pc_only',
+            beautifySelectedWallpaperId: '',
+            beautifySelectedScreenshotId: '',
+            beautifyActiveDetail: {
+              id: 'pkg_pc_only',
+              variants: {
+                pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+            beautifyActiveVariant: {
+              id: 'pc_only',
+              platform: 'pc',
+              wallpaper_ids: [],
+              selected_wallpaper_id: '',
+            },
+            beautifyActiveWallpaper: null,
+            beautifyGlobalSettings: {},
+            showToast: () => {},
+          },
+        };
+        component.syncPackageIdentityFields = () => {};
+        component.fetchGlobalSettings = () => {};
+        component.closePackageDetailDrawer = () => {};
+        component.closeMobilePreviewAndReset = () => {};
+        component.closeMobileFullscreen = () => {};
+
+        await component.selectPackage('pkg_pc_only', { preserveSelection: true });
+        if (component.$store.global.beautifyPreviewDevice !== 'mobile') {
+          throw new Error(`mobile package reload should preserve mobile preview target, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+        if (!component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('mobile package reload should keep preview unavailable for pc-only package');
+        }
+
+        component.switchBeautifyWorkspace('settings');
+        if (component.$store.global.beautifyPreviewDevice !== 'mobile') {
+          throw new Error(`mobile settings workspace should preserve mobile preview target, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('settings workspace should clear package-specific preview unavailable reason');
+        }
+
+        component.switchBeautifyWorkspace('packages');
+        if (component.$store.global.beautifyPreviewDevice !== 'mobile') {
+          throw new Error(`mobile workspace return should preserve mobile preview target, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+        if (!component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('mobile workspace return should restore unavailable state for pc-only package');
+        }
+        '''
+    )
+
+
 def test_beautify_preview_frame_falls_back_to_global_wallpaper_when_variant_selection_has_no_resolved_wallpaper():
     run_beautify_preview_frame_runtime_check(
         '''
