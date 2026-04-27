@@ -588,23 +588,40 @@ export default function beautifyGrid() {
       this.setPreviewUnavailable("");
     },
 
+    syncPreviewUnavailableState(options = {}) {
+      const workspace = options.workspace || this.workspace;
+      if (workspace === "settings") {
+        this.clearPreviewUnavailable();
+        return false;
+      }
+
+      const variant = options.variant || this.activeVariant;
+      const device = options.device || this.selectedVariantPlatform;
+      if (!variant) {
+        this.clearPreviewUnavailable();
+        return false;
+      }
+
+      if (!this.isVariantCompatibleWithDevice(variant, device)) {
+        this.setPreviewUnavailable(
+          device === "mobile"
+            ? "当前变体仅支持 PC 预览，请切换到移动端或双端变体。"
+            : "当前预览目标没有可用变体。",
+        );
+        return true;
+      }
+
+      this.clearPreviewUnavailable();
+      return false;
+    },
+
     selectVariant(variantId) {
       const detail = this.activeDetail;
       const variant = detail?.variants?.[variantId] || null;
       if (!variant) return;
       this.applyActiveVariant(variant, { preservePreviewDevice: true });
 
-      if (
-        this.isMobileBeautifyViewport() &&
-        !this.isVariantCompatibleWithDevice(variant, "mobile")
-      ) {
-        this.setPreviewUnavailable(
-          "当前变体仅支持 PC 预览，请切换到移动端或双端变体。",
-        );
-        return;
-      }
-
-      this.clearPreviewUnavailable();
+      this.syncPreviewUnavailableState({ variant });
       if (variant.platform === "dual") {
         this.recordVariantSelectionForDevice("pc", variant.id);
         this.recordVariantSelectionForDevice("mobile", variant.id);
@@ -620,6 +637,7 @@ export default function beautifyGrid() {
         this.$store.global.beautifyActiveWallpaper = null;
         this.selectedVariantId = "";
         this.selectedWallpaperId = "";
+        this.clearPreviewUnavailable();
         return;
       }
 
@@ -633,6 +651,8 @@ export default function beautifyGrid() {
       if (!options.preservePreviewDevice) {
         this.selectedVariantPlatform = this.resolvePackagePreviewPlatform();
       }
+
+      this.syncPreviewUnavailableState({ variant });
     },
 
     resolveActiveWallpaper(variant) {
@@ -678,17 +698,20 @@ export default function beautifyGrid() {
         this.resolveRememberedVariant(platform) ||
         this.findVariantByPlatform(platform);
       if (variant) {
-        this.clearPreviewUnavailable();
         this.applyActiveVariant(variant);
         this.selectedVariantPlatform = platform;
+        this.syncPreviewUnavailableState({ variant, device: platform });
         return;
       }
 
       const dualVariant = this.findVariantByPlatform("dual");
       if (dualVariant && ["pc", "mobile", "dual"].includes(platform)) {
-        this.clearPreviewUnavailable();
         this.applyActiveVariant(dualVariant);
         this.selectedVariantPlatform = platform === "dual" ? "dual" : platform;
+        this.syncPreviewUnavailableState({
+          variant: dualVariant,
+          device: this.selectedVariantPlatform,
+        });
         return;
       }
 
@@ -730,6 +753,7 @@ export default function beautifyGrid() {
       if (this.workspace === "settings") {
         this.alignSettingsPreviewDeviceToViewport();
         this.stageMode = "preview";
+        this.syncPreviewUnavailableState({ workspace: "settings" });
         this.fetchGlobalSettings();
         return;
       }
@@ -740,9 +764,14 @@ export default function beautifyGrid() {
       if (nextVariant) {
         this.applyActiveVariant(nextVariant);
         this.selectedVariantPlatform = previewPlatform;
+        this.syncPreviewUnavailableState({
+          variant: nextVariant,
+          device: previewPlatform,
+        });
         return;
       }
       this.selectedVariantPlatform = previewPlatform;
+      this.syncPreviewUnavailableState({ device: previewPlatform });
     },
 
     setStageMode(mode) {

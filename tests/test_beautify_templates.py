@@ -383,6 +383,9 @@ def test_beautify_grid_mobile_viewport_disables_pc_preview_button_in_template():
 
     assert 'isMobileBeautifyViewport()' in template
     assert 'selectedVariantPlatform === \'pc\'' in template or 'selectedVariantPlatform === "pc"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant || isMobileBeautifyViewport()\"" in template or ':disabled="stageMode === "screenshot" || !hasPcVariant || isMobileBeautifyViewport()"' in template
+    assert 'beautifyPreviewUnavailableReason' in template
+    assert '原生 ST 预览不可用' in template
 
 
 def test_beautify_grid_template_uses_isolated_preview_host_instead_of_inline_preview_dom():

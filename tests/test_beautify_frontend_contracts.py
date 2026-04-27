@@ -2624,6 +2624,121 @@ def test_beautify_grid_mobile_viewport_marks_pc_only_variant_preview_unavailable
     )
 
 
+def test_beautify_grid_recomputes_preview_unavailable_reason_across_device_workspace_and_package_flows():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = { innerWidth: 1280, addEventListener: () => {} };
+        globalThis.__gridStubs = {
+          getBeautifyPackage: async (packageId) => ({
+            success: true,
+            item: {
+              id: packageId,
+              variants: {
+                ...(packageId === 'pkg_pc_only'
+                  ? {
+                      pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                    }
+                  : {
+                      pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                      mobile_only: { id: 'mobile_only', platform: 'mobile', wallpaper_ids: [], selected_wallpaper_id: '' },
+                    }),
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+          }),
+          getBeautifySettings: async () => ({ success: true, item: null }),
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'mobile',
+            beautifyPreviewUnavailableReason: '',
+            beautifyVariantSelectionByDevice: {},
+            beautifySelectedPackageId: 'pkg_demo',
+            beautifySelectedVariantId: '',
+            beautifySelectedWallpaperId: '',
+            beautifySelectedScreenshotId: '',
+            beautifyActiveDetail: {
+              id: 'pkg_demo',
+              variants: {
+                pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                mobile_only: { id: 'mobile_only', platform: 'mobile', wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+            beautifyActiveVariant: null,
+            beautifyActiveWallpaper: null,
+            beautifyGlobalSettings: {},
+            showToast: () => {},
+          },
+        };
+        component.syncPackageIdentityFields = () => {};
+        component.fetchGlobalSettings = () => {};
+        component.closePackageDetailDrawer = () => {};
+        component.closeMobilePreviewAndReset = () => {};
+        component.closeMobileFullscreen = () => {};
+
+        component.$store.global.beautifyPreviewDevice = 'mobile';
+        component.selectVariant('pc_only');
+        if (!component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('selecting pc-only variant on mobile preview target should set unavailable reason even on desktop viewport');
+        }
+
+        await component.previewPlatform('mobile');
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('switching preview target to a compatible mobile variant should clear unavailable reason');
+        }
+
+        await component.previewPlatform('pc');
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('switching preview target to pc should keep pc-only variant preview available');
+        }
+
+        component.$store.global.beautifyPreviewDevice = 'mobile';
+        component.selectVariant('pc_only');
+        if (!component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('pc-only variant should become unavailable again after reselecting on mobile target');
+        }
+
+        component.switchBeautifyWorkspace('settings');
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('settings workspace should clear package-specific preview unavailable reason');
+        }
+
+        component.$store.global.beautifyPreviewDevice = 'mobile';
+        await component.selectPackage('pkg_demo');
+        component.selectVariant('pc_only');
+        component.switchBeautifyWorkspace('settings');
+        component.switchBeautifyWorkspace('packages');
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('returning to package workspace should recompute away stale unavailable reason when a compatible mobile variant exists');
+        }
+        if (component.$store.global.beautifyPreviewDevice !== 'pc') {
+          throw new Error(`expected settings round-trip on desktop viewport to realign effective preview target to pc, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+
+        component.$store.global.beautifyPreviewDevice = 'pc';
+        await component.selectPackage('pkg_pc_only', { preserveSelection: true });
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('reloading package with pc target should clear unavailable reason for pc-only variant');
+        }
+
+        component.$store.global.beautifyPreviewDevice = 'mobile';
+        component.$store.global.beautifySelectedVariantId = 'pc_only';
+        await component.selectPackage('pkg_demo', { preserveSelection: true });
+        if (!component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error('reloading package with mobile target and preserved pc-only selection should recompute unavailable reason');
+        }
+        '''
+    )
+
+
 def test_beautify_preview_frame_falls_back_to_global_wallpaper_when_variant_selection_has_no_resolved_wallpaper():
     run_beautify_preview_frame_runtime_check(
         '''
