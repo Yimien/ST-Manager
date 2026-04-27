@@ -379,13 +379,6 @@
   flex-direction: column;
 }
 
-.beautify-package-detail-reopen {
-  position: absolute;
-  top: 0.85rem;
-  right: 0.85rem;
-  z-index: 2;
-}
-
 .beautify-detail-column {
   display: flex;
   flex-direction: column;

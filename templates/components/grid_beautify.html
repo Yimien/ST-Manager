@@ -569,15 +569,6 @@
                 </div>
               </template>
 
-              <button
-                type="button"
-                class="beautify-package-detail-reopen beautify-soft-btn"
-                x-show="packageDetailCollapsed && !isMobileBeautifyViewport()"
-                @click="openPackageDetailDrawer()"
-              >
-                展开详情
-              </button>
-
               <template
                 x-if="stageMode === 'screenshot' && isMobileFullscreenEnabled()"
               >

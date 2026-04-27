@@ -258,6 +258,7 @@ function buildMessage({
   avatarSrc = "",
   messageHtml,
   timestamp,
+  timer = "",
   tokenCounter,
   isUser = false,
   isSystem = false,
@@ -279,7 +280,7 @@ function buildMessage({
           <img alt="${escapeHtml(name)}" src="${escapeHtml(resolvedAvatarSrc)}">
         </div>
         <div class="mesIDDisplay">#${escapeHtml(mesId)}</div>
-        <div class="mes_timer">${escapeHtml(timestamp)}</div>
+        <div class="mes_timer">${escapeHtml(timer)}</div>
         <div class="tokenCounterDisplay">${escapeHtml(tokenCounter)}</div>
       </div>
       <div class="swipe_left">&lt;</div>
@@ -326,7 +327,8 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'character',
             mesId: '2',
-            timestamp: '08:14',
+            timestamp: '2026年4月27日 08:14',
+            timer: '',
             tokenCounter: '318 tok',
             includeReasoning: true,
             messageHtml:
@@ -335,7 +337,8 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'user',
             mesId: '3',
-            timestamp: '08:15',
+            timestamp: '2026年4月27日 08:15',
+            timer: '',
             tokenCounter: '142 tok',
             extraClass: 'last_mes',
             messageHtml: `<p>列表、链接和代码块也需要稳定呈现。</p><ul><li>Keep the message shell realistic.</li><li>Make rich text and code samples visible.</li></ul><pre><code>const preview = buildBeautifyPreviewDocument({ platform: '${escapeHtml(normalizedPlatform)}' });</code></pre>`,
@@ -351,7 +354,8 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'character',
             mesId: '1',
-            timestamp: '22:06',
+            timestamp: '2026年4月27日 22:06',
+            timer: '',
             tokenCounter: '204 tok',
             messageHtml:
               '<p>你刚刚那句“只看一眼消息”听起来，可不像真的只看一眼。</p>',
@@ -359,7 +363,8 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'user',
             mesId: '2',
-            timestamp: '22:06',
+            timestamp: '2026年4月27日 22:06',
+            timer: '',
             tokenCounter: '72 tok',
             messageHtml: '<p>被你发现了。我本来只是想确认你睡了没。</p>',
           },
@@ -374,14 +379,16 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'user',
             mesId: '1',
-            timestamp: '19:24',
+            timestamp: '2026年4月27日 19:24',
+            timer: '',
             tokenCounter: '104 tok',
             messageHtml: '<p>你之前提过“潮灯湾”，那地方到底是什么样？</p>',
           },
           {
             role: 'character',
             mesId: '2',
-            timestamp: '19:25',
+            timestamp: '2026年4月27日 19:25',
+            timer: '',
             tokenCounter: '352 tok',
             messageHtml:
               '<p>港口白天看着安静，到了夜里，栈桥边会亮起成串的冷色灯。</p>',
@@ -406,7 +413,8 @@ function buildPreviewScenes(normalizedPlatform = "pc") {
           {
             role: 'character',
             mesId: '2',
-            timestamp: '23:11',
+            timestamp: '2026年4月27日 23:11',
+            timer: '',
             tokenCounter: '180 tok',
             messageHtml:
               '<p>巷口的风把纸灯吹得一晃一晃的，我抬手替你挡了下火。</p>',
@@ -515,14 +523,13 @@ function buildFormattingDrawerPreviewMarkup() {
 
 function buildCharacterDrawerPreviewMarkup(previewIdentities) {
   return `
-    <div id="CharListButtonAndHotSwaps" class="flex-container flexnowrap"><div class="flexFlowColumn flex-container"><div class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters"></div></div><div id="HotSwapWrapper" class="alignitemscenter flex-container margin0auto wide100p"><div class="hotswap avatars_inline scroll-reset-container expander"></div></div></div>
-    <div id="rm_PinAndTabs"><div id="right-nav-panel-tabs"><div id="rm_button_selected_ch"><h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2></div></div></div>
+    <div><h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2></div>
     <div class="st-preview-character-card">
       <div class="avatar-container selected"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div></div>
       <div class="st-preview-character-copy">
         <div class="ch_name"><span class="name_text">${escapeHtml(previewIdentities.character.name)}</span></div>
         <div id="result_info" class="flex-container" style="display: none;"><div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference."><div><strong id="result_info_total_tokens" title="Total tokens" data-i18n="[title]Total tokens"><span data-i18n="Calculating...">Calculating...</span></strong>&nbsp;<span data-i18n="Tokens">Tokens</span></div><div><small title="Permanent tokens" data-i18n="[title]Permanent tokens">(<span id="result_info_permanent_tokens"></span>&nbsp;<span data-i18n="Permanent">Permanent</span>)</small></div></div><a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token &#39;Limits&#39;" data-i18n="[title]About Token &#39;Limits&#39;"></a><i class="fa-solid fa-ranking-star right_menu_button rm_stats_button" title="Click for stats!" data-i18n="[title]Click for stats!"></i><i id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" title="Toggle character info panel" data-i18n="[title]Toggle character info panel"></i></div>
-        <div class="character_select" id="rm_button_selected_ch"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div><div class="character_name_block"><h2>${escapeHtml(previewIdentities.character.name)}</h2><div class="ch_additional_info">默认演示角色</div></div></div>
+        <div class="character_select"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div><div class="character_name_block"><h2>${escapeHtml(previewIdentities.character.name)}</h2><div class="ch_additional_info">默认演示角色</div></div></div>
         <div class="st-preview-character-tags">fantasy · guide · preview persona</div>
       </div>
     </div>
@@ -530,10 +537,10 @@ function buildCharacterDrawerPreviewMarkup(previewIdentities) {
 }
 
 const VENDORED_ST_STYLESHEETS = [
-  "/static/vendor/sillytavern/style.css",
   "/static/vendor/sillytavern/css/fontawesome.min.css",
   "/static/vendor/sillytavern/css/solid.min.css",
   "/static/vendor/sillytavern/css/brands.min.css",
+  "/static/vendor/sillytavern/style.css",
 ];
 
 function buildVendoredStylesheetMarkup(platform = "pc") {
@@ -809,6 +816,12 @@ ${stylesheetMarkup}
 
       #top-bar {
         display: block;
+      }
+
+      body[data-st-preview-platform='mobile'] #top-settings-holder,
+      body[data-st-preview-platform='mobile'] #top-bar {
+        left: 0;
+        right: 0;
       }
 
       .drawer-toggle {

@@ -91,7 +91,8 @@
 ## Shell Anchors
 
 - `preview-shell.js` preserves these vendor-owned shell anchors from upstream `public/index.html`: `bg1`, `top-bar`, `top-settings-holder`, `leftNavDrawerIcon`, `left-nav-panel`, `rightNavDrawerIcon`, `right-nav-panel`, `sheld`, `chat`, and `form_sheld`.
-- The shell module exposes only slot insertion points for preview-owned fragments: top-bar static actions, settings drawer content, formatting drawer content, character drawer content, chat markup, and send-form markup.
+- The shell module only exposes preview-owned fragment slots for settings drawer content, formatting drawer content, character drawer content, chat markup, and send-form class names.
+- The Character Management shell strip is kept aligned with current upstream anchors, including `rightNavHolder` as the drawer root plus `rm_button_characters` and `HotSwapWrapper` inside `CharListButtonAndHotSwaps`.
 - Scene switching stays outside the isolated ST frame for Task 2; do not add host-owned scene-switcher markup into `preview-shell.js`.
 
 ## Refresh Guidance

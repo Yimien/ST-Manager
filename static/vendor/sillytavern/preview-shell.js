@@ -100,7 +100,7 @@ export function buildVendorFirstPreviewShell({
             </div>
           </div>
 
-          <div id="rightNavHolder" class="drawer closedDrawer">
+          <div id="rightNavHolder" class="drawer">
             <div id="unimportantYes" class="drawer-toggle drawer-header" data-panel-target="character">
               <div id="rightNavDrawerIcon" class="drawer-icon fa-solid fa-address-card fa-fw closedIcon" title="Character Management"></div>
             </div>
@@ -115,6 +115,10 @@ export function buildVendorFirstPreviewShell({
                       <div class="fa-solid checked fa-lock right_menu_button"></div>
                     </label>
                   </div>
+                  <div class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters"></div>
+                </div>
+                <div id="HotSwapWrapper" class="alignitemscenter flex-container margin0auto wide100p">
+                  <div class="hotswap avatars_inline scroll-reset-container expander"></div>
                 </div>
               </div>
               <div class="scrollableInner">${characterDrawerContentMarkup}</div>
