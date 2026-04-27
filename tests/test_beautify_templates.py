@@ -90,6 +90,33 @@ def test_sidebar_template_adds_beautify_workspace_switcher_and_screenshot_import
     assert ':disabled="!selectedPackageId"' in template or ":disabled='!selectedPackageId'" in template
 
 
+def test_sidebar_template_separates_global_theme_import_from_package_scoped_imports():
+    template = read_project_file('templates/components/sidebar.html')
+
+    theme_index = template.index('导入主题')
+    variant_index = template.index('导入变体')
+    wallpaper_index = template.index('导入壁纸')
+    screenshot_index = template.index('导入截图')
+
+    assert theme_index < variant_index < wallpaper_index < screenshot_index
+    assert 'beautify-toolbar-global-action' in template
+    assert 'beautify-toolbar-package-actions' in template
+
+
+def test_sidebar_template_keeps_wallpaper_import_bound_to_selected_variant_after_variant_button_added():
+    template = read_project_file('templates/components/sidebar.html')
+
+    variant_index = template.index('导入变体')
+    wallpaper_index = template.index('导入壁纸')
+    screenshot_index = template.index('导入截图')
+
+    assert variant_index < wallpaper_index < screenshot_index
+    assert 'handleVariantFiles($event.target.files)' in template
+    assert 'handleWallpaperFiles($event.target.files)' in template
+    assert ':disabled="!selectedVariantId"' in template or ":disabled='!selectedVariantId'" in template
+    assert ':disabled="!selectedPackageId"' in template or ":disabled='!selectedPackageId'" in template
+
+
 def test_beautify_toolbar_actions_center_button_group_on_desktop_and_keep_mobile_stack():
     css = read_project_file('static/css/modules/view-beautify.css')
 
@@ -108,6 +135,26 @@ def test_beautify_toolbar_actions_center_button_group_on_desktop_and_keep_mobile
     )
     assert_has_css_declaration(mobile_block, 'flex-direction', 'column')
     assert_has_css_declaration(mobile_block, 'align-items', 'stretch')
+
+
+def test_beautify_toolbar_actions_allow_desktop_wrap_and_reset_package_group_separator():
+    css = read_project_file('static/css/modules/view-beautify.css')
+
+    desktop_block = extract_css_block(css, r'\.beautify-toolbar-actions')
+    package_match = re.search(
+        r'\.beautify-toolbar-package-actions\s*\{(?P<body>[^{}]*flex-wrap:\s*wrap;[^{}]*)\}',
+        css,
+        re.DOTALL,
+    )
+    assert package_match, 'Expected desktop .beautify-toolbar-package-actions block with wrapping'
+    package_block = package_match.group('body')
+
+    assert_has_css_declaration(desktop_block, 'flex-wrap', 'wrap')
+    assert_has_css_declaration(package_block, 'flex-wrap', 'wrap')
+    assert_has_css_declaration(package_block, 'justify-content', 'center')
+    assert_has_css_declaration(package_block, 'padding-left', '0')
+    assert_has_css_declaration(package_block, 'margin-left', '0')
+    assert_has_css_declaration(package_block, 'border-left', '0')
 
 
 def test_index_template_includes_dedicated_beautify_grid_view():
@@ -266,9 +313,9 @@ def test_beautify_grid_template_settings_workspace_preview_stage_keeps_balanced_
 def test_beautify_grid_template_disables_preview_only_controls_in_screenshot_mode():
     template = read_project_file('templates/components/grid_beautify.html')
 
-    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasPcVariant"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant || isMobileBeautifyViewport()\"" in template or ':disabled="stageMode === \"screenshot\" || !hasPcVariant || isMobileBeautifyViewport()"' in template
     assert ":disabled=\"stageMode === 'screenshot' || !hasMobileVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasMobileVariant"' in template
-    assert ":disabled=\"stageMode === 'screenshot' || !hasDualVariant\"" in template or ':disabled="stageMode === \"screenshot\" || !hasDualVariant"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !canPreviewDualTarget\"" in template or ':disabled="stageMode === \"screenshot\" || !canPreviewDualTarget"' in template
     assert ":disabled=\"stageMode === 'screenshot' || wallpaperOptions.length === 0\"" in template or ':disabled="stageMode === \"screenshot\" || wallpaperOptions.length === 0"' in template
 
 
@@ -293,7 +340,7 @@ def test_beautify_grid_template_uses_manual_native_preview_trigger():
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert '加载原生 ST 预览' in template
-    assert 'x-if="!isPreviewLoaded"' in template or "x-if='!isPreviewLoaded'" in template
+    assert '!$store.global.beautifyPreviewUnavailableReason && !isPreviewLoaded' in template
     assert '@click="loadPreview()"' in template or "@click='loadPreview()'" in template
     assert 'previewHost' in template
     assert 'previewApproximateNoticeVisible' not in template
@@ -303,11 +350,11 @@ def test_beautify_grid_template_uses_combined_desktop_preview_conditions_for_pac
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert re.search(
-        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*!isPreviewLoaded\1''',
+        r'''x-if=(["'])!\$store\.global\.beautifyPreviewUnavailableReason\s*&&\s*!isMobileFullscreenEnabled\(\)\s*&&\s*!isPreviewLoaded\1''',
         template,
     )
     assert re.search(
-        r'''x-if=(["'])!isMobileFullscreenEnabled\(\)\s*&&\s*isPreviewLoaded\1''',
+        r'''x-if=(["'])!\$store\.global\.beautifyPreviewUnavailableReason\s*&&\s*!isMobileFullscreenEnabled\(\)\s*&&\s*isPreviewLoaded\1''',
         template,
     )
     assert not re.search(
@@ -329,6 +376,16 @@ def test_beautify_grid_template_keeps_unavailable_device_button_disabled_instead
     template = read_project_file('templates/components/grid_beautify.html')
     assert '!hasPcVariant' in template
     assert '!hasMobileVariant' in template
+
+
+def test_beautify_grid_mobile_viewport_disables_pc_preview_button_in_template():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert 'isMobileBeautifyViewport()' in template
+    assert 'selectedVariantPlatform === \'pc\'' in template or 'selectedVariantPlatform === "pc"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !hasPcVariant || isMobileBeautifyViewport()\"" in template or ':disabled="stageMode === "screenshot" || !hasPcVariant || isMobileBeautifyViewport()"' in template
+    assert 'beautifyPreviewUnavailableReason' in template
+    assert '原生 ST 预览不可用' in template
 
 
 def test_beautify_grid_template_uses_isolated_preview_host_instead_of_inline_preview_dom():

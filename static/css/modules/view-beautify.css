@@ -101,6 +101,23 @@
 
 .beautify-toolbar-actions {
   justify-content: center;
+  flex-wrap: wrap;
+}
+
+.beautify-toolbar-global-action,
+.beautify-toolbar-package-actions {
+  flex: 0 0 auto;
+}
+
+.beautify-toolbar-package-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding-left: 0;
+  margin-left: 0;
+  border-left: 0;
 }
 
 .beautify-workspace-switcher {
@@ -436,6 +453,10 @@
   justify-content: center;
   gap: 1rem;
   padding: 1.25rem;
+}
+
+.beautify-preview-unavailable-card {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--border-light));
 }
 
 .beautify-preview-notice {
@@ -809,9 +830,16 @@
     max-height: calc(100dvh - 10rem);
   }
   .beautify-toolbar-actions,
+  .beautify-toolbar-package-actions,
   .beautify-stage-controls,
   .beautify-stage-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .beautify-toolbar-package-actions {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: 0;
   }
 }

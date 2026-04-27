@@ -303,25 +303,39 @@ class BeautifyService:
         resolved_package_id = str(package_id or '').strip() or self._build_package_id(package_name, packages)
         package_info = copy.deepcopy(packages.get(resolved_package_id) or self._build_empty_package(resolved_package_id, package_name))
         package_info['name'] = package_info.get('name') or package_name
+        target_existing_package = bool(str(package_id or '').strip())
 
-        existing_variant = self._find_variant_by_platform(package_info, resolved_platform)
         themes_dir = os.path.join(self.library_root, 'packages', resolved_package_id, 'themes')
         os.makedirs(themes_dir, exist_ok=True)
 
-        target_file = os.path.join(themes_dir, f'{resolved_platform}.json')
+        if target_existing_package:
+            variant_id = self._build_variant_id(resolved_platform, source_hint, package_info)
+            target_file = os.path.join(themes_dir, f'{variant_id}.json')
+            variant_name = self._build_variant_name(theme_payload)
+            wallpaper_ids = []
+            selected_wallpaper_id = ''
+        else:
+            existing_variant = self._find_variant_by_platform(package_info, resolved_platform)
+            target_file = os.path.join(themes_dir, f'{resolved_platform}.json')
+            relative_theme_file = os.path.relpath(target_file, self._project_root_for_library()).replace('\\', '/')
+            variant_id = existing_variant['id'] if existing_variant else f'var_{resolved_platform}_{self._short_hash(relative_theme_file)}'
+            variant_name = (existing_variant or {}).get('name') or self._build_variant_name(theme_payload)
+            wallpaper_ids = list((existing_variant or {}).get('wallpaper_ids', []))
+            selected_wallpaper_id = str((existing_variant or {}).get('selected_wallpaper_id') or '').strip()
+
         with open(target_file, 'w', encoding='utf-8') as f:
             json.dump(theme_payload, f, ensure_ascii=False, indent=2)
 
         preview_accuracy = 'approx' if self._theme_has_custom_css(theme_payload) else ('approx' if resolved_platform in ('pc', 'mobile') else 'base')
         relative_theme_file = os.path.relpath(target_file, self._project_root_for_library()).replace('\\', '/')
-        variant_id = existing_variant['id'] if existing_variant else f'var_{resolved_platform}_{self._short_hash(relative_theme_file)}'
         package_info['variants'][variant_id] = {
             'id': variant_id,
+            'name': variant_name,
             'platform': resolved_platform,
             'theme_name': str(theme_payload.get('name') or package_info['name']).strip(),
             'theme_file': relative_theme_file,
-            'wallpaper_ids': list((existing_variant or {}).get('wallpaper_ids', [])),
-            'selected_wallpaper_id': str((existing_variant or {}).get('selected_wallpaper_id') or '').strip(),
+            'wallpaper_ids': wallpaper_ids,
+            'selected_wallpaper_id': selected_wallpaper_id,
             'preview_hint': {
                 'needs_platform_review': needs_review,
                 'preview_accuracy': preview_accuracy,
@@ -350,17 +364,30 @@ class BeautifyService:
         ui_data = self._load_ui_data()
         library, package_info, variant = self._load_package_variant(ui_data, package_id, variant_id)
         if resolved_platform and variant.get('platform') != resolved_platform:
-            conflict = self._find_variant_by_platform(package_info, resolved_platform)
-            if conflict and conflict.get('id') != variant_id:
-                raise ValueError('目标端类型已存在，请先调整或替换现有变体')
-
             old_theme_path = self._resolve_project_relative_path(variant.get('theme_file', ''))
-            new_theme_path = os.path.join(self.library_root, 'packages', package_info['id'], 'themes', f'{resolved_platform}.json')
+            theme_payload = self._load_theme_data(variant.get('theme_file', '')) or {}
+            variant_basename = os.path.basename(str(variant.get('theme_file') or '').replace('\\', '/'))
+            if variant_basename.startswith('var_'):
+                theme_filename = variant_basename
+            else:
+                theme_filename = f'{resolved_platform}.json'
+                for sibling_id, sibling in (package_info.get('variants') or {}).items():
+                    if sibling_id == variant_id:
+                        continue
+                    sibling_theme_file = str((sibling or {}).get('theme_file') or '').replace('\\', '/').strip()
+                    if sibling_theme_file.endswith(f'/themes/{theme_filename}'):
+                        theme_filename = f'{variant_id}.json'
+                        break
+            new_theme_path = os.path.join(self.library_root, 'packages', package_info['id'], 'themes', theme_filename)
             os.makedirs(os.path.dirname(new_theme_path), exist_ok=True)
             if old_theme_path and os.path.exists(old_theme_path) and os.path.abspath(old_theme_path) != os.path.abspath(new_theme_path):
                 if os.path.exists(new_theme_path):
                     os.remove(new_theme_path)
                 shutil.move(old_theme_path, new_theme_path)
+            if theme_payload:
+                theme_payload['platform'] = resolved_platform
+                with open(new_theme_path, 'w', encoding='utf-8') as f:
+                    json.dump(theme_payload, f, ensure_ascii=False, indent=2)
             variant['platform'] = resolved_platform
             variant['theme_file'] = os.path.relpath(new_theme_path, self._project_root_for_library()).replace('\\', '/')
 
@@ -789,7 +816,7 @@ class BeautifyService:
                 continue
             theme_name = str(theme_payload.get('name') or '').strip()
             platform_name = os.path.splitext(filename)[0]
-            platform = self._normalize_platform(platform_name)
+            platform = self._normalize_platform(theme_payload.get('platform')) or self._normalize_platform(platform_name)
             needs_platform_review = False
             if not platform_name:
                 platform, needs_platform_review = self.guess_platform(filename, theme_name=theme_name, package_name=package_info.get('name', ''))
@@ -807,6 +834,7 @@ class BeautifyService:
             preview_hint['preview_accuracy'] = 'approx' if self._theme_has_custom_css(theme_payload) else ('approx' if platform in ('pc', 'mobile') else 'base')
             variants[variant_id] = {
                 'id': variant_id,
+                'name': (existing_variant or {}).get('name') or theme_name or '未命名变体',
                 'platform': platform,
                 'theme_name': theme_name or (existing_variant or {}).get('theme_name') or package_info.get('name') or self._display_package_name(package_id),
                 'theme_file': relative_theme_file,
@@ -820,9 +848,6 @@ class BeautifyService:
     def _match_existing_variant(self, existing_variants: Dict, platform: str, theme_file: str):
         for variant_id, variant in (existing_variants or {}).items():
             if str((variant or {}).get('theme_file') or '').strip() == theme_file:
-                return variant_id, copy.deepcopy(variant)
-        for variant_id, variant in (existing_variants or {}).items():
-            if str((variant or {}).get('platform') or '').strip() == platform:
                 return variant_id, copy.deepcopy(variant)
         return '', None
 
@@ -940,6 +965,17 @@ class BeautifyService:
             return candidate
         suffix = self._short_hash(package_name + str(time.time()))
         return f'{candidate}_{suffix}'
+
+    def _build_variant_id(self, platform: str, source_hint: str, package_info: Dict):
+        seed = f'{platform}:{source_hint}:{time.time()}'
+        variant_id = f'var_{platform}_{self._short_hash(seed)}'
+        while variant_id in (package_info.get('variants') or {}):
+            seed = f'{seed}:dup'
+            variant_id = f'var_{platform}_{self._short_hash(seed)}'
+        return variant_id
+
+    def _build_variant_name(self, theme_payload: Dict):
+        return str(theme_payload.get('name') or '').strip() or '未命名变体'
 
     def _slugify(self, value: str):
         normalized = []

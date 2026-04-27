@@ -5,6 +5,7 @@ import {
   getBeautifyPackage,
   importBeautifyScreenshot,
   importBeautifyTheme,
+  importBeautifyVariant,
   importBeautifyPackageAvatar,
   importGlobalBeautifyAvatar,
   importGlobalBeautifyWallpaper,
@@ -90,6 +91,15 @@ export default function beautifyGrid() {
 
     set selectedVariantId(val) {
       this.$store.global.beautifySelectedVariantId = val;
+      return true;
+    },
+
+    get variantSelectionByDevice() {
+      return this.$store.global.beautifyVariantSelectionByDevice || {};
+    },
+
+    set variantSelectionByDevice(val) {
+      this.$store.global.beautifyVariantSelectionByDevice = val || {};
       return true;
     },
 
@@ -224,6 +234,18 @@ export default function beautifyGrid() {
 
     syncMobileFullscreenState() {
       this.alignSettingsPreviewDeviceToViewport();
+      if (this.workspace === "packages" && this.activeVariant) {
+        const previewPlatform = this.resolvePackagePreviewPlatform();
+        const nextVariant =
+          this.resolvePreferredVariantForDevice(previewPlatform) ||
+          this.activeVariant;
+        this.selectedVariantPlatform = previewPlatform;
+        if (nextVariant) {
+          this.applyActiveVariant(nextVariant, { preservePreviewDevice: true });
+        } else {
+          this.syncPreviewUnavailableState({ device: previewPlatform });
+        }
+      }
       if (this.isMobileBeautifyViewport()) {
         this.closePackageDetailDrawer();
       }
@@ -258,6 +280,21 @@ export default function beautifyGrid() {
       return !!this.findVariantByPlatform("dual");
     },
 
+    get canPreviewDualTarget() {
+      const detail = this.activeDetail;
+      if (!detail?.variants) return false;
+      if (this.findVariantByPlatform("dual", detail)) {
+        return true;
+      }
+      if (this.isMobileBeautifyViewport()) {
+        return !!this.findVariantForPreviewPlatform("mobile", detail);
+      }
+      return (
+        !!this.findVariantForPreviewPlatform("pc", detail) ||
+        !!this.findVariantForPreviewPlatform("mobile", detail)
+      );
+    },
+
     get wallpaperOptions() {
       const variant = this.activeVariant;
       const detail = this.activeDetail;
@@ -265,6 +302,23 @@ export default function beautifyGrid() {
       return (variant.wallpaper_ids || [])
         .map((id) => detail.wallpapers?.[id])
         .filter(Boolean);
+    },
+
+    get variantOptions() {
+      const detail = this.activeDetail;
+      if (!detail?.variants) return [];
+      return Object.values(detail.variants).map((variant) => ({
+        ...variant,
+        label:
+          String(variant?.name || variant?.theme_name || '').trim() ||
+          `${variant.platform || 'pc'} · ${variant.id}`,
+      }));
+    },
+
+    compatibleVariantOptions(device = this.selectedVariantPlatform) {
+      return this.variantOptions.filter((variant) =>
+        this.isVariantCompatibleWithDevice(variant, device),
+      );
     },
 
     mergeSharedWallpaperIntoStore(wallpaper) {
@@ -450,15 +504,31 @@ export default function beautifyGrid() {
       this.syncPackageIdentityFields();
 
       const preserveSelection = !!options.preserveSelection;
+      const preferCompatibleSelection = !!options.preferCompatibleSelection;
+      const previewPlatform = this.resolvePackagePreviewPlatform(res.item);
       let nextVariant = null;
       if (
         preserveSelection &&
         this.selectedVariantId &&
         res.item.variants?.[this.selectedVariantId]
       ) {
-        nextVariant = res.item.variants[this.selectedVariantId];
+        const preservedVariant = res.item.variants[this.selectedVariantId];
+        if (!preferCompatibleSelection) {
+          nextVariant = preservedVariant;
+        } else {
+          nextVariant = this.isVariantCompatibleWithDevice(
+            preservedVariant,
+            previewPlatform,
+          )
+            ? preservedVariant
+            : this.resolvePreferredVariantForDevice(previewPlatform, res.item) ||
+              preservedVariant;
+        }
       } else {
-        nextVariant = this.resolveDefaultVariant(res.item);
+        nextVariant =
+          this.resolvePreferredVariantForDevice(previewPlatform, res.item) ||
+          Object.values(res.item.variants || {})[0] ||
+          null;
       }
 
       this.applyActiveVariant(nextVariant);
@@ -477,7 +547,7 @@ export default function beautifyGrid() {
       if (!detail || !detail.variants) return null;
       const previewPlatform = this.resolvePackagePreviewPlatform(detail);
       return (
-        this.findVariantForPreviewPlatform(previewPlatform, detail) ||
+        this.resolvePreferredVariantForDevice(previewPlatform, detail) ||
         Object.values(detail.variants)[0] ||
         null
       );
@@ -489,6 +559,7 @@ export default function beautifyGrid() {
       }
 
       const currentPlatform = this.selectedVariantPlatform;
+      const isMobileViewport = this.isMobileBeautifyViewport();
       const hasPc = !!this.findVariantForPreviewPlatform("pc", detail);
       const hasMobile = !!this.findVariantForPreviewPlatform("mobile", detail);
       const hasDual = !!this.findVariantByPlatform("dual", detail);
@@ -499,13 +570,25 @@ export default function beautifyGrid() {
       if (currentPlatform === "dual" && hasPc) {
         return "pc";
       }
+      if (isMobileViewport && hasMobile) {
+        return "mobile";
+      }
       if (currentPlatform === "mobile" && hasMobile) {
+        return "mobile";
+      }
+      if (currentPlatform === "mobile" && isMobileViewport) {
+        return "mobile";
+      }
+      if (currentPlatform === "pc" && isMobileViewport && !hasMobile) {
         return "mobile";
       }
       if (currentPlatform === "pc" && hasPc) {
         return "pc";
       }
       if (hasMobile && !hasPc) {
+        return "mobile";
+      }
+      if (isMobileViewport && hasPc && !hasMobile) {
         return "mobile";
       }
       if (hasPc && !hasMobile) {
@@ -530,12 +613,167 @@ export default function beautifyGrid() {
       );
     },
 
-    applyActiveVariant(variant) {
+    resolveRememberedVariant(device, detail = this.activeDetail) {
+      const variantId = this.variantSelectionByDevice?.[device] || "";
+      const variant = detail?.variants?.[variantId] || null;
+      if (!variant) return null;
+
+      if (device === "pc") {
+        return ["pc", "dual"].includes(variant.platform) ? variant : null;
+      }
+      if (device === "mobile") {
+        return ["mobile", "dual"].includes(variant.platform) ? variant : null;
+      }
+      if (device === "dual") {
+        return variant.platform === "dual" ? variant : null;
+      }
+      return null;
+    },
+
+    resolvePreferredVariantForDevice(
+      device,
+      detail = this.activeDetail,
+    ) {
+      const selectedVariant = detail?.variants?.[this.selectedVariantId] || null;
+      if (selectedVariant && this.isVariantCompatibleWithDevice(selectedVariant, device)) {
+        return selectedVariant;
+      }
+
+      return (
+        this.resolveRememberedVariant(device, detail) ||
+        this.compatibleVariantOptions(device)[0] ||
+        null
+      );
+    },
+
+    resolvePreferredVariantForDualTarget(detail = this.activeDetail) {
+      const dualVariant = this.findVariantByPlatform("dual", detail);
+      if (dualVariant) {
+        return dualVariant;
+      }
+
+      if (this.isMobileBeautifyViewport()) {
+        return this.resolvePreferredVariantForDevice("mobile", detail);
+      }
+
+      return (
+        this.resolvePreferredVariantForDevice("pc", detail) ||
+        this.resolvePreferredVariantForDevice("mobile", detail)
+      );
+    },
+
+    recordVariantSelectionForDevice(device, variantId) {
+      const next = {
+        ...(this.variantSelectionByDevice || {}),
+        [device]: variantId,
+      };
+      this.variantSelectionByDevice = next;
+    },
+
+    refreshVariantSelectionForPlatformChange(variantId, platform) {
+      const resolvedVariantId = String(variantId || '').trim();
+      if (!resolvedVariantId) return;
+
+      const next = { ...(this.variantSelectionByDevice || {}) };
+      const previousPcSelection = next.pc;
+      const previousMobileSelection = next.mobile;
+      Object.keys(next).forEach((device) => {
+        if (next[device] === resolvedVariantId) {
+          delete next[device];
+        }
+      });
+
+      if (platform === 'dual') {
+        if (previousPcSelection) {
+          next.pc = previousPcSelection;
+        }
+        if (previousMobileSelection) {
+          next.mobile = previousMobileSelection;
+        }
+        next.dual = resolvedVariantId;
+      } else if (platform === 'pc' || platform === 'mobile') {
+        next[platform] = resolvedVariantId;
+      }
+
+      this.variantSelectionByDevice = next;
+    },
+
+    isVariantCompatibleWithDevice(
+      variant,
+      device = this.selectedVariantPlatform,
+    ) {
+      const platform = String(variant?.platform || "");
+      if (device === "dual") {
+        if (this.isMobileBeautifyViewport()) {
+          return platform === "mobile" || platform === "dual";
+        }
+        return platform === "pc" || platform === "mobile" || platform === "dual";
+      }
+      if (device === "mobile") {
+        return platform === "mobile" || platform === "dual";
+      }
+      if (device === "pc") {
+        return platform === "pc" || platform === "dual";
+      }
+      return false;
+    },
+
+    setPreviewUnavailable(reason = "") {
+      this.$store.global.beautifyPreviewUnavailableReason = String(reason || "");
+    },
+
+    clearPreviewUnavailable() {
+      this.setPreviewUnavailable("");
+    },
+
+    syncPreviewUnavailableState(options = {}) {
+      const workspace = options.workspace || this.workspace;
+      if (workspace === "settings") {
+        this.clearPreviewUnavailable();
+        return false;
+      }
+
+      const variant = options.variant || this.activeVariant;
+      const device = options.device || this.selectedVariantPlatform;
+      if (!variant) {
+        this.clearPreviewUnavailable();
+        return false;
+      }
+
+      if (!this.isVariantCompatibleWithDevice(variant, device)) {
+        this.setPreviewUnavailable(
+          device === "mobile"
+            ? "当前变体仅支持 PC 预览，请切换到支持移动端预览的变体。"
+            : "当前预览目标没有可用变体。",
+        );
+        return true;
+      }
+
+      this.clearPreviewUnavailable();
+      return false;
+    },
+
+    selectVariant(variantId) {
+      const detail = this.activeDetail;
+      const variant = detail?.variants?.[variantId] || null;
+      if (!variant) return;
+      this.applyActiveVariant(variant, { preservePreviewDevice: true });
+
+      this.syncPreviewUnavailableState({ variant });
+      if (variant.platform === "dual") {
+        this.recordVariantSelectionForDevice("dual", variant.id);
+        return;
+      }
+      this.recordVariantSelectionForDevice(variant.platform, variant.id);
+    },
+
+    applyActiveVariant(variant, options = {}) {
       if (!variant) {
         this.$store.global.beautifyActiveVariant = null;
         this.$store.global.beautifyActiveWallpaper = null;
         this.selectedVariantId = "";
         this.selectedWallpaperId = "";
+        this.clearPreviewUnavailable();
         return;
       }
 
@@ -546,7 +784,11 @@ export default function beautifyGrid() {
       this.$store.global.beautifyActiveWallpaper = wallpaper;
       this.selectedWallpaperId = wallpaper?.id || "";
 
-      this.selectedVariantPlatform = this.resolvePackagePreviewPlatform();
+      if (!options.preservePreviewDevice) {
+        this.selectedVariantPlatform = this.resolvePackagePreviewPlatform();
+      }
+
+      this.syncPreviewUnavailableState({ variant });
     },
 
     resolveActiveWallpaper(variant) {
@@ -588,10 +830,24 @@ export default function beautifyGrid() {
     },
 
     async previewPlatform(platform) {
-      const variant = this.findVariantByPlatform(platform);
+      if (platform === "dual") {
+        const variant = this.resolvePreferredVariantForDualTarget();
+        this.selectedVariantPlatform = "dual";
+        if (variant) {
+          this.applyActiveVariant(variant, { preservePreviewDevice: true });
+          this.syncPreviewUnavailableState({ variant, device: "dual" });
+          return;
+        }
+
+        this.setPreviewUnavailable("当前预览目标没有可用变体。");
+        return;
+      }
+
+      const variant = this.resolvePreferredVariantForDevice(platform);
       if (variant) {
         this.applyActiveVariant(variant);
         this.selectedVariantPlatform = platform;
+        this.syncPreviewUnavailableState({ variant, device: platform });
         return;
       }
 
@@ -599,7 +855,14 @@ export default function beautifyGrid() {
       if (dualVariant && ["pc", "mobile", "dual"].includes(platform)) {
         this.applyActiveVariant(dualVariant);
         this.selectedVariantPlatform = platform === "dual" ? "dual" : platform;
+        this.syncPreviewUnavailableState({
+          variant: dualVariant,
+          device: this.selectedVariantPlatform,
+        });
+        return;
       }
+
+      this.setPreviewUnavailable("当前预览目标没有可用变体。");
     },
 
     isMobileBeautifyViewport() {
@@ -637,17 +900,23 @@ export default function beautifyGrid() {
       if (this.workspace === "settings") {
         this.alignSettingsPreviewDeviceToViewport();
         this.stageMode = "preview";
+        this.syncPreviewUnavailableState({ workspace: "settings" });
         this.fetchGlobalSettings();
         return;
       }
       const previewPlatform = this.resolvePackagePreviewPlatform();
-      const nextVariant = this.findVariantForPreviewPlatform(previewPlatform);
+      const nextVariant = this.resolvePreferredVariantForDevice(previewPlatform);
       if (nextVariant) {
         this.applyActiveVariant(nextVariant);
         this.selectedVariantPlatform = previewPlatform;
+        this.syncPreviewUnavailableState({
+          variant: nextVariant,
+          device: previewPlatform,
+        });
         return;
       }
       this.selectedVariantPlatform = previewPlatform;
+      this.syncPreviewUnavailableState({ device: previewPlatform });
     },
 
     setStageMode(mode) {
@@ -822,6 +1091,41 @@ export default function beautifyGrid() {
           await this.selectPackage(lastPackageId);
         }
         this.$store.global.showToast(`已导入 ${files.length} 个主题`, 2200);
+      } catch (error) {
+        this.$store.global.showToast(String(error.message || error), 3200);
+      } finally {
+        this.isActionLoading = false;
+      }
+    },
+
+    async handleVariantFiles(fileList) {
+      const files = Array.from(fileList || []).filter((file) =>
+        String(file.name || "")
+          .toLowerCase()
+          .endsWith(".json"),
+      );
+      if (!files.length || !this.selectedPackageId) {
+        this.$store.global.showToast("请先选择一个美化包后再导入变体", 2400);
+        return;
+      }
+
+      this.isActionLoading = true;
+      try {
+        let lastVariantId = "";
+        for (const file of files) {
+          const res = await importBeautifyVariant(file, this.selectedPackageId);
+          if (!res?.success) {
+            throw new Error(res?.error || "导入变体失败");
+          }
+          lastVariantId = res.variant?.id || lastVariantId;
+        }
+        await this.selectPackage(this.selectedPackageId, {
+          preserveSelection: true,
+        });
+        if (lastVariantId) {
+          this.selectVariant(lastVariantId);
+        }
+        this.$store.global.showToast(`已导入 ${files.length} 个变体`, 2200);
       } catch (error) {
         this.$store.global.showToast(String(error.message || error), 3200);
       } finally {
@@ -1096,16 +1400,19 @@ export default function beautifyGrid() {
       if (!this.selectedPackageId || !this.selectedVariantId) return;
       this.isActionLoading = true;
       try {
+        const variantId = this.selectedVariantId;
         const res = await updateBeautifyVariant({
           package_id: this.selectedPackageId,
-          variant_id: this.selectedVariantId,
+          variant_id: variantId,
           platform,
         });
         if (!res?.success) {
           throw new Error(res?.error || "更新端类型失败");
         }
+        this.refreshVariantSelectionForPlatformChange(variantId, platform);
         await this.selectPackage(this.selectedPackageId, {
           preserveSelection: true,
+          preferCompatibleSelection: true,
         });
       } catch (error) {
         this.$store.global.showToast(String(error.message || error), 3200);

@@ -414,6 +414,103 @@ def test_import_theme_defaults_to_dual_and_marks_platform_review_when_guess_is_u
     assert result['variant']['preview_hint']['preview_accuracy'] == 'base'
 
 
+def test_import_theme_into_existing_package_creates_new_same_platform_variant(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(
+        service,
+        tmp_path,
+        filename='mono-pc.json',
+        name='Mono Demo',
+        platform='pc',
+    )
+    package_id = first['package']['id']
+
+    second_theme = tmp_path / 'warm-pc.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Warm Demo', 'main_text_color': '#ffeeaa'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='pc')
+    package_detail = service.get_package(package_id)
+
+    assert second['package']['id'] == package_id
+    assert second['variant']['id'] != first['variant']['id']
+    assert len(package_detail['variants']) == 2
+    assert sorted(variant['platform'] for variant in package_detail['variants'].values()) == ['pc', 'pc']
+
+
+def test_import_theme_into_existing_package_keeps_older_same_platform_variant_untouched(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(
+        service,
+        tmp_path,
+        filename='first-pc.json',
+        name='First Demo',
+        platform='pc',
+    )
+    package_id = first['package']['id']
+    original_variant_id = first['variant']['id']
+    original_theme_file = first['variant']['theme_file']
+    original_theme_path = tmp_path / original_theme_file
+    original_theme_payload = json.loads(original_theme_path.read_text(encoding='utf-8'))
+
+    second_theme = tmp_path / 'second-pc.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Second Demo', 'main_text_color': '#dbeafe'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='pc')
+    package_detail = service.get_package(package_id)
+
+    assert original_variant_id in package_detail['variants']
+    assert package_detail['variants'][original_variant_id]['theme_file'] == original_theme_file
+    assert json.loads(original_theme_path.read_text(encoding='utf-8')) == original_theme_payload
+    assert second['variant']['theme_file'] != original_theme_file
+    assert {variant['theme_name'] for variant in package_detail['variants'].values()} == {'First Demo', 'Second Demo'}
+
+
+def test_import_theme_into_existing_package_persists_variant_name_through_reload_and_recovery(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(
+        service,
+        tmp_path,
+        filename='first-pc.json',
+        name='First Demo',
+        platform='pc',
+    )
+    package_id = first['package']['id']
+
+    second_theme = tmp_path / 'named-pc.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Named Demo', 'main_text_color': '#c084fc'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='pc')
+    second_variant_id = second['variant']['id']
+    second_theme_file = second['variant']['theme_file']
+
+    persisted_library = get_beautify_library(ui_data)
+    assert persisted_library['packages'][package_id]['variants'][second_variant_id]['name'] == 'Named Demo'
+
+    ui_data.clear()
+
+    recovered_library = service.load_library()
+    recovered_variants = recovered_library['packages'][package_id]['variants']
+    recovered_named_variant = next(
+        variant for variant in recovered_variants.values() if variant['theme_file'] == second_theme_file
+    )
+    assert recovered_named_variant['name'] == 'Named Demo'
+
+
 def test_import_wallpaper_registers_shared_variant_wallpaper_and_selects_it(tmp_path):
     library_root = tmp_path / 'data' / 'library' / 'beautify'
     ui_data = {}
@@ -663,6 +760,124 @@ def test_update_variant_can_switch_selected_wallpaper_without_changing_platform(
         second_result['wallpaper']['id'],
     ]
     assert persisted_variant['selected_wallpaper_id'] == first_result['wallpaper']['id']
+
+
+def test_update_variant_allows_same_platform_sibling_variants(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(service, tmp_path, filename='first-pc.json', name='First Demo', platform='pc')
+    package_id = first['package']['id']
+
+    second_theme = tmp_path / 'second-mobile.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Second Demo', 'main_text_color': '#dbeafe'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='mobile')
+
+    updated_variant = service.update_variant(package_id, second['variant']['id'], platform='pc')
+    package_detail = service.get_package(package_id)
+
+    assert updated_variant['platform'] == 'pc'
+    assert updated_variant['theme_file'].endswith(f"/{second['variant']['id']}.json")
+    assert sorted(variant['platform'] for variant in package_detail['variants'].values()) == ['pc', 'pc']
+
+
+def test_update_variant_does_not_overwrite_existing_legacy_same_platform_theme_file(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    package_id = 'pkg_legacy_demo'
+    themes_dir = tmp_path / 'data' / 'library' / 'beautify' / 'packages' / package_id / 'themes'
+    themes_dir.mkdir(parents=True)
+    pc_theme_path = themes_dir / 'pc.json'
+    mobile_theme_path = themes_dir / 'mobile.json'
+    pc_theme_path.write_text(
+        json.dumps({'name': 'First Demo', 'main_text_color': '#ffffff'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    mobile_theme_path.write_text(
+        json.dumps({'name': 'Second Demo', 'main_text_color': '#dbeafe'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    ui_data['_beautify_library_v1'] = {
+        'packages': {
+            package_id: {
+                'id': package_id,
+                'name': 'Legacy Demo',
+                'cover_variant_id': 'var_pc_legacy',
+                'variants': {
+                    'var_pc_legacy': {
+                        'id': 'var_pc_legacy',
+                        'platform': 'pc',
+                        'theme_name': 'First Demo',
+                        'theme_file': f'data/library/beautify/packages/{package_id}/themes/pc.json',
+                        'wallpaper_ids': [],
+                        'selected_wallpaper_id': '',
+                        'preview_hint': {
+                            'needs_platform_review': False,
+                            'preview_accuracy': 'approx',
+                        },
+                    },
+                    'var_mobile_legacy': {
+                        'id': 'var_mobile_legacy',
+                        'platform': 'mobile',
+                        'theme_name': 'Second Demo',
+                        'theme_file': f'data/library/beautify/packages/{package_id}/themes/mobile.json',
+                        'wallpaper_ids': [],
+                        'selected_wallpaper_id': '',
+                        'preview_hint': {
+                            'needs_platform_review': False,
+                            'preview_accuracy': 'approx',
+                        },
+                    },
+                },
+                'wallpapers': {},
+                'screenshots': {},
+                'identity_overrides': {},
+            },
+        },
+    }
+
+    first_theme_payload = json.loads(pc_theme_path.read_text(encoding='utf-8'))
+    updated_variant = service.update_variant(package_id, 'var_mobile_legacy', platform='pc')
+    package_detail = service.get_package(package_id)
+
+    assert package_detail['variants']['var_pc_legacy']['theme_file'].endswith('/themes/pc.json')
+    assert json.loads(pc_theme_path.read_text(encoding='utf-8')) == first_theme_payload
+    assert updated_variant['theme_file'] != 'data/library/beautify/packages/pkg_legacy_demo/themes/pc.json'
+    assert updated_variant['theme_file'].endswith('/themes/var_mobile_legacy.json')
+
+
+def test_update_variant_preserves_sibling_safe_platform_after_disk_recovery(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(service, tmp_path, filename='first-pc.json', name='First Demo', platform='pc')
+    package_id = first['package']['id']
+
+    second_theme = tmp_path / 'second-mobile.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Second Demo', 'main_text_color': '#dbeafe'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='mobile')
+
+    updated_variant = service.update_variant(package_id, second['variant']['id'], platform='pc')
+    assert updated_variant['theme_file'].endswith(f"/{second['variant']['id']}.json")
+
+    ui_data.clear()
+
+    recovered_library = service.load_library()
+    recovered_variant = next(
+        variant
+        for variant in recovered_library['packages'][package_id]['variants'].values()
+        if variant['theme_file'] == updated_variant['theme_file']
+    )
+
+    assert recovered_variant['platform'] == 'pc'
 
 
 def test_get_global_settings_reads_preview_wallpaper_id_from_shared_library_even_when_beautify_state_has_stale_value(tmp_path):
@@ -1161,6 +1376,32 @@ def test_load_library_recovery_recovers_multi_variant_package_wallpapers_by_vari
     assert recovered_mobile_variant['selected_wallpaper_id'] == ''
     assert package_detail['wallpapers'][recovered_pc_variant['wallpaper_ids'][0]]['origin_variant_id'] == pc_variant_id
     assert package_detail['wallpapers'][recovered_mobile_variant['wallpaper_ids'][0]]['origin_variant_id'] == mobile_variant_id
+
+
+def test_match_existing_variant_requires_theme_file_match_for_same_platform_siblings(tmp_path):
+    service = _build_service(tmp_path, {})
+
+    variant_id, existing_variant = service._match_existing_variant(
+        {
+            'var_pc_first': {
+                'id': 'var_pc_first',
+                'platform': 'pc',
+                'theme_file': 'data/library/beautify/packages/pkg_demo/themes/var_pc_first.json',
+                'name': 'First Variant',
+            },
+            'var_pc_second': {
+                'id': 'var_pc_second',
+                'platform': 'pc',
+                'theme_file': 'data/library/beautify/packages/pkg_demo/themes/var_pc_second.json',
+                'name': 'Second Variant',
+            },
+        },
+        'pc',
+        'data/library/beautify/packages/pkg_demo/themes/missing.json',
+    )
+
+    assert variant_id == ''
+    assert existing_variant is None
 
 
 def test_load_library_recovery_does_not_duplicate_package_local_wallpaper_imports(tmp_path):

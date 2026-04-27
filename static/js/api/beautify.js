@@ -39,6 +39,11 @@ export async function importBeautifyTheme(file, options = {}) {
   return parseJson(res);
 }
 
+export async function importBeautifyVariant(file, packageId, options = {}) {
+  if (!packageId) throw new Error("packageId is required");
+  return importBeautifyTheme(file, { ...options, package_id: packageId });
+}
+
 export async function importBeautifyWallpaper(file, packageId, variantId) {
   const formData = new FormData();
   formData.append("file", file);
