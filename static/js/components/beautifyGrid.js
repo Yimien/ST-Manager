@@ -345,8 +345,10 @@ export default function beautifyGrid() {
           this.fetchPackages();
           this.fetchGlobalSettings();
         } else if (this.mobileFullscreenOpen) {
+          this.closePackageDetailDrawer();
           this.closeMobilePreviewAndReset();
         } else {
+          this.closePackageDetailDrawer();
           this.closeMobileFullscreen();
         }
       });
@@ -609,10 +611,12 @@ export default function beautifyGrid() {
     },
 
     isMobileBeautifyViewport() {
-      if (typeof window === "undefined") return false;
-      if (typeof window.matchMedia === "function") {
-        return window.matchMedia("(max-width: 900px)").matches;
+      const reactiveWidth = Number(this.$store?.global?.windowWidth);
+      if (Number.isFinite(reactiveWidth) && reactiveWidth > 0) {
+        return reactiveWidth <= 900;
       }
+
+      if (typeof window === "undefined") return false;
       return Number(window.innerWidth || 0) <= 900;
     },
 

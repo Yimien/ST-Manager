@@ -1952,6 +1952,33 @@ def test_beautify_grid_preserves_current_package_detail_rail_when_next_package_f
     )
 
 
+def test_beautify_grid_uses_reactive_window_width_for_mobile_viewport_checks():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = {
+          matchMedia: () => ({ matches: false }),
+          innerWidth: 1280,
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            windowWidth: 860,
+          },
+        };
+
+        if (component.isMobileBeautifyViewport() !== true) {
+          throw new Error('reactive global windowWidth should drive mobile viewport checks');
+        }
+
+        component.$store.global.windowWidth = 1280;
+        if (component.isMobileBeautifyViewport() !== false) {
+          throw new Error('viewport checks should react when global windowWidth changes back to desktop');
+        }
+        '''
+    )
+
+
 def test_beautify_grid_opens_mobile_fullscreen_for_screenshot_empty_state_without_images():
     run_beautify_grid_runtime_check(
         '''
@@ -2004,6 +2031,8 @@ def test_beautify_grid_clears_mobile_fullscreen_when_leaving_beautify_mode():
             currentMode: 'beautify',
             beautifyWorkspace: 'packages',
             beautifyActiveDetail: { id: 'pkg_demo', variants: {}, wallpapers: {}, screenshots: {} },
+            beautifyPackageDetailCollapsed: true,
+            beautifyPackageDetailDrawerOpen: true,
             beautifyMobileFullscreenOpen: true,
             showToast: () => {},
           },
@@ -2025,6 +2054,9 @@ def test_beautify_grid_clears_mobile_fullscreen_when_leaving_beautify_mode():
         }
         if (component.$store.global.beautifyPreviewResetToken !== 1) {
           throw new Error('leaving beautify mode should trigger preview reset when fullscreen was open');
+        }
+        if (component.packageDetailDrawerOpen !== false) {
+          throw new Error('leaving beautify mode should close stale package detail drawer state');
         }
         '''
     )
