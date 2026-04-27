@@ -315,16 +315,15 @@ def test_beautify_grid_template_places_mobile_fullscreen_shell_outside_package_o
     assert 'beautify-package-detail-drawer' in package_branch
 
 
-def test_beautify_grid_template_adds_package_detail_collapse_toggle_and_reopen_affordance():
+def test_beautify_grid_template_keeps_header_owned_detail_toggle_without_preview_column_reopen_button():
     template = read_project_file('templates/components/grid_beautify.html')
 
     assert '@click="togglePackageDetailCollapsed()"' in template or "@click='togglePackageDetailCollapsed()'" in template
-    assert '展开详情' in template
-    assert '收起详情' in template
-    assert 'openPackageDetailDrawer()' in template
+    assert "packageDetailCollapsed ? '展开详情' : '收起详情'" in template or 'packageDetailCollapsed ? "展开详情" : "收起详情"' in template
     assert 'beautify-package-detail-drawer' in template
-    assert 'x-if="!packageDetailCollapsed"' in template or "x-if='!packageDetailCollapsed'" in template
-    assert 'x-if="packageDetailCollapsed && packageDetailDrawerOpen && !isMobileBeautifyViewport()"' in template or "x-if='packageDetailCollapsed && packageDetailDrawerOpen && !isMobileBeautifyViewport()'" in template
+    assert 'class="beautify-package-detail-reopen beautify-soft-btn"' not in template
+    assert "class='beautify-package-detail-reopen beautify-soft-btn'" not in template
+    assert 'openPackageDetailDrawer()' not in template
 
 
 def test_beautify_layout_css_keeps_mobile_fullscreen_stage_without_drawer_rules():
@@ -563,10 +562,7 @@ def test_beautify_layout_css_supports_package_detail_collapsed_stage_state():
     assert '.beautify-stage-body.is-detail-collapsed {' in css
     collapsed_block = extract_css_block_for_selector(css, '.beautify-stage-body.is-detail-collapsed')
     assert_has_css_declaration(collapsed_block, 'grid-template-columns', 'minmax(0, 1fr)')
-
-    assert '.beautify-package-detail-reopen {' in css
-    reopen_block = extract_css_block_for_selector(css, '.beautify-package-detail-reopen')
-    assert_has_css_declaration(reopen_block, 'position', 'absolute')
+    assert '.beautify-package-detail-reopen {' not in css
 
 
 def test_beautify_stage_header_actions_keep_delete_button_horizontal():

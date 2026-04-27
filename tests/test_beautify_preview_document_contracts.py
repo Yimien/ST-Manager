@@ -119,6 +119,26 @@ def test_build_beautify_preview_document_loads_vendored_icon_stylesheets():
     )
 
 
+def test_build_beautify_preview_document_keeps_fontawesome_stylesheets_ahead_of_style_css_like_st():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'mobile', theme: {} });
+
+        const fontawesomeIndex = html.indexOf('/static/vendor/sillytavern/css/fontawesome.min.css');
+        const solidIndex = html.indexOf('/static/vendor/sillytavern/css/solid.min.css');
+        const brandsIndex = html.indexOf('/static/vendor/sillytavern/css/brands.min.css');
+        const styleIndex = html.indexOf('/static/vendor/sillytavern/style.css');
+
+        if (fontawesomeIndex === -1 || solidIndex === -1 || brandsIndex === -1 || styleIndex === -1) {
+          throw new Error('missing core vendored stylesheet link');
+        }
+        if (!(fontawesomeIndex < styleIndex && solidIndex < styleIndex && brandsIndex < styleIndex)) {
+          throw new Error('expected Font Awesome stylesheets to load before style.css to match current ST');
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_document_imports_vendor_derived_shell_artifact():
     source = MODULE_PATH.read_text(encoding='utf-8')
 
@@ -189,6 +209,75 @@ def test_vendor_derived_preview_shell_module_drops_hand_built_topbar_and_send_fo
         'st-preview-topbar-section',
     ]:
         assert removed not in source, f'stale shell shim remains: {removed}'
+
+
+def test_vendor_derived_preview_shell_keeps_current_st_character_management_button_strip():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const shellModule = await import(pathToFileURL({json.dumps(str(VENDOR_SHELL_MODULE_PATH.resolve()))}).href);
+        if (typeof shellModule.buildVendorFirstPreviewShell !== 'function') {{
+          throw new Error('missing buildVendorFirstPreviewShell export');
+        }}
+        const markup = shellModule.buildVendorFirstPreviewShell();
+
+        for (const token of [
+          'id="rightNavHolder"',
+          'id="right-nav-panelheader" class="fa-solid fa-grip drag-grabber"',
+          'id="rm_button_characters"',
+          'id="HotSwapWrapper"',
+          'class="hotswap avatars_inline scroll-reset-container expander"',
+        ]) {{
+          if (!markup.includes(token)) throw new Error(`missing current ST character shell token: ${{token}}`);
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_vendor_derived_preview_shell_matches_current_st_drawer_class_shape_for_right_nav_holder():
+    source = (ROOT / 'static/vendor/sillytavern/preview-shell.js').read_text(encoding='utf-8')
+
+    assert '<div id="rightNavHolder" class="drawer">' in source
+    assert '<div id="unimportantYes" class="drawer-toggle drawer-header" data-panel-target="character">' in source
+    assert '<nav id="right-nav-panel" class="drawer-content closedDrawer fillRight" data-panel-surface="character">' in source
+
+
+def test_build_beautify_preview_document_keeps_vendor_character_strip_ids_unique_in_final_markup():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewSampleMarkup('pc');
+
+        const buttonMatches = html.match(/id="rm_button_characters"/g) || [];
+        const hotSwapMatches = html.match(/id="HotSwapWrapper"/g) || [];
+        const pinAndTabsMatches = html.match(/id="rm_PinAndTabs"/g) || [];
+        const panelTabsMatches = html.match(/id="right-nav-panel-tabs"/g) || [];
+        const selectedCharacterMatches = html.match(/id="rm_button_selected_ch"/g) || [];
+
+        if (buttonMatches.length !== 1) {
+          throw new Error(`expected exactly one rm_button_characters id, got ${buttonMatches.length}`);
+        }
+        if (hotSwapMatches.length !== 1) {
+          throw new Error(`expected exactly one HotSwapWrapper id, got ${hotSwapMatches.length}`);
+        }
+        if (pinAndTabsMatches.length !== 0) {
+          throw new Error(`expected no preview-owned rm_PinAndTabs id, got ${pinAndTabsMatches.length}`);
+        }
+        if (panelTabsMatches.length !== 0) {
+          throw new Error(`expected no preview-owned right-nav-panel-tabs id, got ${panelTabsMatches.length}`);
+        }
+        if (selectedCharacterMatches.length > 0) {
+          throw new Error(`expected no duplicate selected-character shell id, got ${selectedCharacterMatches.length}`);
+        }
+        '''
+    )
 
 
 def test_build_beautify_preview_document_exports_host_scene_catalog_contract():
@@ -988,6 +1077,76 @@ def test_build_beautify_preview_sample_markup_contains_st_message_edit_controls(
     )
 
 
+def test_build_beautify_preview_sample_markup_separates_timestamp_from_generation_timer():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewSampleMarkup('pc');
+
+        const messageStart = html.indexOf('mesid="2"');
+        const nextMessageStart = html.indexOf('mesid="3"', messageStart);
+        const messageHtml = html.slice(messageStart, nextMessageStart === -1 ? undefined : nextMessageStart);
+
+        if (!messageHtml.includes('<small class="timestamp">2026年4月27日 08:14</small>')) {
+          throw new Error('expected full timestamp in visible timestamp slot');
+        }
+        if (!messageHtml.includes('<div class="mes_timer"></div>')) {
+          throw new Error('expected empty mes_timer slot for static preview scene');
+        }
+        if (messageHtml.includes('<div class="mes_timer">2026年4月27日 08:14</div>')) {
+          throw new Error('preview should not mirror timestamp into mes_timer');
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_sample_markup_keeps_non_system_messages_from_showing_mes_ghost():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewSampleMarkup('pc');
+
+        const characterStart = html.indexOf('mesid="2"');
+        const userStart = html.indexOf('mesid="3"', characterStart);
+        const characterHtml = html.slice(characterStart, userStart === -1 ? undefined : userStart);
+
+        if (!characterHtml.includes('class="mes_ghost fa-solid fa-ghost"')) {
+          throw new Error('expected ST ghost node to remain in the DOM');
+        }
+        if (!characterHtml.includes('is_system="false"')) {
+          throw new Error('expected character message to stay non-system');
+        }
+        if (!characterHtml.includes('class="mes_button extraMesButtonsHint fa-solid fa-ellipsis"')) {
+          throw new Error('expected visible ellipsis action');
+        }
+        if (!characterHtml.includes('class="mes_button mes_edit fa-solid fa-pencil"')) {
+          throw new Error('expected visible edit action');
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_sample_markup_uses_full_date_time_seed_values_for_character_messages():
+    run_preview_document_check(
+        '''
+        const sceneMarkup = {
+          daily: module.buildBeautifyPreviewSampleMarkup('pc'),
+          flirty: module.buildBeautifyPreviewSampleMarkup('pc', {}, {}, 'flirty'),
+          lore: module.buildBeautifyPreviewSampleMarkup('pc', {}, {}, 'lore'),
+          story: module.buildBeautifyPreviewSampleMarkup('pc', {}, {}, 'story'),
+        };
+
+        for (const [sceneId, token] of [
+          ['daily', '2026年4月27日 08:14'],
+          ['daily', '2026年4月27日 08:15'],
+          ['flirty', '2026年4月27日 22:06'],
+          ['lore', '2026年4月27日 19:25'],
+          ['story', '2026年4月27日 23:11'],
+        ]) {
+          if (!sceneMarkup[sceneId].includes(token)) throw new Error(`missing full timestamp seed in ${sceneId}: ${token}`);
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_sample_markup_contains_st_reasoning_controls():
     run_preview_document_check(
         '''
@@ -1428,6 +1587,18 @@ def test_build_beautify_preview_document_shows_top_settings_holder_in_default_pr
     source = (ROOT / 'static/js/components/beautifyPreviewDocument.js').read_text(encoding='utf-8')
 
     assert '#top-settings-holder {' not in source
+
+
+def test_build_beautify_preview_document_explicitly_anchors_mobile_top_bars_inside_isolated_shell():
+    source = (ROOT / 'static/js/components/beautifyPreviewDocument.js').read_text(encoding='utf-8')
+
+    assert "body[data-st-preview-platform='mobile'] #top-settings-holder" in source
+    assert "body[data-st-preview-platform='mobile'] #top-bar" in source
+
+    mobile_topbar_block = source.split("body[data-st-preview-platform='mobile'] #top-settings-holder,", 1)[1].split('}', 1)[0]
+
+    assert 'left: 0;' in mobile_topbar_block
+    assert 'right: 0;' in mobile_topbar_block
 
 
 def test_beautify_preview_identity_assets_exist_in_project_static_images():
