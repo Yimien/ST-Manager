@@ -796,7 +796,7 @@ ${stylesheetMarkup}
         min-height: 0;
         display: flex;
         flex-direction: column;
-        padding: 20px;
+        padding: 0 20px 20px;
       }
 
       #top-bar {

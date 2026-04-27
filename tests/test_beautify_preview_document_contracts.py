@@ -1196,6 +1196,31 @@ def test_build_beautify_preview_document_preserves_vendor_toolbar_layout_and_onl
         assert removed not in source, f'legacy preview-owned shell layout override should be removed: {removed}'
 
 
+def test_build_beautify_preview_document_keeps_top_toolbar_flush_without_shell_top_padding():
+    source = (ROOT / 'static/js/components/beautifyPreviewDocument.js').read_text(encoding='utf-8')
+
+    shell_block = source.split('.st-preview-shell {', 1)[1].split('}', 1)[0]
+
+    assert 'padding: 20px;' not in shell_block
+    assert 'padding: 0 20px 20px;' in shell_block
+
+
+def test_build_beautify_preview_document_keeps_vendor_toolbar_shell_visible_after_top_seam_fix():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        for (const token of [
+          'id="top-bar"',
+          'id="top-settings-holder"',
+          'class="st-preview-shell"',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_document_binds_only_supported_drawer_controls():
     run_preview_document_check(
         '''
