@@ -1,4 +1,5 @@
-.beautify-layout {
+.beautify-layout,
+.beautify-sidebar-panel {
   --beautify-shell-bg: transparent;
   --beautify-panel-bg: var(--bg-panel);
   --beautify-panel-bg-strong: var(--bg-sub);
@@ -48,6 +49,9 @@
   --beautify-active-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent-main) 30%, transparent),
     0 12px 30px color-mix(in srgb, var(--accent-main) 16%, transparent);
+}
+
+.beautify-layout {
   display: flex;
   flex: 1;
   min-width: 0;
@@ -102,11 +106,16 @@
 .beautify-toolbar-actions {
   justify-content: center;
   flex-wrap: wrap;
+  align-items: stretch;
 }
 
 .beautify-toolbar-global-action,
 .beautify-toolbar-package-actions {
   flex: 0 0 auto;
+}
+
+.beautify-toolbar-global-action {
+  width: 100%;
 }
 
 .beautify-toolbar-package-actions {
@@ -206,6 +215,28 @@
   padding: 0.65rem 0.8rem;
 }
 
+.beautify-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 2.5rem;
+  background-color: var(--beautify-control-bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-main) 50%),
+    linear-gradient(135deg, var(--text-main) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 1px),
+    calc(100% - 12px) calc(50% - 1px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  color-scheme: dark;
+}
+
+.beautify-filter-select option {
+  background-color: var(--beautify-panel-bg-strong);
+  color: var(--text-main);
+}
+
 .beautify-filter-input:focus,
 .beautify-filter-select:focus,
 .beautify-soft-btn:focus,
@@ -257,6 +288,37 @@
   background: linear-gradient(135deg, var(--accent-main), #8b5cf6);
   border-color: transparent;
   color: #fff;
+}
+
+.beautify-toolbar-global-action--primary {
+  justify-content: center;
+  text-align: center;
+  min-height: 46px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 10px 24px color-mix(in srgb, var(--accent-main) 20%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.beautify-toolbar-global-action--primary:hover {
+  filter: brightness(1.08);
+  box-shadow:
+    0 14px 28px color-mix(in srgb, var(--accent-main) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.beautify-stage-controls .beautify-variant-select {
+  width: auto;
+  min-width: 180px;
+  max-width: min(320px, 42vw);
+  flex: 0 1 280px;
+}
+
+.beautify-toolbar-filters .beautify-platform-filter-select {
+  width: auto;
+  min-width: 112px;
+  flex: 0 0 132px;
 }
 
 .beautify-soft-btn:hover,
@@ -841,5 +903,13 @@
     padding-left: 0;
     margin-left: 0;
     border-left: 0;
+  }
+
+  .beautify-stage-controls .beautify-variant-select,
+  .beautify-toolbar-filters .beautify-platform-filter-select {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 }

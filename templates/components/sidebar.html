@@ -806,7 +806,10 @@
           class="beautify-filter-input"
           placeholder="搜索美化包..."
         />
-        <select x-model="platformFilter" class="beautify-filter-select">
+        <select
+          x-model="platformFilter"
+          class="beautify-filter-select beautify-variant-select beautify-platform-filter-select"
+        >
           <option value="all">全部端</option>
           <option value="pc">PC</option>
           <option value="mobile">移动端</option>
@@ -818,7 +821,7 @@
         class="beautify-toolbar-actions"
         x-show="beautifyWorkspace === 'packages'"
       >
-        <label class="beautify-action-btn beautify-toolbar-global-action cursor-pointer">
+        <label class="beautify-primary-btn beautify-toolbar-global-action beautify-toolbar-global-action--primary cursor-pointer">
           <input
             type="file"
             class="hidden"
