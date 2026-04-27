@@ -2888,11 +2888,34 @@ def test_beautify_grid_preview_platform_change_preserves_compatible_selected_var
     run_beautify_grid_runtime_check(
         '''
         globalThis.window = { innerWidth: 1280, addEventListener: () => {} };
+        let editedPlatform = 'dual';
+        globalThis.__gridStubs = {
+          updateBeautifyVariant: async ({ platform }) => {
+            editedPlatform = platform;
+            return { success: true, item: { id: 'dual_a', platform } };
+          },
+          getBeautifyPackage: async () => ({
+            success: true,
+            item: {
+              id: 'pkg_demo',
+              variants: {
+                pc_a: { id: 'pc_a', name: 'PC A', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                pc_b: { id: 'pc_b', name: 'PC B', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                mobile_a: { id: 'mobile_a', name: 'Mobile A', platform: 'mobile', wallpaper_ids: [], selected_wallpaper_id: '' },
+                dual_a: { id: 'dual_a', name: 'Dual A', platform: editedPlatform, wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+          }),
+        };
 
         const component = module.default();
         component.$store = {
           global: {
             beautifyWorkspace: 'packages',
+            beautifySelectedPackageId: 'pkg_demo',
             beautifyPreviewDevice: 'pc',
             beautifyPreviewUnavailableReason: '',
             beautifyVariantSelectionByDevice: {
@@ -2970,6 +2993,26 @@ def test_beautify_grid_preview_platform_change_preserves_compatible_selected_var
         }
         if (component.$store.global.beautifyPreviewDevice !== 'dual') {
           throw new Error(`expected preview target to remain dual, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+
+        component.$store.global.beautifySelectedVariantId = 'dual_a';
+        component.$store.global.beautifyActiveVariant = component.$store.global.beautifyActiveDetail.variants.dual_a;
+        component.$store.global.beautifyVariantSelectionByDevice = {
+          pc: 'pc_b',
+          mobile: 'mobile_a',
+          dual: 'dual_a',
+        };
+
+        await component.updateCurrentVariantPlatform('mobile');
+
+        if (component.$store.global.beautifyVariantSelectionByDevice.pc !== 'pc_b') {
+          throw new Error(`expected unrelated pc memory to stay intact, got ${JSON.stringify(component.$store.global.beautifyVariantSelectionByDevice)}`);
+        }
+        if (component.$store.global.beautifyVariantSelectionByDevice.mobile !== 'dual_a') {
+          throw new Error(`expected platform edit to re-key remembered mobile selection, got ${JSON.stringify(component.$store.global.beautifyVariantSelectionByDevice)}`);
+        }
+        if (component.$store.global.beautifyVariantSelectionByDevice.dual) {
+          throw new Error(`expected stale dual remembered selection to be cleared after mobile edit, got ${JSON.stringify(component.$store.global.beautifyVariantSelectionByDevice)}`);
         }
         '''
     )

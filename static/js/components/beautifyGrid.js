@@ -616,6 +616,28 @@ export default function beautifyGrid() {
       this.variantSelectionByDevice = next;
     },
 
+    refreshVariantSelectionForPlatformChange(variantId, platform) {
+      const resolvedVariantId = String(variantId || '').trim();
+      if (!resolvedVariantId) return;
+
+      const next = { ...(this.variantSelectionByDevice || {}) };
+      Object.keys(next).forEach((device) => {
+        if (next[device] === resolvedVariantId) {
+          delete next[device];
+        }
+      });
+
+      if (platform === 'dual') {
+        next.pc = resolvedVariantId;
+        next.mobile = resolvedVariantId;
+        next.dual = resolvedVariantId;
+      } else if (platform === 'pc' || platform === 'mobile') {
+        next[platform] = resolvedVariantId;
+      }
+
+      this.variantSelectionByDevice = next;
+    },
+
     isVariantCompatibleWithDevice(
       variant,
       device = this.selectedVariantPlatform,
@@ -1304,14 +1326,16 @@ export default function beautifyGrid() {
       if (!this.selectedPackageId || !this.selectedVariantId) return;
       this.isActionLoading = true;
       try {
+        const variantId = this.selectedVariantId;
         const res = await updateBeautifyVariant({
           package_id: this.selectedPackageId,
-          variant_id: this.selectedVariantId,
+          variant_id: variantId,
           platform,
         });
         if (!res?.success) {
           throw new Error(res?.error || "更新端类型失败");
         }
+        this.refreshVariantSelectionForPlatformChange(variantId, platform);
         await this.selectPackage(this.selectedPackageId, {
           preserveSelection: true,
         });
