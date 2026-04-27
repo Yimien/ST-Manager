@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -299,6 +300,29 @@ def run_render_runtime_check(script_body):
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_beautify_settings_wallpaper_cards_bind_to_nested_shared_wallpaper_picker_helper_contract():
+    template = read_project_file('templates/components/grid_beautify.html')
+    picker_source = read_project_file('static/js/components/sharedWallpaperPicker.js')
+
+    assert_contains_any(
+        picker_source,
+        (
+            'sharedWallpaperPreviewUrl(relativePath) {',
+            "sharedWallpaperPreviewUrl(relativePath) {",
+        ),
+    )
+    assert re.search(
+        r'''x-data="sharedWallpaperPicker\(\{\s*sourceFilter:\s*'all',\s*selectionTarget:\s*'preview'\s*\}\)"[\s\S]*?sharedWallpaperPreviewUrl\(item\.file\)''',
+        template,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'''x-data="sharedWallpaperPicker\(\{\s*sourceFilter:\s*'all',\s*selectionTarget:\s*'preview'\s*\}\)"[\s\S]*?selectGlobalWallpaper\(item\.id\)''',
+        template,
+        re.DOTALL,
+    )
 
 
 def test_index_template_lifts_beautify_scope_to_main_container_above_shared_includes():
@@ -1759,7 +1783,7 @@ def test_beautify_grid_forces_package_detail_drawer_closed_when_workspace_switch
     )
 
 
-def test_beautify_grid_resets_package_detail_collapse_and_drawer_when_switching_packages():
+def test_beautify_grid_preserves_package_detail_collapse_and_closes_drawer_when_switching_packages():
     run_beautify_grid_runtime_check(
         '''
         globalThis.__gridStubs = {
@@ -1806,11 +1830,11 @@ def test_beautify_grid_resets_package_detail_collapse_and_drawer_when_switching_
         if (component.selectedPackageId !== 'pkg_b') {
           throw new Error(`expected package switch to pkg_b, got ${component.selectedPackageId}`);
         }
-        if (component.packageDetailCollapsed !== false) {
-          throw new Error('package switch should reset collapsed state for the new package page');
+        if (component.packageDetailCollapsed !== true) {
+          throw new Error('package switch should preserve the user-owned collapsed state');
         }
         if (component.packageDetailDrawerOpen !== false) {
-          throw new Error('package switch should close the detail drawer');
+          throw new Error('package switch should still close the stale detail drawer');
         }
         '''
     )
@@ -2533,6 +2557,43 @@ def test_beautify_preview_frame_uses_global_only_preview_in_settings_workspace()
         if (state.identities.character.name !== '全局角色') throw new Error('settings workspace should ignore package character override');
         if (state.identities.user.name !== '全局用户') throw new Error('settings workspace should ignore package user override');
         '''
+    )
+
+
+def test_beautify_preview_frame_injects_desktop_shell_width_fallback_for_settings_workspace():
+    run_beautify_preview_frame_runtime_check(
+        '''
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'settings',
+            beautifyPreviewDevice: 'pc',
+            beautifyActiveDetail: null,
+            beautifyActiveVariant: null,
+            beautifyActiveWallpaper: null,
+            beautifyGlobalSettings: {
+              wallpaper: {
+                file: 'data/library/wallpapers/shared/global.png',
+              },
+              identities: {
+                character: { name: '全局角色', avatar_file: '' },
+                user: { name: '全局用户', avatar_file: '' },
+              },
+            },
+          },
+        };
+
+        const state = component.resolvePreviewState();
+        if (state.platform !== 'pc') {
+          throw new Error(`expected desktop settings preview to keep pc platform, got ${state.platform}`);
+        }
+        if (state.theme.chat_width !== 55) {
+          throw new Error(`expected desktop settings preview to inject 55 chat_width fallback, got ${state.theme.chat_width}`);
+        }
+        if (state.wallpaperUrl !== 'data/library/wallpapers/shared/global.png') {
+          throw new Error(`expected global wallpaper to remain active, got ${state.wallpaperUrl}`);
+        }
+      '''
     )
 
 

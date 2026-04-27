@@ -577,7 +577,7 @@
 
 .beautify-settings-preview-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   min-height: 0;
 }
@@ -587,11 +587,6 @@
   flex-direction: column;
   gap: 0.9rem;
   min-height: 0;
-}
-
-.beautify-settings-preview-sidebar-gap {
-  visibility: hidden;
-  pointer-events: none;
 }
 
 .beautify-mobile-entry-card {
@@ -651,12 +646,6 @@
   padding: 0.7rem;
 }
 
-.beautify-settings-wallpaper-thumb {
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  height: auto;
-}
-
 .beautify-device-btn.is-active,
 .beautify-workspace-btn.is-active,
 .beautify-package-card.is-active,
@@ -671,6 +660,13 @@
   width: 64px;
   height: 44px;
   flex-shrink: 0;
+}
+
+.beautify-wallpaper-thumb.beautify-settings-wallpaper-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  height: auto;
 }
 
 .beautify-wallpaper-info {
@@ -785,12 +781,6 @@
     grid-template-columns: minmax(0, 1fr);
     flex: 0 0 auto;
     align-content: start;
-  }
-  .beautify-settings-preview-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .beautify-settings-preview-sidebar-gap {
-    display: none;
   }
   .beautify-detail-column {
     flex-direction: row;

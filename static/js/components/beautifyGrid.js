@@ -327,16 +327,8 @@ export default function beautifyGrid() {
       }
     },
 
-    normalizePackageDetailRailState(nextPackageId) {
-      const resolvedNextPackageId = String(nextPackageId || "").trim();
-      const currentPackageId = String(this.selectedPackageId || "").trim();
-      const isSamePackage =
-        !!resolvedNextPackageId && resolvedNextPackageId === currentPackageId;
-
+    normalizePackageDetailRailState() {
       this.closePackageDetailDrawer();
-      if (!isSamePackage) {
-        this.packageDetailCollapsed = false;
-      }
     },
 
     init() {

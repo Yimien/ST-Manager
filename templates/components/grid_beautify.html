@@ -226,14 +226,14 @@
               <template x-for="item in filteredWallpapers" :key="item.id">
                 <button
                   type="button"
-                  class="beautify-settings-wallpaper-card cursor-pointer"
+                  class="beautify-wallpaper-item beautify-settings-wallpaper-card cursor-pointer"
                   :class="isSelected(item) ? 'is-active' : ''"
                   @click="selectGlobalWallpaper(item.id)"
                 >
-                  <span
-                    class="beautify-settings-wallpaper-thumb"
-                    :style="`background-image:url('${wallpaperPreviewUrl(item.file)}')`"
-                  ></span>
+                  <div
+                    class="beautify-wallpaper-thumb beautify-settings-wallpaper-thumb"
+                    :style="`background-image:url('${sharedWallpaperPreviewUrl(item.file)}')`"
+                  ></div>
                   <span class="beautify-wallpaper-info">
                     <span
                       class="beautify-wallpaper-name"
@@ -338,9 +338,9 @@
           <div class="beautify-empty-copy">
             不会带入当前包的主题与覆盖，只显示全局默认效果。
           </div>
-          <div class="beautify-settings-preview-layout">
-            <div class="beautify-settings-preview-column">
-              <div class="beautify-settings-preview-stage">
+          <div class="beautify-settings-preview-stage">
+            <div class="beautify-settings-preview-layout">
+              <div class="beautify-settings-preview-column">
               <div class="beautify-preview-scene-switcher">
                 <template x-for="scene in previewScenes" :key="scene.id">
                   <button
@@ -361,51 +361,50 @@
                 </template>
               </div>
 
-                <template x-if="isMobileFullscreenEnabled() && !showMobileFullscreen">
-                  <div
-                    class="beautify-preview-unloaded-card beautify-settings-preview-card beautify-mobile-entry-card"
+              <template x-if="isMobileFullscreenEnabled() && !showMobileFullscreen">
+                <div
+                  class="beautify-preview-unloaded-card beautify-settings-preview-card beautify-mobile-entry-card"
+                >
+                  <button
+                    type="button"
+                    class="beautify-primary-btn"
+                    @click="openMobileFullscreen('preview'); loadPreview()"
                   >
-                    <button
-                      type="button"
-                      class="beautify-primary-btn"
-                      @click="openMobileFullscreen('preview'); loadPreview()"
-                    >
-                      加载全局默认预览
-                    </button>
-                  </div>
-                </template>
+                    加载全局默认预览
+                  </button>
+                </div>
+              </template>
 
-                <template x-if="!isMobileFullscreenEnabled() && !isPreviewLoaded">
-                  <div
-                    class="beautify-preview-unloaded-card beautify-settings-preview-card"
+              <template x-if="!isMobileFullscreenEnabled() && !isPreviewLoaded">
+                <div
+                  class="beautify-preview-unloaded-card beautify-settings-preview-card"
+                >
+                  <button
+                    type="button"
+                    class="beautify-primary-btn"
+                    @click="loadPreview()"
                   >
-                    <button
-                      type="button"
-                      class="beautify-primary-btn"
-                      @click="loadPreview()"
-                    >
-                      加载全局默认预览
-                    </button>
-                  </div>
-                </template>
+                    加载全局默认预览
+                  </button>
+                </div>
+              </template>
 
-                <template x-if="!isMobileFullscreenEnabled() && isPreviewLoaded">
+              <template x-if="!isMobileFullscreenEnabled() && isPreviewLoaded">
+                <div
+                  class="beautify-preview-frame-shell beautify-settings-preview-shell"
+                  :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
+                >
                   <div
-                    class="beautify-preview-frame-shell beautify-settings-preview-shell"
-                    :class="previewShellMode === 'mobile' ? 'is-mobile' : 'is-pc'"
-                  >
-                    <div
-                      x-ref="previewHost"
-                      class="beautify-preview-host"
-                      :data-preview-platform="previewShellMode"
-                      data-runtime-owner="beautify-preview"
-                      data-runtime-label="Beautify Native ST Preview"
-                    ></div>
-                  </div>
-                </template>
+                    x-ref="previewHost"
+                    class="beautify-preview-host"
+                    :data-preview-platform="previewShellMode"
+                    data-runtime-owner="beautify-preview"
+                    data-runtime-label="Beautify Native ST Preview"
+                  ></div>
+                </div>
+              </template>
               </div>
             </div>
-            <div class="beautify-settings-preview-sidebar-gap"></div>
           </div>
         </div>
       </div>

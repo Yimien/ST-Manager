@@ -63,6 +63,17 @@ function resolveVariantWallpaper(
 }
 
 const MAX_PREVIEW_HOST_RETRIES = 3;
+const SETTINGS_PREVIEW_DESKTOP_CHAT_WIDTH = 55;
+
+function resolveSettingsPreviewTheme(platform) {
+  if (platform === "mobile") {
+    return {};
+  }
+
+  return {
+    chat_width: SETTINGS_PREVIEW_DESKTOP_CHAT_WIDTH,
+  };
+}
 
 export default function beautifyPreviewFrame() {
   return {
@@ -237,13 +248,16 @@ export default function beautifyPreviewFrame() {
       const packageIdentities = detail.identity_overrides || {};
       const globalIdentities = globalSettings.identities || {};
       const useGlobalOnly = workspace === "settings";
+      const platform = this.previewShellMode === "mobile" ? "mobile" : "pc";
       const resolvedWallpaperFile = useGlobalOnly
         ? globalWallpaper.file
         : variantWallpaper?.file || globalWallpaper.file;
 
       return {
-        platform: this.previewShellMode === "mobile" ? "mobile" : "pc",
-        theme: useGlobalOnly ? {} : variant.theme_data || {},
+        platform,
+        theme: useGlobalOnly
+          ? resolveSettingsPreviewTheme(platform)
+          : variant.theme_data || {},
         activeScene: this.activePreviewScene?.id || DEFAULT_PREVIEW_SCENE_ID,
         wallpaperUrl: resolvedWallpaperFile
           ? buildBeautifyPreviewAssetUrl(resolvedWallpaperFile)

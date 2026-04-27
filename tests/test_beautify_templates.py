@@ -204,7 +204,7 @@ def test_beautify_grid_template_settings_workspace_keeps_global_preview_surface(
     assert '不会带入当前包的主题与覆盖' in template
 
 
-def test_beautify_grid_template_settings_workspace_reuses_scene_switcher_and_aligned_preview_stage():
+def test_beautify_grid_template_settings_workspace_reuses_scene_switcher_and_single_real_preview_column():
     template = read_project_file('templates/components/grid_beautify.html')
 
     settings_branch = extract_beautify_settings_workspace_branch(template)
@@ -214,36 +214,53 @@ def test_beautify_grid_template_settings_workspace_reuses_scene_switcher_and_ali
     assert '@click="setPreviewScene(scene.id)"' in settings_branch or "@click='setPreviewScene(scene.id)'" in settings_branch
     assert 'beautify-settings-preview-stage' in settings_branch
     assert 'beautify-settings-preview-layout' in settings_branch
-    assert 'beautify-settings-preview-sidebar-gap' in settings_branch
+    assert 'beautify-settings-preview-column' in settings_branch
+    assert 'beautify-settings-preview-sidebar-gap' not in settings_branch
     assert '加载全局默认预览' in settings_branch
 
 
-def test_beautify_grid_template_settings_workspace_uses_real_preview_layout_children():
-    template = read_project_file('templates/components/grid_beautify.html')
-
-    settings_branch = extract_beautify_settings_workspace_branch(template)
-
-    assert re.search(
-        r'<div class="beautify-settings-preview-layout">\s*'
-        r'<div class="beautify-settings-preview-column">',
-        settings_branch,
-    )
-    assert re.search(
-        r'</div>\s*<div class="beautify-settings-preview-sidebar-gap"></div>\s*</div>',
-        settings_branch,
-    )
-    assert 'beautify-settings-preview-layout beautify-settings-preview-sidebar-gap' not in settings_branch
-
-
-def test_beautify_grid_template_settings_workspace_uses_grid_shared_wallpaper_cards():
+def test_beautify_grid_template_settings_workspace_uses_shared_wallpaper_preview_tiles():
     template = read_project_file('templates/components/grid_beautify.html')
 
     settings_branch = extract_beautify_settings_workspace_branch(template)
 
     assert 'beautify-settings-wallpaper-grid' in settings_branch
-    assert 'beautify-settings-wallpaper-card' in settings_branch
-    assert 'beautify-settings-wallpaper-thumb' in settings_branch
-    assert 'selectGlobalWallpaper(item.id)' in settings_branch
+    assert 'beautify-wallpaper-item beautify-settings-wallpaper-card' in settings_branch
+    assert 'beautify-wallpaper-thumb beautify-settings-wallpaper-thumb' in settings_branch
+    assert 'sharedWallpaperPreviewUrl(item.file)' in settings_branch
+    assert 'wallpaperPreviewUrl(item.file)' not in settings_branch
+    assert re.search(
+        r'<div\s+class="beautify-wallpaper-thumb beautify-settings-wallpaper-thumb"',
+        settings_branch,
+    )
+
+
+def test_beautify_grid_template_keeps_loaded_settings_preview_shell_inside_single_real_column():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    settings_branch = extract_beautify_settings_workspace_branch(template)
+
+    assert re.search(
+        r'<div class="beautify-settings-preview-stage">\s*'
+        r'<div class="beautify-settings-preview-layout">\s*'
+        r'<div class="beautify-settings-preview-column">[\s\S]*'
+        r'<template x-if="!isMobileFullscreenEnabled\(\) && isPreviewLoaded">[\s\S]*'
+        r'<div\s+class="beautify-preview-frame-shell beautify-settings-preview-shell"',
+        settings_branch,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'</template>\s*</div>\s*</div>\s*</div>',
+        settings_branch,
+    )
+
+
+def test_beautify_grid_template_settings_workspace_preview_stage_keeps_balanced_div_closures():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    settings_branch = extract_beautify_settings_workspace_branch(template)
+    assert '全局默认预览' in settings_branch
+    assert settings_branch.count('<div') == settings_branch.count('</div>')
 
 
 def test_beautify_grid_template_disables_preview_only_controls_in_screenshot_mode():
@@ -417,74 +434,38 @@ def test_beautify_layout_css_removes_preview_shell_chrome_inside_mobile_fullscre
     )
 
 
-def test_beautify_layout_css_styles_settings_wallpaper_grid_cards():
-    css = read_project_file('static/css/modules/view-beautify.css')
-
-    grid_block = extract_css_block_for_selector(css, '.beautify-settings-wallpaper-grid')
-    card_block = extract_css_block_for_selector(css, '.beautify-settings-wallpaper-card')
-    thumb_block = extract_css_block_for_selector(css, '.beautify-settings-wallpaper-thumb')
-
-    assert_has_css_declaration(grid_block, 'display', 'grid')
-    assert_has_css_declaration(
-        grid_block,
-        'grid-template-columns',
-        'repeat(auto-fit, minmax(170px, 1fr))',
-    )
-    assert_has_css_declaration(card_block, 'flex-direction', 'column')
-    assert_has_css_declaration(card_block, 'padding', '0.7rem')
-    assert_has_css_declaration(thumb_block, 'width', '100%')
-    assert_has_css_declaration(thumb_block, 'aspect-ratio', '16 / 10')
-
-
-def test_beautify_layout_css_aligns_settings_preview_with_desktop_sidebar_gap():
+def test_beautify_layout_css_keeps_settings_preview_single_column_and_removes_gap_rules():
     css = read_project_file('static/css/modules/view-beautify.css')
 
     stage_block = extract_css_block_for_selector(css, '.beautify-settings-preview-stage')
     layout_block = extract_css_block_for_selector(css, '.beautify-settings-preview-layout')
     column_block = extract_css_block_for_selector(css, '.beautify-settings-preview-column')
-    gap_block = extract_css_block_for_selector(css, '.beautify-settings-preview-sidebar-gap')
     shell_block = extract_css_block_for_selector(css, '.beautify-settings-preview-shell')
 
     assert_has_css_declaration(stage_block, 'margin-top', '0.9rem')
     assert_has_css_declaration(layout_block, 'display', 'grid')
-    assert_has_css_declaration(layout_block, 'grid-template-columns', 'minmax(0, 1fr) 280px')
+    assert_has_css_declaration(layout_block, 'grid-template-columns', 'minmax(0, 1fr)')
     assert_has_css_declaration(column_block, 'display', 'flex')
     assert_has_css_declaration(column_block, 'gap', '0.9rem')
-    assert_has_css_declaration(gap_block, 'visibility', 'hidden')
-    assert_has_css_declaration(gap_block, 'pointer-events', 'none')
     assert_has_css_declaration(shell_block, 'margin-top', '0')
+    assert '.beautify-settings-preview-sidebar-gap {' not in css
 
 
-def test_beautify_layout_css_collapses_settings_preview_gap_on_tablet():
+def test_beautify_layout_css_styles_settings_wallpaper_thumb_as_a_block_tile():
     css = read_project_file('static/css/modules/view-beautify.css')
 
-    tablet_media_match = re.search(
-        r'@media \(max-width: 1180px\)\s*\{(?P<body>[\s\S]*?)\n\}',
+    card_block = extract_css_block_for_selector(css, '.beautify-settings-wallpaper-card')
+    thumb_block = extract_css_block_for_selector(
         css,
+        '.beautify-wallpaper-thumb.beautify-settings-wallpaper-thumb',
     )
-    assert tablet_media_match, 'Expected beautify tablet media query block'
 
-    tablet_body = tablet_media_match.group('body')
-    layout_block = extract_css_block_for_selector(tablet_body, '.beautify-settings-preview-layout')
-    gap_block = extract_css_block_for_selector(tablet_body, '.beautify-settings-preview-sidebar-gap')
-
-    assert_has_css_declaration(layout_block, 'grid-template-columns', 'minmax(0, 1fr)')
-    assert_has_css_declaration(gap_block, 'display', 'none')
-    assert re.search(
-        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\s*\{[^}]*background:\s*transparent;',
-        css,
-        re.DOTALL,
-    )
-    assert re.search(
-        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\.is-mobile\s*\{[^}]*max-width:\s*none;',
-        css,
-        re.DOTALL,
-    )
-    assert re.search(
-        r'\.beautify-mobile-preview-stage \.beautify-preview-frame-shell\.is-mobile\s*\{[^}]*margin:\s*0;',
-        css,
-        re.DOTALL,
-    )
+    assert_has_css_declaration(card_block, 'flex-direction', 'column')
+    assert_has_css_declaration(card_block, 'padding', '0.7rem')
+    assert_has_css_declaration(thumb_block, 'display', 'block')
+    assert_has_css_declaration(thumb_block, 'width', '100%')
+    assert_has_css_declaration(thumb_block, 'aspect-ratio', '16 / 10')
+    assert not re.search(r'^\.beautify-settings-wallpaper-thumb\s*\{', css, re.MULTILINE)
 
 
 def test_beautify_grid_template_keeps_screenshot_entry_available_without_imported_images():
