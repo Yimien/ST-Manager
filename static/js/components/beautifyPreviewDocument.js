@@ -86,6 +86,10 @@ function clampMin(value, minimum) {
   return Math.max(value, minimum);
 }
 
+function clampRange(value, minimum, maximum) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
 function buildPreviewBodyClasses(theme = {}) {
   const classes = [];
 
@@ -648,13 +652,16 @@ function buildPreviewBehaviorScript() {
   `;
 }
 
-export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "") {
+export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "", platform = 'pc') {
   const fontScale = (() => {
     const normalized = normalizeNumber(theme.font_scale, 1);
     return normalized > 0 ? normalized : 1;
   })();
   const blurStrength = clampMin(normalizeNumber(theme.blur_strength, 10), 0);
   const shadowWidth = clampMin(normalizeNumber(theme.shadow_width, 2), 0);
+  const previewShellWidth = platform === 'mobile'
+    ? '100%'
+    : `${clampRange(normalizeNumber(theme.chat_width, 100), 25, 100)}vw`;
   const safeWallpaperUrl = wallpaperUrl
     ? `url("${escapeCssUrl(wallpaperUrl)}")`
     : "none";
@@ -682,6 +689,7 @@ export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "") {
     "--shadowWidth": `${shadowWidth}px`,
     "--SmartThemeBlurStrength": "var(--blurStrength)",
     "--mainFontSize": "calc(var(--fontScale) * 16px)",
+    "--stPreviewShellWidth": previewShellWidth,
     "--wallpaperUrl": safeWallpaperUrl,
   };
 }
@@ -728,7 +736,7 @@ export function buildBeautifyPreviewDocument({
   activeScene = "",
 } = {}) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
-  const themeVars = buildBeautifyPreviewThemeVars(theme, wallpaperUrl);
+  const themeVars = buildBeautifyPreviewThemeVars(theme, wallpaperUrl, normalizedPlatform);
   const bodyClasses = buildPreviewBodyClasses(theme);
   const bodyClassAttr = bodyClasses.length
     ? ` class="${escapeHtml(bodyClasses.join(" "))}"`
@@ -852,7 +860,7 @@ ${stylesheetMarkup}
         gap: 0;
       }
     </style>
-    <style>${customCss}</style>
+    <style>${customCss}</style><style>:root{--sheldWidth:var(--stPreviewShellWidth);}</style>
   </head>
   <body data-st-preview-platform="${escapeHtml(normalizedPlatform)}"${bodyClassAttr}>
     ${markup}

@@ -3045,7 +3045,7 @@ select {
     border-radius: 5px;
     margin-bottom: 5px;
     height: min-content;
-    background-image: url('../img/down-arrow.svg');
+    background-image: url('img/down-arrow.svg');
     background-repeat: no-repeat;
     background-position: right 6px center;
     background-size: 8px 5px;
@@ -3260,7 +3260,7 @@ input[type=search]::-webkit-search-cancel-button {
     width: 1em;
     border-radius: 50em;
     background-color: var(--SmartThemeBodyColor);
-    mask: url('/img/times-circle.svg') no-repeat 50% 50%;
+    mask: url('img/times-circle.svg') no-repeat 50% 50%;
     background-size: contain;
     opacity: 0;
     pointer-events: none;

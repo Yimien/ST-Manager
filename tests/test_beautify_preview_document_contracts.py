@@ -406,6 +406,59 @@ def test_build_beautify_preview_theme_vars_normalizes_and_clamps_theme_inputs():
     )
 
 
+def test_build_beautify_preview_theme_vars_derives_preview_shell_width_from_chat_width():
+    run_preview_document_check(
+        '''
+        const pcVars = module.buildBeautifyPreviewThemeVars({ chat_width: 50 }, '', 'pc');
+        const clampedPcVars = module.buildBeautifyPreviewThemeVars({ chat_width: 300 }, '', 'pc');
+        const lowPcVars = module.buildBeautifyPreviewThemeVars({ chat_width: 0 }, '', 'pc');
+        const negativePcVars = module.buildBeautifyPreviewThemeVars({ chat_width: -5 }, '', 'pc');
+        const mobileVars = module.buildBeautifyPreviewThemeVars({ chat_width: 50 }, '', 'mobile');
+
+        if (pcVars['--stPreviewShellWidth'] !== '50vw') {
+          throw new Error(`expected pc preview shell width from chat_width, got ${pcVars['--stPreviewShellWidth']}`);
+        }
+        if (clampedPcVars['--stPreviewShellWidth'] !== '100vw') {
+          throw new Error(`expected clamped pc preview shell width, got ${clampedPcVars['--stPreviewShellWidth']}`);
+        }
+        if (lowPcVars['--stPreviewShellWidth'] !== '25vw') {
+          throw new Error(`expected low pc preview shell width to clamp to ST minimum, got ${lowPcVars['--stPreviewShellWidth']}`);
+        }
+        if (negativePcVars['--stPreviewShellWidth'] !== '25vw') {
+          throw new Error(`expected negative pc preview shell width to clamp to ST minimum, got ${negativePcVars['--stPreviewShellWidth']}`);
+        }
+        if (mobileVars['--stPreviewShellWidth'] !== '100%') {
+          throw new Error(`expected mobile preview shell width to stay full width, got ${mobileVars['--stPreviewShellWidth']}`);
+        }
+        if ('--sheldWidth' in pcVars) throw new Error('preview theme vars should not expose raw sheld width');
+        '''
+    )
+
+
+def test_build_beautify_preview_document_reasserts_preview_shell_width_after_package_custom_css():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({
+          platform: 'pc',
+          theme: {
+            chat_width: 50,
+            custom_css: ':root { --sheldWidth: 90%; }',
+          },
+        });
+
+        if (!html.includes('--stPreviewShellWidth:50vw')) {
+          throw new Error('missing derived preview shell width variable');
+        }
+        if (!html.includes('<style>:root{--sheldWidth:var(--stPreviewShellWidth);}</style>')) {
+          throw new Error('missing final sheld width reassertion');
+        }
+        if (!html.includes('<style>:root { --sheldWidth: 90%; }</style><style>:root{--sheldWidth:var(--stPreviewShellWidth);}</style>')) {
+          throw new Error('expected final sheld width reassertion after package custom css');
+        }
+        '''
+    )
+
+
 def test_build_beautify_preview_document_escapes_css_sensitive_content():
     run_preview_document_check(
         r'''
@@ -1385,11 +1438,14 @@ def test_beautify_preview_identity_assets_exist_in_project_static_images():
         assert (ROOT / relative_path).is_file(), f'missing preview identity asset: {relative_path}'
 
 
-def test_vendored_sillytavern_style_css_uses_local_down_arrow_asset():
+def test_vendored_sillytavern_style_css_uses_vendor_local_icon_asset_paths():
     style_css = (ROOT / 'static/vendor/sillytavern/style.css').read_text(encoding='utf-8')
 
     assert "background-image: url('/img/down-arrow.svg');" not in style_css
-    assert "background-image: url('../img/down-arrow.svg');" in style_css
+    assert "background-image: url('../img/down-arrow.svg');" not in style_css
+    assert "background-image: url('img/down-arrow.svg');" in style_css
+    assert "mask: url('/img/times-circle.svg') no-repeat 50% 50%;" not in style_css
+    assert "mask: url('img/times-circle.svg') no-repeat 50% 50%;" in style_css
 
 
 def test_render_iframe_template_does_not_force_fixed_and_sticky_positions_to_absolute():
