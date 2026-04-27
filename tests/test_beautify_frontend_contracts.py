@@ -444,8 +444,7 @@ def test_beautify_api_exposes_package_scoped_variant_import_helper():
             'export async function importBeautifyVariant(file, packageId, options={})',
         ),
     )
-    assert 'formData.append("package_id", packageId);' in beautify_api
-    assert '/api/beautify/import-theme' in beautify_api
+    assert 'return importBeautifyTheme(file, { package_id: packageId, ...options });' in beautify_api
 
 
 def test_beautify_api_exports_shared_preview_wallpaper_helpers():
