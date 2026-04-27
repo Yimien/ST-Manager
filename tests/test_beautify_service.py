@@ -475,6 +475,42 @@ def test_import_theme_into_existing_package_keeps_older_same_platform_variant_un
     assert {variant['theme_name'] for variant in package_detail['variants'].values()} == {'First Demo', 'Second Demo'}
 
 
+def test_import_theme_into_existing_package_persists_variant_name_through_reload_and_recovery(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+
+    first = _import_theme_for_package(
+        service,
+        tmp_path,
+        filename='first-pc.json',
+        name='First Demo',
+        platform='pc',
+    )
+    package_id = first['package']['id']
+
+    second_theme = tmp_path / 'named-pc.json'
+    second_theme.write_text(
+        json.dumps({'name': 'Named Demo', 'main_text_color': '#c084fc'}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    second = service.import_theme(str(second_theme), package_id=package_id, platform='pc')
+    second_variant_id = second['variant']['id']
+    second_theme_file = second['variant']['theme_file']
+
+    persisted_library = get_beautify_library(ui_data)
+    assert persisted_library['packages'][package_id]['variants'][second_variant_id]['name'] == 'Named Demo'
+
+    ui_data.clear()
+
+    recovered_library = service.load_library()
+    recovered_variants = recovered_library['packages'][package_id]['variants']
+    recovered_named_variant = next(
+        variant for variant in recovered_variants.values() if variant['theme_file'] == second_theme_file
+    )
+    assert recovered_named_variant['name'] == 'Named Demo'
+
+
 def test_import_wallpaper_registers_shared_variant_wallpaper_and_selects_it(tmp_path):
     library_root = tmp_path / 'data' / 'library' / 'beautify'
     ui_data = {}

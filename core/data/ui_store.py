@@ -602,6 +602,7 @@ def _normalize_beautify_variant(raw_variant, variant_id):
     platform = _normalize_beautify_platform(source.get('platform'))
     return {
         'id': variant_id,
+        'name': _normalize_beautify_string(source.get('name')),
         'platform': platform,
         'theme_name': _normalize_beautify_string(source.get('theme_name')),
         'theme_file': _normalize_beautify_path(source.get('theme_file')),

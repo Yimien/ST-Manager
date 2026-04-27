@@ -821,6 +821,7 @@ class BeautifyService:
             preview_hint['preview_accuracy'] = 'approx' if self._theme_has_custom_css(theme_payload) else ('approx' if platform in ('pc', 'mobile') else 'base')
             variants[variant_id] = {
                 'id': variant_id,
+                'name': (existing_variant or {}).get('name') or theme_name or '未命名变体',
                 'platform': platform,
                 'theme_name': theme_name or (existing_variant or {}).get('theme_name') or package_info.get('name') or self._display_package_name(package_id),
                 'theme_file': relative_theme_file,
