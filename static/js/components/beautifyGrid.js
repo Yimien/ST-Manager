@@ -571,7 +571,13 @@ export default function beautifyGrid() {
       const variant = detail?.variants?.[variantId] || null;
       if (!variant) return;
       this.applyActiveVariant(variant, { preservePreviewDevice: true });
-      this.recordVariantSelectionForDevice(this.selectedVariantPlatform, variant.id);
+      if (variant.platform === "dual") {
+        this.recordVariantSelectionForDevice("pc", variant.id);
+        this.recordVariantSelectionForDevice("mobile", variant.id);
+        this.recordVariantSelectionForDevice("dual", variant.id);
+        return;
+      }
+      this.recordVariantSelectionForDevice(variant.platform, variant.id);
     },
 
     applyActiveVariant(variant, options = {}) {

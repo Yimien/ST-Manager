@@ -1017,7 +1017,18 @@ def test_beautify_grid_selects_concrete_variant_without_erasing_preview_device_h
           throw new Error('expected device-specific variant history to be recorded');
         }
 
+        component.selectVariant('mobile_a');
+
+        if (component.$store.global.beautifyVariantSelectionByDevice.mobile !== 'mobile_a') {
+          throw new Error(`expected cross-platform manual selection to be remembered under mobile, got ${JSON.stringify(component.$store.global.beautifyVariantSelectionByDevice)}`);
+        }
+
         await component.previewPlatform('mobile');
+
+        if (component.$store.global.beautifyActiveVariant?.id !== 'mobile_a') {
+          throw new Error(`expected remembered mobile variant to be restored on mobile preview, got ${component.$store.global.beautifyActiveVariant?.id}`);
+        }
+
         await component.previewPlatform('pc');
 
         if (component.$store.global.beautifyActiveVariant?.id !== 'pc_b') {
