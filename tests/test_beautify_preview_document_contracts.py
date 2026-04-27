@@ -1210,12 +1210,35 @@ def test_build_beautify_preview_document_keeps_vendor_toolbar_shell_visible_afte
         '''
         const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
 
+        const shellStart = html.indexOf('<div class="st-preview-shell">');
+        if (shellStart === -1) throw new Error('missing preview shell wrapper');
+
+        const shellEnd = html.indexOf('<div id="sheld">', shellStart);
+        if (shellEnd === -1) throw new Error('missing ST sheld inside preview shell');
+
+        const shellMarkup = html.slice(shellStart, shellEnd);
+        const orderedTokens = [
+          '<div id="top-bar"></div>',
+          '<div id="top-settings-holder">',
+        ];
+
+        let previousIndex = -1;
+        for (const token of orderedTokens) {
+          const index = shellMarkup.indexOf(token);
+          if (index === -1) throw new Error(`missing vendor toolbar token inside preview shell: ${token}`);
+          if (index <= previousIndex) throw new Error(`vendor toolbar token order changed for ${token}`);
+          previousIndex = index;
+        }
+
         for (const token of [
-          'id="top-bar"',
-          'id="top-settings-holder"',
-          'class="st-preview-shell"',
+          '<div id="ai-config-button" class="drawer closedDrawer">',
+          '<div id="advanced-formatting-button" class="drawer closedDrawer">',
+          'data-panel-surface="settings"',
+          'data-panel-surface="formatting"',
         ]) {
-          if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+          if (!shellMarkup.includes(token)) {
+            throw new Error(`expected vendor toolbar controls to remain inside the shell: ${token}`);
+          }
         }
         '''
     )
