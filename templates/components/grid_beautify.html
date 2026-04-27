@@ -493,7 +493,7 @@
               type="button"
               class="beautify-device-btn"
               :class="selectedVariantPlatform === 'dual' ? 'is-active' : ''"
-              :disabled="stageMode === 'screenshot' || !hasDualVariant"
+              :disabled="stageMode === 'screenshot' || !canPreviewDualTarget"
               @click="previewPlatform('dual')"
             >
               双端

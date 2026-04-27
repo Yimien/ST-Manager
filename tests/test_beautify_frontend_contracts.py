@@ -1869,6 +1869,102 @@ def test_beautify_grid_prior_dual_shell_falls_back_to_pc_when_next_package_has_s
     )
 
 
+def test_beautify_grid_split_package_dual_target_remains_reachable_on_desktop():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = { innerWidth: 1280, addEventListener: () => {} };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'pc',
+            beautifyPreviewUnavailableReason: '',
+            beautifyVariantSelectionByDevice: {
+              pc: 'pc_only',
+              mobile: 'mobile_only',
+            },
+            beautifySelectedVariantId: 'pc_only',
+            beautifySelectedWallpaperId: '',
+            beautifyActiveDetail: {
+              id: 'pkg_split',
+              variants: {
+                pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                mobile_only: { id: 'mobile_only', platform: 'mobile', wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+            beautifyActiveVariant: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+            beautifyActiveWallpaper: null,
+            showToast: () => {},
+          },
+        };
+
+        await component.previewPlatform('dual');
+
+        if (component.$store.global.beautifyPreviewDevice !== 'dual') {
+          throw new Error(`desktop split package should still enter dual target, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+        if (component.$store.global.beautifyActiveVariant?.id !== 'pc_only') {
+          throw new Error(`desktop split package should fall back to a remembered compatible pc variant, got ${component.$store.global.beautifyActiveVariant?.id}`);
+        }
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error(`desktop split package dual target should stay available, got ${component.$store.global.beautifyPreviewUnavailableReason}`);
+        }
+        '''
+    )
+
+
+def test_beautify_grid_split_package_dual_target_uses_mobile_fallback_on_mobile_viewport():
+    run_beautify_grid_runtime_check(
+        '''
+        globalThis.window = { innerWidth: 390, addEventListener: () => {} };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'mobile',
+            beautifyPreviewUnavailableReason: '',
+            beautifyVariantSelectionByDevice: {
+              pc: 'pc_only',
+              mobile: 'mobile_only',
+            },
+            beautifySelectedVariantId: 'pc_only',
+            beautifySelectedWallpaperId: '',
+            beautifyActiveDetail: {
+              id: 'pkg_split',
+              variants: {
+                pc_only: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+                mobile_only: { id: 'mobile_only', platform: 'mobile', wallpaper_ids: [], selected_wallpaper_id: '' },
+              },
+              wallpapers: {},
+              screenshots: {},
+              identity_overrides: {},
+            },
+            beautifyActiveVariant: { id: 'pc_only', platform: 'pc', wallpaper_ids: [], selected_wallpaper_id: '' },
+            beautifyActiveWallpaper: null,
+            showToast: () => {},
+          },
+        };
+
+        await component.previewPlatform('dual');
+
+        if (component.$store.global.beautifyPreviewDevice !== 'dual') {
+          throw new Error(`mobile split package should still enter dual target, got ${component.$store.global.beautifyPreviewDevice}`);
+        }
+        if (component.$store.global.beautifyActiveVariant?.id !== 'mobile_only') {
+          throw new Error(`mobile split package should not fall back to pc for dual target, got ${component.$store.global.beautifyActiveVariant?.id}`);
+        }
+        if (component.$store.global.beautifyPreviewUnavailableReason) {
+          throw new Error(`mobile split package dual target should use mobile fallback without unavailable state, got ${component.$store.global.beautifyPreviewUnavailableReason}`);
+        }
+        '''
+    )
+
+
 def test_beautify_grid_switching_back_to_packages_realigns_active_variant_with_mobile_shell():
     run_beautify_grid_runtime_check(
         '''
@@ -3133,6 +3229,7 @@ def test_beautify_grid_exposes_variant_selector_markup():
     assert '<option value="">选择具体变体</option>' in template
     assert 'x-for="variant in variantOptions"' in template
     assert 'x-text="variant.label"' in template
+    assert ":disabled=\"stageMode === 'screenshot' || !hasDualVariant\"" not in template
 
 
 def test_beautify_preview_frame_falls_back_to_global_wallpaper_when_variant_selection_has_no_resolved_wallpaper():

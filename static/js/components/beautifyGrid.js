@@ -280,6 +280,21 @@ export default function beautifyGrid() {
       return !!this.findVariantByPlatform("dual");
     },
 
+    get canPreviewDualTarget() {
+      const detail = this.activeDetail;
+      if (!detail?.variants) return false;
+      if (this.findVariantByPlatform("dual", detail)) {
+        return true;
+      }
+      if (this.isMobileBeautifyViewport()) {
+        return !!this.findVariantForPreviewPlatform("mobile", detail);
+      }
+      return (
+        !!this.findVariantForPreviewPlatform("pc", detail) ||
+        !!this.findVariantForPreviewPlatform("mobile", detail)
+      );
+    },
+
     get wallpaperOptions() {
       const variant = this.activeVariant;
       const detail = this.activeDetail;
@@ -631,6 +646,22 @@ export default function beautifyGrid() {
       );
     },
 
+    resolvePreferredVariantForDualTarget(detail = this.activeDetail) {
+      const dualVariant = this.findVariantByPlatform("dual", detail);
+      if (dualVariant) {
+        return dualVariant;
+      }
+
+      if (this.isMobileBeautifyViewport()) {
+        return this.resolvePreferredVariantForDevice("mobile", detail);
+      }
+
+      return (
+        this.resolvePreferredVariantForDevice("pc", detail) ||
+        this.resolvePreferredVariantForDevice("mobile", detail)
+      );
+    },
+
     recordVariantSelectionForDevice(device, variantId) {
       const next = {
         ...(this.variantSelectionByDevice || {}),
@@ -673,7 +704,10 @@ export default function beautifyGrid() {
     ) {
       const platform = String(variant?.platform || "");
       if (device === "dual") {
-        return platform === "dual";
+        if (this.isMobileBeautifyViewport()) {
+          return platform === "mobile" || platform === "dual";
+        }
+        return platform === "pc" || platform === "mobile" || platform === "dual";
       }
       if (device === "mobile") {
         return platform === "mobile" || platform === "dual";
@@ -796,6 +830,19 @@ export default function beautifyGrid() {
     },
 
     async previewPlatform(platform) {
+      if (platform === "dual") {
+        const variant = this.resolvePreferredVariantForDualTarget();
+        this.selectedVariantPlatform = "dual";
+        if (variant) {
+          this.applyActiveVariant(variant, { preservePreviewDevice: true });
+          this.syncPreviewUnavailableState({ variant, device: "dual" });
+          return;
+        }
+
+        this.setPreviewUnavailable("当前预览目标没有可用变体。");
+        return;
+      }
+
       const variant = this.resolvePreferredVariantForDevice(platform);
       if (variant) {
         this.applyActiveVariant(variant);
