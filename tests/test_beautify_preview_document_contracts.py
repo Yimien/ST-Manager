@@ -126,7 +126,7 @@ def test_build_beautify_preview_document_imports_vendor_derived_shell_artifact()
     assert 'buildVendorFirstPreviewShell' in source
 
 
-def test_vendor_derived_preview_shell_module_exposes_vendor_shell_template():
+def test_vendor_derived_preview_shell_module_exposes_full_vendored_toolbar_and_send_form_structure():
     node_script = textwrap.dedent(
         f'''
         import {{ pathToFileURL }} from 'node:url';
@@ -136,18 +136,36 @@ def test_vendor_derived_preview_shell_module_exposes_vendor_shell_template():
         }}
         const markup = shellModule.buildVendorFirstPreviewShell({{
           activeSceneId: 'daily',
-          chatMarkup: '<div>chat</div>',
-          sendFormMarkup: '<div>form</div>',
-          topBarStaticActionsMarkup: '<div>topbar</div>',
           settingsDrawerContentMarkup: '<div>settings</div>',
           formattingDrawerContentMarkup: '<div>formatting</div>',
           characterDrawerContentMarkup: '<div>character</div>',
+          chatMarkup: '<div>chat</div>',
+          sendFormClassNames: 'no-connection compact',
         }});
-        for (const token of ['id="bg1"', 'id="top-bar"', 'id="top-settings-holder"', 'id="sheld"', 'id="chat"', 'id="form_sheld"']) {{
-          if (!markup.includes(token)) throw new Error(`missing shell token: ${{token}}`);
+
+        for (const token of [
+          'id="ai-config-button"',
+          'id="sys-settings-button"',
+          'id="advanced-formatting-button"',
+          'id="WI-SP-button"',
+          'id="user-settings-button"',
+          'id="backgrounds-button"',
+          'id="extensions-settings-button"',
+          'id="persona-management-button"',
+          'id="rightNavHolder"',
+          'id="send_form"',
+          'id="leftSendForm"',
+          'id="rightSendForm"',
+        ]) {{
+          if (!markup.includes(token)) throw new Error(`missing vendored shell token: ${{token}}`);
         }}
-        for (const token of ['<div>topbar</div>', '<div>settings</div>', '<div>formatting</div>', '<div>character</div>', '<div>chat</div>', '<div>form</div>']) {{
-          if (!markup.includes(token)) throw new Error(`missing inserted slot token: ${{token}}`);
+
+        for (const token of ['<div>settings</div>', '<div>formatting</div>', '<div>character</div>', '<div>chat</div>']) {{
+          if (!markup.includes(token)) throw new Error(`missing hydrated content token: ${{token}}`);
+        }}
+
+        if (!markup.includes('class="no-connection compact"')) {{
+          throw new Error('expected vendored send form classes to be applied on #send_form');
         }}
         '''
     )
@@ -159,6 +177,18 @@ def test_vendor_derived_preview_shell_module_exposes_vendor_shell_template():
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_vendor_derived_preview_shell_module_drops_hand_built_topbar_and_send_form_slots():
+    source = VENDOR_SHELL_MODULE_PATH.read_text(encoding='utf-8')
+
+    for removed in [
+        'topBarStaticActionsMarkup',
+        'sendFormMarkup',
+        'right-drawer-anchor',
+        'st-preview-topbar-section',
+    ]:
+        assert removed not in source, f'stale shell shim remains: {removed}'
 
 
 def test_build_beautify_preview_document_exports_host_scene_catalog_contract():
@@ -346,7 +376,6 @@ def test_build_beautify_preview_document_preserves_theme_variables_and_platform_
           '--shadowWidth:3px',
           '--SmartThemeBlurStrength:var(--blurStrength)',
           '--mainFontSize:calc(var(--fontScale) * 16px)',
-          '--sheldWidth:55vw',
           '--wallpaperUrl:url("/api/beautify/preview-asset/demo.png")',
           '<title>Beautify Native ST Preview</title>',
           '<body data-st-preview-platform="mobile" class="no-timer no-timestamps no-tokenCount no-mesIDDisplay hideChatAvatars rounded-avatars bubblechat">',
@@ -372,7 +401,7 @@ def test_build_beautify_preview_theme_vars_normalizes_and_clamps_theme_inputs():
         if (vars['--blurStrength'] !== '0px') throw new Error(`expected clamped blurStrength, got ${vars['--blurStrength']}`);
         if (vars['--shadowWidth'] !== '0px') throw new Error(`expected clamped shadowWidth, got ${vars['--shadowWidth']}`);
         if (vars['--SmartThemeBlurStrength'] !== 'var(--blurStrength)') throw new Error(`expected derived SmartThemeBlurStrength, got ${vars['--SmartThemeBlurStrength']}`);
-        if (vars['--sheldWidth'] !== '100vw') throw new Error(`expected clamped sheldWidth, got ${vars['--sheldWidth']}`);
+        if ('--sheldWidth' in vars) throw new Error('preview theme vars should no longer expose sheld width');
         '''
     )
 
@@ -474,7 +503,7 @@ def test_build_beautify_preview_document_strips_protocol_relative_and_layered_re
     )
 
 
-def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
+def test_build_beautify_preview_sample_markup_contains_vendor_first_shell_surfaces():
     run_preview_document_check(
         '''
         const html = module.buildBeautifyPreviewSampleMarkup('pc');
@@ -495,25 +524,34 @@ def test_build_beautify_preview_sample_markup_contains_minimal_st_surfaces():
           'class="mes_reasoning_summary"',
           'id="form_sheld"',
           'id="send_form"',
+          'id="leftSendForm"',
+          'id="rightSendForm"',
           'id="send_textarea"',
           'id="send_but"',
+          'id="sys-settings-button"',
+          'id="WI-SP-button"',
+          'id="user-settings-button"',
+          'id="backgrounds-button"',
+          'id="extensions-settings-button"',
+          'id="persona-management-button"',
           'data-panel-target="settings"',
           'data-panel-target="formatting"',
           'data-panel-target="character"',
-          'data-preview-static-action="menu"',
-          'data-preview-static-action="api"',
-          'data-preview-static-action="world-info"',
-          'data-preview-static-action="extensions"',
-          'data-preview-static-action="moving-ui"',
-          'data-preview-static-action="notes"',
           'data-panel-surface="settings"',
           'data-panel-surface="formatting"',
           'data-panel-surface="character"',
           'class="drawer-toggle drawer-header" data-panel-target="settings"',
-          'class="drawer-toggle drawer-header" data-panel-target="formatting"',
+          'class="drawer-toggle" data-panel-target="formatting"',
           'class="drawer-toggle drawer-header" data-panel-target="character"',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+
+        for (const forbidden of [
+          'data-preview-static-action=',
+          'st-preview-topbar-action',
+        ]) {
+          if (html.includes(forbidden)) throw new Error(`unexpected legacy surrogate topbar token: ${forbidden}`);
         }
 
         const sheldIndex = html.indexOf('id="sheld"');
@@ -826,13 +864,16 @@ def test_build_beautify_preview_sample_markup_contains_st_send_form_and_textarea
         for (const token of [
           'id="send_form" class="no-connection"',
           'id="send_textarea" name="text" class="mdHotkeys"',
-          'data-i18n="[no_connection_text]Not connected to API!;[connected_text]Type a message, or /? for help"',
           'placeholder="Not connected to API!"',
           'no_connection_text="Not connected to API!"',
           'connected_text="Type a message, or /? for help"',
           'autocomplete="off"',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);
+        }
+
+        if (html.includes('data-i18n="[no_connection_text]Not connected to API!;[connected_text]Type a message, or /? for help"')) {
+          throw new Error('preview send textarea should follow vendored shell attributes instead of legacy hand-built i18n scaffolding');
         }
         '''
     )
@@ -1047,7 +1088,6 @@ def test_build_beautify_preview_document_wires_panel_toggle_script_and_default_s
           'data-active-panel="none"',
           'root.dataset.activePanel',
           'button.dataset.panelTarget',
-          "const staticButtons = Array.from(document.querySelectorAll('[data-preview-static-action]'));",
           'aria-pressed',
           "panel.classList.toggle('openDrawer', isActive);",
           "panel.classList.toggle('closedDrawer', !isActive);",
@@ -1096,16 +1136,7 @@ def test_build_beautify_preview_document_does_not_leave_unmatched_topbar_panel_t
         if (html.includes('data-panel-surface="api"')) throw new Error('unexpected api panel surface');
         if (html.includes('data-panel-surface="world-info"')) throw new Error('unexpected world info panel surface');
         if (html.includes('data-panel-surface="moving-ui"')) throw new Error('unexpected moving ui panel surface');
-        for (const token of [
-          'data-preview-static-action="menu"',
-          'data-preview-static-action="api"',
-          'data-preview-static-action="world-info"',
-          'data-preview-static-action="extensions"',
-          'data-preview-static-action="moving-ui"',
-          'data-preview-static-action="notes"',
-        ]) {
-          if (!html.includes(token)) throw new Error(`missing static topbar placeholder: ${token}`);
-        }
+        if (html.includes('data-preview-static-action=')) throw new Error('preview should not emit surrogate static topbar actions');
         '''
     )
 
@@ -1133,14 +1164,18 @@ def test_build_beautify_preview_document_styles_overlay_drawers_inside_preview_r
         '.st-preview-panel-body {',
         'min-width: 0;',
         'max-height: min(680px, calc(100vh - 160px));',
+    ]:
+        assert token in source, f'missing overlay drawer token: {token}'
+
+    for removed in [
         '#sheld {',
         'width: min(var(--sheldWidth), 100%);',
         'margin: 0 auto;',
     ]:
-        assert token in source, f'missing overlay drawer token: {token}'
+        assert removed not in source, f'legacy preview-owned sheld sizing should be removed: {removed}'
 
 
-def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_controls():
+def test_build_beautify_preview_document_binds_only_supported_drawer_controls():
     run_preview_document_check(
         '''
         const html = module.buildBeautifyPreviewDocument({ platform: 'pc' });
@@ -1150,7 +1185,6 @@ def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_co
 
         let loadHandler = null;
         let requestAnimationFrameCalls = 0;
-        const staticClickHandlers = [];
         const interactiveClickHandlers = [];
 
         const root = { dataset: { activePanel: 'none', defaultScene: 'daily' } };
@@ -1192,17 +1226,6 @@ def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_co
           };
         }
 
-        function createStaticButton(action) {
-          return {
-            dataset: { previewStaticAction: action },
-            addEventListener(type, handler) {
-              if (type === 'click') {
-                staticClickHandlers.push({ action, handler });
-              }
-            },
-          };
-        }
-
         function createPanelButton(panelTarget) {
           return {
             dataset: { panelTarget },
@@ -1219,7 +1242,6 @@ def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_co
           };
         }
 
-        const staticButtons = [createStaticButton('menu'), createStaticButton('notes')];
         const panelButtons = [createPanelButton('settings')];
 
         const document = {
@@ -1235,7 +1257,6 @@ def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_co
           },
           querySelectorAll(selector) {
             if (selector === '[data-panel-target]') return panelButtons;
-            if (selector === '[data-preview-static-action]') return staticButtons;
             if (selector === '[data-panel-surface]' || selector === '[data-panel-shell]' || selector === '.inline-drawer' || selector === '[data-preview-scene-button]' || selector === '[data-preview-link="disabled"]') {
               return [];
             }
@@ -1265,29 +1286,17 @@ def test_build_beautify_preview_document_binds_static_toolbar_buttons_as_noop_co
         const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
         runScript(document, window, CustomEvent);
 
-        if (staticClickHandlers.length !== 2) throw new Error(`expected two static button handlers, got ${staticClickHandlers.length}`);
         if (interactiveClickHandlers.length !== 1) throw new Error(`expected one interactive panel handler, got ${interactiveClickHandlers.length}`);
         if (typeof loadHandler !== 'function') throw new Error('preview script did not bind load handler');
         if (requestAnimationFrameCalls === 0) throw new Error('preview script did not schedule initial chat scroll');
 
-        const event = {
-          defaultPrevented: false,
-          preventDefault() {
-            this.defaultPrevented = true;
-          },
-          stopPropagationCalled: false,
-          stopPropagation() {
-            this.stopPropagationCalled = true;
-          },
-        };
+        interactiveClickHandlers[0].handler();
 
-        staticClickHandlers[0].handler(event);
-
-        if (!event.defaultPrevented) throw new Error('static toolbar button should prevent default');
-        if (!event.stopPropagationCalled) throw new Error('static toolbar button should stop propagation');
-        if (root.dataset.activePanel !== 'none') throw new Error(`static toolbar button should not activate a panel, got ${root.dataset.activePanel}`);
-        if (Object.prototype.hasOwnProperty.call(root.dataset, 'previewStaticAction')) {
-          throw new Error('static toolbar button should not mutate preview placeholder state');
+        if (root.dataset.activePanel !== 'settings') {
+          throw new Error(`supported drawer control should activate its panel, got ${root.dataset.activePanel}`);
+        }
+        if (panelButtons[0].attributes['aria-pressed'] !== 'true') {
+          throw new Error(`supported drawer control should set aria-pressed, got ${panelButtons[0].attributes['aria-pressed']}`);
         }
         '''
     )

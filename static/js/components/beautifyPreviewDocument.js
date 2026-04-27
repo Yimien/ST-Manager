@@ -86,10 +86,6 @@ function clampMin(value, minimum) {
   return Math.max(value, minimum);
 }
 
-function clampRange(value, minimum, maximum) {
-  return Math.min(Math.max(value, minimum), maximum);
-}
-
 function buildPreviewBodyClasses(theme = {}) {
   const classes = [];
 
@@ -191,20 +187,6 @@ function serializeCssVars(vars) {
     )
     .map(([key, value]) => `${key}:${escapeCssText(value)}`)
     .join(";");
-}
-
-function buildTopBarStaticAction(label, action, iconClass, iconFallback) {
-  return `
-    <button
-      type="button"
-      class="drawer-icon closedIcon st-preview-topbar-action ${escapeHtml(iconClass)}"
-      data-preview-static-action="${escapeHtml(action)}"
-      data-icon-fallback="${escapeHtml(iconFallback)}"
-      aria-disabled="true"
-      tabindex="-1"
-      title="${escapeHtml(label)}"
-    ></button>
-  `;
 }
 
 function buildMessageActions() {
@@ -567,7 +549,6 @@ function buildPreviewBehaviorScript() {
       const root = document.querySelector('.st-preview-root');
       if (!root) return;
       const buttons = Array.from(document.querySelectorAll('[data-panel-target]'));
-      const staticButtons = Array.from(document.querySelectorAll('[data-preview-static-action]'));
       const panels = Array.from(document.querySelectorAll('.drawer-content[data-panel-surface]'));
       const drawers = Array.from(document.querySelectorAll('.inline-drawer'));
 
@@ -648,15 +629,6 @@ function buildPreviewBehaviorScript() {
         });
       });
 
-      staticButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-          }
-        });
-      });
-
       drawers.forEach((drawer) => {
         const toggle = drawer.querySelector(':scope > .inline-drawer-toggle');
         if (!toggle) return;
@@ -683,7 +655,6 @@ export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "") {
   })();
   const blurStrength = clampMin(normalizeNumber(theme.blur_strength, 10), 0);
   const shadowWidth = clampMin(normalizeNumber(theme.shadow_width, 2), 0);
-  const chatWidth = clampRange(normalizeNumber(theme.chat_width, 50), 25, 100);
   const safeWallpaperUrl = wallpaperUrl
     ? `url("${escapeCssUrl(wallpaperUrl)}")`
     : "none";
@@ -711,7 +682,6 @@ export function buildBeautifyPreviewThemeVars(theme = {}, wallpaperUrl = "") {
     "--shadowWidth": `${shadowWidth}px`,
     "--SmartThemeBlurStrength": "var(--blurStrength)",
     "--mainFontSize": "calc(var(--fontScale) * 16px)",
-    "--sheldWidth": `${chatWidth}vw`,
     "--wallpaperUrl": safeWallpaperUrl,
   };
 }
@@ -735,39 +705,18 @@ export function buildBeautifyPreviewSampleMarkup(
     sendFormClasses.push("compact");
   }
 
-  const sendFormClassAttr = sendFormClasses.length
-    ? ` class="${sendFormClasses.join(" ")}"`
-    : "";
-  const noConnectionText = "Not connected to API!";
-  const connectedText = "Type a message, or /? for help";
-  const topBarStaticActionsMarkup = `
-    ${buildTopBarStaticAction("Menu / Options", "menu", "fa-solid fa-bars fa-fw", "Menu")}
-    ${buildTopBarStaticAction("API Connections", "api", "fa-solid fa-plug fa-fw", "API")}
-    ${buildTopBarStaticAction("World Info", "world-info", "fa-solid fa-globe fa-fw", "WI")}
-    ${buildTopBarStaticAction("Extensions", "extensions", "fa-solid fa-puzzle-piece fa-fw", "Ext")}
-    ${buildTopBarStaticAction("Moving UI", "moving-ui", "fa-solid fa-up-down-left-right fa-fw", "Move")}
-    ${buildTopBarStaticAction("Notes", "notes", "fa-solid fa-notebook fa-fw", "Note")}
-  `;
   const settingsDrawerContentMarkup = buildSettingsDrawerPreviewMarkup();
   const formattingDrawerContentMarkup = buildFormattingDrawerPreviewMarkup();
   const characterDrawerContentMarkup = buildCharacterDrawerPreviewMarkup(previewIdentities);
   const chatMarkup = buildPreviewSceneMessages(selectedScene, previewIdentities);
-  const sendFormMarkup = `
-    <div id="dialogue_del_mes"><div id="dialogue_del_mes_ok" class="menu_button">Delete</div><div id="dialogue_del_mes_cancel" class="menu_button">Cancel</div></div>
-    <div id="send_form"${sendFormClassAttr}>
-      <form id="file_form" class="wide100p displayNone"><div class="file_attached"><input id="file_form_input" type="file" multiple hidden><input id="embed_file_input" type="file" multiple hidden><i class="fa-solid fa-file-alt"></i><span class="file_name">File Name</span><span class="file_size">File Size</span><button id="file_form_reset" type="reset" class="menu_button" title="Remove the file"><i class="fa fa-times"></i></button></div></form>
-      <div id="nonQRFormItems"><div id="leftSendForm" class="alignContentCenter"><div id="options_button" class="fa-solid fa-bars interactable" data-icon-fallback="≡" aria-label="Options"></div></div><textarea id="send_textarea" name="text" class="mdHotkeys" data-i18n="[no_connection_text]${escapeHtml(noConnectionText)};[connected_text]${escapeHtml(connectedText)}" placeholder="${escapeHtml(noConnectionText)}" no_connection_text="${escapeHtml(noConnectionText)}" connected_text="${escapeHtml(connectedText)}" autocomplete="off"></textarea><div id="rightSendForm" class="alignContentCenter"><div id="stscript_continue" title="Continue script execution" class="stscript_btn stscript_continue"><i class="fa-solid fa-play"></i></div><div id="stscript_pause" title="Pause script execution" class="stscript_btn stscript_pause"><i class="fa-solid fa-pause"></i></div><div id="stscript_stop" title="Abort script execution" class="stscript_btn stscript_stop"><i class="fa-solid fa-stop"></i></div><div id="mes_stop" title="Abort request" class="mes_stop"><i class="fa-solid fa-circle-stop"></i></div><div id="mes_impersonate" class="fa-solid fa-user-secret interactable displayNone" title="Ask AI to write your message for you" tabindex="0"></div><div id="mes_continue" class="fa-fw fa-solid fa-arrow-right interactable displayNone" title="Continue the last message" data-icon-fallback=">" aria-label="Continue"></div><div id="send_but" class="fa-solid fa-paper-plane interactable displayNone" title="Send a message" data-icon-fallback="➤" aria-label="Send"></div></div></div>
-    </div>
-  `;
 
   return buildVendorFirstPreviewShell({
     activeSceneId: escapeHtml(selectedScene.id),
-    topBarStaticActionsMarkup,
     settingsDrawerContentMarkup,
     formattingDrawerContentMarkup,
     characterDrawerContentMarkup,
     chatMarkup,
-    sendFormMarkup,
+    sendFormClassNames: sendFormClasses.join(' '),
   });
 }
 
@@ -901,11 +850,6 @@ ${stylesheetMarkup}
       .st-preview-root[data-active-panel='character'] [data-panel-surface='character'] {
         display: block;
         pointer-events: auto;
-      }
-
-      #sheld {
-        width: min(var(--sheldWidth), 100%);
-        margin: 0 auto;
       }
 
       .flex-container {
