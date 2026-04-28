@@ -218,19 +218,49 @@ def run_preview_drawer_adapter_check(script_body: str) -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_settings_drawer_adapter_keeps_core_sampling_controls_and_marks_preview_disabled_actions():
+def test_settings_drawer_adapter_curates_stacked_first_screen_layout():
     run_preview_drawer_adapter_check(
         '''
         const markup = module.buildSettingsDrawerPreviewMarkupFromVendor({ theme: {} });
         const hasAttributes = (tag, attributes) => attributes.every((attribute) => tag.includes(attribute));
 
         for (const token of [
-          'id="amount_gen"',
-          'id="max_context"',
-          'id="kobold_order"',
-          'id="samplers_order_recommended"',
+          'id="clickSlidersTips"',
+          'id="labModeWarning"',
+          'id="kobold_api-presets"',
+          'id="amount_gen_block"',
+          'id="max_context_block"',
+          'id="kobold_api-settings"',
         ]) {
           if (!markup.includes(token)) throw new Error(`missing preserved settings token: ${token}`);
+        }
+
+        const responseConfigurationMatch = markup.match(/<[^>]*id="ai_response_configuration"[^>]*>/);
+        if (!responseConfigurationMatch) {
+          throw new Error('missing ai_response_configuration opening tag');
+        }
+        if (!responseConfigurationMatch[0].includes('style="display: flex; flex-direction: column; gap: 10px;"')) {
+          throw new Error('expected stacked first-screen layout styles on ai_response_configuration');
+        }
+
+        for (const hiddenSectionId of ['ai_module_block_novel', 'prompt_cost_block']) {
+          const match = markup.match(new RegExp(`<[^>]*id="${hiddenSectionId}"[^>]*>`));
+          if (!match) throw new Error(`missing hidden section opening tag: ${hiddenSectionId}`);
+          if (!match[0].includes('style="display: none;"')) {
+            throw new Error(`expected hidden section style on ${hiddenSectionId}`);
+          }
+        }
+
+        const sectionIndexes = [
+          'id="kobold_api-presets"',
+          'id="amount_gen_block"',
+          'id="kobold_api-settings"',
+        ].map((token) => markup.indexOf(token));
+        if (sectionIndexes.some((index) => index === -1)) {
+          throw new Error('missing settings section required for first-screen order assertion');
+        }
+        if (!(sectionIndexes[0] < sectionIndexes[1] && sectionIndexes[1] < sectionIndexes[2])) {
+          throw new Error('expected settings first-screen section order to remain presets -> amount_gen_block -> kobold_api-settings');
         }
 
         if (!markup.includes('data-preview-disabled="true"')) {
@@ -791,6 +821,53 @@ def test_build_beautify_preview_document_assembles_vendor_drawers_with_preview_s
           'A &lt;b&gt;preview&lt;/b&gt; description',
         ]) {
           if (!html.includes(token)) throw new Error(`missing assembled vendor drawer token: ${token}`);
+        }
+        '''
+    )
+
+
+def test_build_beautify_preview_document_keeps_curated_settings_first_screen_structure():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        for (const token of [
+          'id="clickSlidersTips"',
+          'id="labModeWarning"',
+          'id="kobold_api-presets"',
+          'id="amount_gen_block"',
+          'id="max_context_block"',
+          'id="kobold_api-settings"',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing preserved settings token in final document: ${token}`);
+        }
+
+        const responseConfigurationMatch = html.match(/<[^>]*id="ai_response_configuration"[^>]*>/);
+        if (!responseConfigurationMatch) {
+          throw new Error('missing ai_response_configuration opening tag in final document');
+        }
+        if (!responseConfigurationMatch[0].includes('style="display: flex; flex-direction: column; gap: 10px;"')) {
+          throw new Error('expected stacked first-screen layout styles on ai_response_configuration in final document');
+        }
+
+        for (const hiddenSectionId of ['ai_module_block_novel', 'prompt_cost_block']) {
+          const match = html.match(new RegExp(`<[^>]*id="${hiddenSectionId}"[^>]*>`));
+          if (!match) throw new Error(`missing hidden section opening tag in final document: ${hiddenSectionId}`);
+          if (!match[0].includes('style="display: none;"')) {
+            throw new Error(`expected hidden section style in final document on ${hiddenSectionId}`);
+          }
+        }
+
+        const sectionIndexes = [
+          'id="kobold_api-presets"',
+          'id="amount_gen_block"',
+          'id="kobold_api-settings"',
+        ].map((token) => html.indexOf(token));
+        if (sectionIndexes.some((index) => index === -1)) {
+          throw new Error('missing final document settings section required for first-screen order assertion');
+        }
+        if (!(sectionIndexes[0] < sectionIndexes[1] && sectionIndexes[1] < sectionIndexes[2])) {
+          throw new Error('expected final document settings first-screen section order to remain presets -> amount_gen_block -> kobold_api-settings');
         }
         '''
     )

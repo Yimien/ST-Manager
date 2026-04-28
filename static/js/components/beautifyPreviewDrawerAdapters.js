@@ -89,6 +89,12 @@ export function buildSettingsDrawerPreviewMarkupFromVendor({ theme = {}, vendorM
 
     let markup = vendorMarkup;
 
+    markup = addAttributesToOpeningTag(markup, 'id="ai_response_configuration"', {
+        style: 'display: flex; flex-direction: column; gap: 10px;',
+    });
+    markup = addAttributesToOpeningTag(markup, 'id="ai_module_block_novel"', { style: 'display: none;' });
+    markup = addAttributesToOpeningTag(markup, 'id="prompt_cost_block"', { style: 'display: none;' });
+
     for (const selector of [
         'data-preset-manager-import="kobold"',
         'data-preset-manager-export="kobold"',
