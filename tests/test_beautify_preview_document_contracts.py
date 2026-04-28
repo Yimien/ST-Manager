@@ -349,31 +349,22 @@ def test_drawer_adapters_consume_vendor_markup_overrides_when_provided():
         }
 
         const characterMarkup = module.buildCharacterDrawerPreviewMarkupFromVendor({
-          identities: { character: { name: 'Override Hero' } },
+          identities: { character: { name: 'Override Hero', avatarSrc: '/static/img/override-hero.webp' } },
           detail: {
             packageName: 'Override Package',
-            description: 'Override Description',
-            firstMessage: 'Override First Message',
-            notes: 'Override Notes',
-            tags: ['override-tag'],
+            description: 'Override <b>Description</b>',
           },
           vendorMarkup: `
             <section data-override="character">
-              <div id="rm_button_selected_ch"></div>
-              <div id="result_info"></div>
-              <input id="character_name_pole">
-              <textarea id="description_textarea"></textarea>
-              <textarea id="firstmessage_textarea"></textarea>
-              <div id="tagList" class="tags"></div>
+              <div id="character_search_bar"></div>
               <div id="rm_print_characters_block" class="flexFlowColumn"></div>
               <div id="rm_button_search" class="search-btn"></div>
               <div id="charListGridToggle" class="grid-btn"></div>
-              <div id="rm_button_back" class="back-btn"></div>
               <div id="rm_button_create"></div>
               <div id="rm_ch_create_block"></div>
+              <div id="rm_group_chats_block"></div>
+              <div id="rm_character_import"></div>
               <div id="rm_characters_block"></div>
-              <div id="hidden-divs"></div>
-              <!-- these divs are invisible and used for server communication purposes -->
             </section>`,
         });
         if (!characterMarkup.includes('data-override="character"')) {
@@ -385,14 +376,29 @@ def test_drawer_adapters_consume_vendor_markup_overrides_when_provided():
         if (!characterMarkup.includes('Override Hero')) {
           throw new Error('character adapter should still inject identity data into override markup');
         }
-        if (!characterMarkup.includes('data-preview-action="show-detail"')) {
-          throw new Error('character adapter should still inject preview hooks into override markup');
+        for (const token of [
+          'data-preview-character-card="primary"',
+          '/static/img/override-hero.webp',
+          'Override Package',
+          'Override &lt;b&gt;Description&lt;/b&gt;',
+          'data-preview-action="toggle-search"',
+          'data-preview-action="toggle-grid"',
+        ]) {
+          if (!characterMarkup.includes(token)) throw new Error(`missing override character token: ${token}`);
+        }
+        for (const forbidden of [
+          'data-preview-action="show-detail"',
+          'data-preview-action="show-list"',
+          'id="personality_textarea"',
+          'id="creator_notes_textarea"',
+        ]) {
+          if (characterMarkup.includes(forbidden)) throw new Error(`unexpected override character token: ${forbidden}`);
         }
         '''
     )
 
 
-def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hooks():
+def test_character_drawer_adapter_reduces_to_static_list_home_preview():
     run_preview_drawer_adapter_check(
         '''
         const hasAttributes = (tag, attributes) => attributes.every((attribute) => tag.includes(attribute));
@@ -406,18 +412,16 @@ def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hook
           detail: {
             packageName: 'Demo Package',
             description: 'A <b>preview</b> description',
-            firstMessage: 'Hello there',
-            personality: 'Calm and observant',
-            notes: 'Internal notes',
-            tags: ['alpha', 'beta'],
           },
         });
 
         for (const token of [
           'id="rm_characters_block"',
-          'id="rm_ch_create_block"',
           'id="character_search_bar"',
+          'id="rm_print_characters_block"',
           'data-preview-character-card="primary"',
+          '/static/img/preview-hero.webp',
+          'Preview Hero',
           'Demo Package',
           'A &lt;b&gt;preview&lt;/b&gt; description',
           'data-preview-disabled="true"',
@@ -426,16 +430,11 @@ def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hook
         }
 
         for (const token of [
-          'id="rm_button_selected_ch"',
-          'id="character_name_pole"',
-          'id="description_textarea"',
-          'id="firstmessage_textarea"',
-          'id="personality_textarea"',
-          'id="creator_notes_textarea"',
-          'id="tagList"',
           'id="rm_button_search"',
           'id="charListGridToggle"',
-          'id="rm_button_back"',
+          'id="rm_ch_create_block"',
+          'id="rm_group_chats_block"',
+          'id="rm_character_import"',
         ]) {
           if (!markup.includes(token)) throw new Error(`missing character control token: ${token}`);
         }
@@ -443,9 +442,9 @@ def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hook
         for (const [selector, attributes] of [
           ['id="rm_button_search"', ['data-preview-action="toggle-search"']],
           ['id="charListGridToggle"', ['data-preview-action="toggle-grid"']],
-          ['id="rm_button_back"', ['data-preview-action="show-list"']],
-          ['data-preview-character-card="primary"', ['data-preview-action="show-detail"']],
           ['id="rm_ch_create_block"', ['style="display: none;"']],
+          ['id="rm_group_chats_block"', ['style="display: none;"']],
+          ['id="rm_character_import"', ['style="display: none;"']],
           ['id="rm_characters_block"', ['style="display: block;"']],
         ]) {
           const match = markup.match(new RegExp(`<[^>]*${selector}[^>]*>`));
@@ -455,53 +454,13 @@ def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hook
           }
         }
 
-        const selectedCharacterStart = markup.indexOf('<div id="rm_button_selected_ch">');
-        const selectedCharacterEnd = markup.indexOf('<div id="result_info"', selectedCharacterStart);
-        if (selectedCharacterStart === -1 || selectedCharacterEnd === -1) {
-          throw new Error('missing selected character wrapper block');
-        }
-
-        const selectedCharacterBlock = markup.slice(selectedCharacterStart, selectedCharacterEnd);
-        if (!selectedCharacterBlock.includes('<h2 class="interactable">Preview Hero</h2>')) {
-          throw new Error('expected selected character wrapper to contain injected h2');
-        }
-        if (!markup.includes('value="Preview Hero"')) {
-          throw new Error('expected detail name field to come from identities.character.name');
-        }
-        if (!markup.includes('>Hello there</textarea>')) {
-          throw new Error('expected first message field to come from detail.firstMessage');
-        }
-        if (!markup.includes('>Internal notes</textarea>')) {
-          throw new Error('expected creator notes field to come from detail.notes');
-        }
-        if ((selectedCharacterBlock.match(/<h2\\b/g) || []).length !== 1) {
-          throw new Error('expected exactly one h2 in selected character wrapper');
-        }
-        if ((selectedCharacterBlock.match(/<\/h2>/g) || []).length !== 1) {
-          throw new Error('expected exactly one closing h2 in selected character wrapper');
-        }
-        if (!markup.includes(`'<div id="rm_button_selected_ch">`.slice(1, -1))) {
-          throw new Error('selected character wrapper opening tag is missing');
-        }
-        if (!selectedCharacterBlock.trimEnd().endsWith('</div>')) {
-          throw new Error('selected character wrapper markup was corrupted');
-        }
-
-        const firstMessageIndex = markup.indexOf('id="firstmessage_textarea"');
-        const personalityIndex = markup.indexOf('id="personality_textarea"');
-        const creatorNotesIndex = markup.indexOf('id="creator_notes_textarea"');
-        const hiddenDivsIndex = markup.indexOf('id="hidden-divs"');
-
-        if (firstMessageIndex === -1 || personalityIndex === -1 || creatorNotesIndex === -1 || hiddenDivsIndex === -1) {
-          throw new Error('missing expected character editor structure token');
-        }
-        if (!(firstMessageIndex < personalityIndex && personalityIndex < creatorNotesIndex && creatorNotesIndex < hiddenDivsIndex)) {
-          throw new Error('personality and creator notes were not inserted between first message and hidden divs');
-        }
-
-        const betweenFirstMessageAndHiddenDivs = markup.slice(firstMessageIndex, hiddenDivsIndex);
-        if (!betweenFirstMessageAndHiddenDivs.includes('</div>')) {
-          throw new Error('expected preserved wrapper closing structure before hidden divs');
+        for (const forbidden of [
+          'data-preview-action="show-detail"',
+          'data-preview-action="show-list"',
+          'id="personality_textarea"',
+          'id="creator_notes_textarea"',
+        ]) {
+          if (markup.includes(forbidden)) throw new Error(`unexpected character preview token: ${forbidden}`);
         }
         '''
     )
@@ -785,7 +744,7 @@ def test_build_beautify_preview_document_imports_vendor_drawers_through_adapter_
         assert removed not in source, f'legacy local drawer helper remains: {removed}'
 
 
-def test_build_beautify_preview_document_assembles_vendor_drawers_with_preview_safe_character_hooks():
+def test_build_beautify_preview_document_assembles_vendor_drawers_with_static_character_landing_state():
     run_preview_document_check(
         '''
         const html = module.buildBeautifyPreviewDocument({
@@ -800,10 +759,6 @@ def test_build_beautify_preview_document_assembles_vendor_drawers_with_preview_s
           detail: {
             packageName: 'Demo Package',
             description: 'A <b>preview</b> description',
-            firstMessage: 'Hello there',
-            personality: 'Calm and observant',
-            notes: 'Internal notes',
-            tags: ['alpha', 'beta'],
           },
         });
 
@@ -811,17 +766,35 @@ def test_build_beautify_preview_document_assembles_vendor_drawers_with_preview_s
           'id="amount_gen"',
           'id="sysprompt_select"',
           'id="rm_characters_block"',
+          'id="character_search_bar"',
+          'id="rm_print_characters_block"',
           'data-preview-character-card="primary"',
           'data-preview-disabled="true"',
-          'data-preview-action="show-detail"',
+          'data-preview-action="toggle-search"',
+          'data-preview-action="toggle-grid"',
+          '/static/img/preview-hero.webp',
+          'Preview Hero',
           'Demo Package',
-          'alpha',
-          'beta',
-          'Internal notes',
           'A &lt;b&gt;preview&lt;/b&gt; description',
-        ]) {
-          if (!html.includes(token)) throw new Error(`missing assembled vendor drawer token: ${token}`);
-        }
+            ]) {
+              if (!html.includes(token)) throw new Error(`missing assembled vendor drawer token: ${token}`);
+            }
+
+            const characterPanelStart = html.indexOf('data-panel-surface="character"');
+            const characterPanelEnd = html.indexOf('id="form_sheld"', characterPanelStart);
+            if (characterPanelStart === -1 || characterPanelEnd === -1) {
+              throw new Error('missing character drawer panel bounds in final document');
+            }
+            const characterPanelMarkup = html.slice(characterPanelStart, characterPanelEnd);
+
+            for (const forbidden of [
+              'data-preview-action="show-detail"',
+              'data-preview-action="show-list"',
+              'id="personality_textarea"',
+              'id="creator_notes_textarea"',
+            ]) {
+              if (characterPanelMarkup.includes(forbidden)) throw new Error(`unexpected assembled vendor drawer token: ${forbidden}`);
+            }
         '''
     )
 
