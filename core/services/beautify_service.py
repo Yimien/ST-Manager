@@ -13,6 +13,7 @@ from PIL import UnidentifiedImageError
 from core.config import get_beautify_folder
 from core.data.ui_store import (
     get_beautify_library,
+    get_last_sent_to_st,
     load_ui_data,
     save_ui_data,
     set_beautify_library,
@@ -266,16 +267,22 @@ class BeautifyService:
         return sorted(packages, key=lambda item: (-(item.get('updated_at') or 0), item['name'].lower()))
 
     def get_package(self, package_id: str):
-        library = self.load_library()
-        package = library.get('packages', {}).get(str(package_id or '').strip())
+        ui_data = self._load_ui_data()
+        library = self._load_library_state(ui_data)
+        resolved_package_id = str(package_id or '').strip()
+        package = library.get('packages', {}).get(resolved_package_id)
         if not package:
             return None
 
         result = copy.deepcopy(package)
-        shared_items = (self._load_shared_wallpaper_library(self._load_ui_data()).get('items') or {})
+        shared_items = (self._load_shared_wallpaper_library(ui_data).get('items') or {})
         wallpapers = {}
         for variant_id, variant in result.get('variants', {}).items():
             variant['theme_data'] = self._load_theme_data(variant.get('theme_file', ''))
+            variant['last_sent_to_st'] = get_last_sent_to_st(
+                ui_data,
+                self.get_variant_send_state_key(resolved_package_id, variant_id),
+            )
             for wallpaper_id in list(variant.get('wallpaper_ids', [])):
                 wallpaper = shared_items.get(wallpaper_id)
                 if wallpaper:
@@ -283,6 +290,36 @@ class BeautifyService:
             result['variants'][variant_id] = variant
         result['wallpapers'] = wallpapers
         return result
+
+    def get_variant_send_state_key(self, package_id: str, variant_id: str):
+        resolved_package_id = str(package_id or '').strip()
+        resolved_variant_id = str(variant_id or '').strip()
+        return f'beautify::package::{resolved_package_id}::variant::{resolved_variant_id}'
+
+    def build_sendable_theme_bundle(self, package_id: str, variant_id: str):
+        package_detail = self.get_package(package_id)
+        if not package_detail:
+            raise LookupError('美化包不存在')
+
+        resolved_variant_id = str(variant_id or '').strip()
+        variant = copy.deepcopy((package_detail.get('variants') or {}).get(resolved_variant_id))
+        if not variant:
+            raise LookupError('变体不存在')
+
+        theme_data = copy.deepcopy(variant.get('theme_data') or {})
+        if not theme_data:
+            raise ValueError('当前变体缺少可发送的主题数据')
+
+        theme_name = str(theme_data.get('name') or '').strip()
+        if not theme_name:
+            raise ValueError('当前变体主题缺少 name，无法发送到 ST')
+
+        theme_data['name'] = theme_name
+        return {
+            'package': copy.deepcopy(package_detail),
+            'variant': variant,
+            'theme_data': theme_data,
+        }
 
     def import_theme(self, source_path: str, package_id: Optional[str] = None, platform: Optional[str] = None, source_name: Optional[str] = None):
         if not source_path or not os.path.isfile(source_path):

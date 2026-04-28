@@ -96,6 +96,7 @@ def run_beautify_grid_runtime_check(script_body):
         const importSharedPreviewWallpaperForBeautify = getGridStub('importSharedPreviewWallpaperForBeautify', async () => ({{ success: true, item: null }}));
         const importBeautifyWallpaper = getGridStub('importBeautifyWallpaper', async () => ({{ success: true, wallpaper: {{ id: '' }} }}));
         const listBeautifyPackages = getGridStub('listBeautifyPackages', async () => ({{ success: true, items: [] }}));
+        const sendBeautifyThemeToSt = getGridStub('sendBeautifyThemeToSt', async () => ({{ success: true, last_sent_to_st: '' }}));
         const selectSharedPreviewWallpaperForBeautify = getGridStub('selectSharedPreviewWallpaperForBeautify', async () => ({{ success: true, wallpaper: null }}));
         const updateBeautifyPackageIdentities = getGridStub('updateBeautifyPackageIdentities', async () => ({{ success: true, item: {{}} }}));
         const updateBeautifySettings = getGridStub('updateBeautifySettings', async () => ({{ success: true, item: null }}));
@@ -476,6 +477,77 @@ def test_beautify_api_exports_shared_preview_wallpaper_helpers():
     assert 'selection_target: "preview"' in beautify_api
 
 
+def test_beautify_api_exposes_send_theme_to_st_helper_contract():
+    beautify_api = read_project_file('static/js/api/beautify.js')
+
+    assert_contains_any(
+        beautify_api,
+        (
+            'export async function sendBeautifyThemeToSt(payload = {})',
+            'export async function sendBeautifyThemeToSt(payload={})',
+        ),
+    )
+    assert '/api/beautify/send-theme-to-st' in beautify_api
+    assert_contains_any(
+        beautify_api,
+        (
+            'method: "POST"',
+            "method: 'POST'",
+        ),
+    )
+    assert_contains_any(
+        beautify_api,
+        (
+            'headers: { "Content-Type": "application/json" }',
+            "headers: { 'Content-Type': 'application/json' }",
+        ),
+    )
+    assert_contains_any(
+        beautify_api,
+        (
+            'body: JSON.stringify(payload || {})',
+            'body: JSON.stringify(payload||{})',
+        ),
+    )
+
+
+def test_beautify_template_exposes_send_theme_to_st_button_contract():
+    template = read_project_file('templates/components/grid_beautify.html')
+
+    assert re.search(
+        r'''<template\s+x-if="activeVariant">[\s\S]*?<button[\s\S]*?>[\s\S]*?发送主题到 ST[\s\S]*?</button>[\s\S]*?</template>''',
+        template,
+        re.DOTALL,
+    )
+    assert '@click="sendActiveThemeToST()"' in template
+    assert ':title="getActiveVariantSendToSTTitle()"' in template
+    assert ':disabled="isActionLoading || !canSendActiveVariantToST()"' in template
+
+
+def test_beautify_grid_js_exposes_send_theme_to_st_contracts():
+    grid_source = read_project_file('static/js/components/beautifyGrid.js')
+
+    assert_contains_any(
+        grid_source,
+        (
+            'sendBeautifyThemeToSt,',
+            'sendBeautifyThemeToSt,\n',
+        ),
+    )
+    for token in (
+        'canSendActiveVariantToST()',
+        'getActiveVariantSendToSTTitle()',
+        'applyActiveVariantSentState(lastSentToSt)',
+        'async sendActiveThemeToST()',
+        'this.$store.global.beautifyActiveVariant.last_sent_to_st = lastSentToSt;',
+        'sendBeautifyThemeToSt({',
+        "throw new Error(res?.error || '发送主题到 ST 失败');",
+        'this.applyActiveVariantSentState(res.last_sent_to_st);',
+        'this.$store.global.showToast("🚀 主题已发送到 ST 并设为当前主题", 2200);',
+    ):
+        assert token in grid_source
+
+
 def test_beautify_api_removes_install_and_apply_client_exports():
     beautify_api = read_project_file('static/js/api/beautify.js')
 
@@ -509,6 +581,231 @@ def test_beautify_grid_removes_install_and_apply_selection_methods():
     assert 'set installFilter(val)' not in grid_source
     assert 'item.install_state' not in grid_source
     assert 'beautifyInstallFilter' not in grid_source
+
+
+def test_beautify_grid_runtime_send_active_theme_updates_active_variant_timestamp():
+    run_beautify_grid_runtime_check(
+        '''
+        const payloads = [];
+        const toastCalls = [];
+        globalThis.__gridStubs = {
+          sendBeautifyThemeToSt: async (payload) => {
+            payloads.push(payload);
+            return {
+              success: true,
+              last_sent_to_st: '2026-04-28T12:34:56Z',
+            };
+          },
+        };
+
+        const variantInDetail = {
+          id: 'var_1',
+          platform: 'pc',
+          wallpaper_ids: [],
+          selected_wallpaper_id: '',
+          last_sent_to_st: '2025-01-01T00:00:00Z',
+          theme_data: { name: 'Blue Theme' },
+        };
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifySelectedPackageId: 'pkg_1',
+            beautifyActiveDetail: {
+              id: 'pkg_1',
+              variants: {
+                var_1: variantInDetail,
+              },
+            },
+            beautifyActiveVariant: {
+              id: 'var_1',
+              platform: 'pc',
+              wallpaper_ids: [],
+              selected_wallpaper_id: '',
+              last_sent_to_st: '2025-01-01T00:00:00Z',
+              theme_data: { name: 'Blue Theme' },
+            },
+            showToast: (...args) => toastCalls.push(args),
+          },
+        };
+
+        const pending = component.sendActiveThemeToST();
+        if (component.isActionLoading !== true) {
+          throw new Error('expected sendActiveThemeToST to set isActionLoading while request is pending');
+        }
+        await pending;
+
+        if (component.isActionLoading !== false) {
+          throw new Error('expected sendActiveThemeToST to clear isActionLoading after success');
+        }
+        if (payloads.length !== 1) {
+          throw new Error(`expected one send payload, got ${payloads.length}`);
+        }
+        if (payloads[0].package_id !== 'pkg_1' || payloads[0].variant_id !== 'var_1') {
+          throw new Error(`unexpected send payload: ${JSON.stringify(payloads[0])}`);
+        }
+        if (component.$store.global.beautifyActiveVariant.last_sent_to_st !== '2026-04-28T12:34:56Z') {
+          throw new Error(`expected active variant timestamp to update, got ${component.$store.global.beautifyActiveVariant.last_sent_to_st}`);
+        }
+        if (component.$store.global.beautifyActiveDetail.variants.var_1.last_sent_to_st !== '2026-04-28T12:34:56Z') {
+          throw new Error(`expected active detail variant timestamp to update, got ${component.$store.global.beautifyActiveDetail.variants.var_1.last_sent_to_st}`);
+        }
+        if (toastCalls.length !== 1 || toastCalls[0][0] !== '🚀 主题已发送到 ST 并设为当前主题') {
+          throw new Error(`expected success toast, got ${JSON.stringify(toastCalls)}`);
+        }
+        '''
+    )
+
+
+def test_beautify_grid_runtime_send_active_theme_does_not_stamp_new_selection_after_switch():
+    run_beautify_grid_runtime_check(
+        '''
+        const payloads = [];
+        const toastCalls = [];
+        let resolveSend;
+        globalThis.__gridStubs = {
+          sendBeautifyThemeToSt: (payload) => {
+            payloads.push(payload);
+            return new Promise((resolve) => {
+              resolveSend = () => resolve({
+                success: true,
+                last_sent_to_st: '2026-04-28T12:34:56Z',
+              });
+            });
+          },
+        };
+
+        const sentVariant = {
+          id: 'var_1',
+          platform: 'pc',
+          wallpaper_ids: [],
+          selected_wallpaper_id: '',
+          last_sent_to_st: '2025-01-01T00:00:00Z',
+          theme_data: { name: 'Blue Theme' },
+        };
+        const nextVariant = {
+          id: 'var_2',
+          platform: 'mobile',
+          wallpaper_ids: [],
+          selected_wallpaper_id: '',
+          last_sent_to_st: '2025-02-02T00:00:00Z',
+          theme_data: { name: 'Green Theme' },
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifySelectedPackageId: 'pkg_1',
+            beautifyActiveDetail: {
+              id: 'pkg_1',
+              variants: {
+                var_1: sentVariant,
+              },
+            },
+            beautifyActiveVariant: {
+              ...sentVariant,
+            },
+            showToast: (...args) => toastCalls.push(args),
+          },
+        };
+
+        const pending = component.sendActiveThemeToST();
+        if (payloads.length !== 1) {
+          throw new Error(`expected one send payload before switch, got ${payloads.length}`);
+        }
+
+        component.$store.global.beautifySelectedPackageId = 'pkg_2';
+        component.$store.global.beautifyActiveDetail = {
+          id: 'pkg_2',
+          variants: {
+            var_2: nextVariant,
+          },
+        };
+        component.$store.global.beautifyActiveVariant = {
+          ...nextVariant,
+        };
+
+        resolveSend();
+        await pending;
+
+        if (component.$store.global.beautifyActiveVariant.last_sent_to_st !== '2025-02-02T00:00:00Z') {
+          throw new Error(`expected newly selected active variant to remain unchanged, got ${component.$store.global.beautifyActiveVariant.last_sent_to_st}`);
+        }
+        if (component.$store.global.beautifyActiveDetail.variants.var_2.last_sent_to_st !== '2025-02-02T00:00:00Z') {
+          throw new Error(`expected newly selected detail variant to remain unchanged, got ${component.$store.global.beautifyActiveDetail.variants.var_2.last_sent_to_st}`);
+        }
+        if (sentVariant.last_sent_to_st !== '2025-01-01T00:00:00Z') {
+          throw new Error(`expected stale package variant object to remain untouched after switch, got ${sentVariant.last_sent_to_st}`);
+        }
+        if (toastCalls.length !== 1 || toastCalls[0][0] !== '🚀 主题已发送到 ST 并设为当前主题') {
+          throw new Error(`expected success toast after delayed send, got ${JSON.stringify(toastCalls)}`);
+        }
+        '''
+    )
+
+
+def test_beautify_grid_runtime_send_active_theme_surfaces_backend_error_without_mutating_timestamp():
+    run_beautify_grid_runtime_check(
+        '''
+        const payloads = [];
+        const toastCalls = [];
+        globalThis.__gridStubs = {
+          sendBeautifyThemeToSt: async (payload) => {
+            payloads.push(payload);
+            return {
+              success: false,
+              error: '后端发送失败',
+            };
+          },
+        };
+
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifySelectedPackageId: 'pkg_1',
+            beautifyActiveDetail: {
+              id: 'pkg_1',
+              variants: {
+                var_1: {
+                  id: 'var_1',
+                  platform: 'pc',
+                  wallpaper_ids: [],
+                  selected_wallpaper_id: '',
+                  last_sent_to_st: '2025-01-01T00:00:00Z',
+                  theme_data: { name: 'Blue Theme' },
+                },
+              },
+            },
+            beautifyActiveVariant: {
+              id: 'var_1',
+              platform: 'pc',
+              wallpaper_ids: [],
+              selected_wallpaper_id: '',
+              last_sent_to_st: '2025-01-01T00:00:00Z',
+              theme_data: { name: 'Blue Theme' },
+            },
+            showToast: (...args) => toastCalls.push(args),
+          },
+        };
+
+        await component.sendActiveThemeToST();
+
+        if (component.isActionLoading !== false) {
+          throw new Error('expected sendActiveThemeToST to clear isActionLoading after failure');
+        }
+        if (payloads.length !== 1) {
+          throw new Error(`expected one send payload, got ${payloads.length}`);
+        }
+        if (component.$store.global.beautifyActiveVariant.last_sent_to_st !== '2025-01-01T00:00:00Z') {
+          throw new Error(`expected active variant timestamp to remain unchanged, got ${component.$store.global.beautifyActiveVariant.last_sent_to_st}`);
+        }
+        if (component.$store.global.beautifyActiveDetail.variants.var_1.last_sent_to_st !== '2025-01-01T00:00:00Z') {
+          throw new Error(`expected active detail timestamp to remain unchanged, got ${component.$store.global.beautifyActiveDetail.variants.var_1.last_sent_to_st}`);
+        }
+        if (toastCalls.length !== 1 || toastCalls[0][0] !== '后端发送失败') {
+          throw new Error(`expected backend error toast, got ${JSON.stringify(toastCalls)}`);
+        }
+        '''
+    )
 
 
 def test_beautify_grid_platform_selector_does_not_optimistically_mutate_active_variant_platform():

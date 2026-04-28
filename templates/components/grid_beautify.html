@@ -12,6 +12,19 @@
         x-text="activeVariant?.preview_hint?.needs_platform_review ? '需要人工确认' : '已确认' "
       ></span>
     </div>
+    <template x-if="activeVariant">
+      <div class="beautify-stage-actions">
+        <button
+          type="button"
+          class="beautify-soft-btn"
+          @click="sendActiveThemeToST()"
+          :title="getActiveVariantSendToSTTitle()"
+          :disabled="isActionLoading || !canSendActiveVariantToST()"
+        >
+          发送主题到 ST
+        </button>
+      </div>
+    </template>
   </div>
 
   <div class="beautify-detail-card">

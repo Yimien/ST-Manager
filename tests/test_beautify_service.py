@@ -572,6 +572,54 @@ def test_get_package_hydrates_shared_wallpapers_for_variant_references(tmp_path)
     assert package_detail['wallpapers'][imported_wallpaper['id']] == imported_wallpaper
 
 
+def test_build_sendable_theme_bundle_returns_theme_copy_and_normalized_name(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+    imported_theme = _import_theme_for_package(service, tmp_path, name=' Aurora Blue ')
+
+    bundle = service.build_sendable_theme_bundle(
+        imported_theme['package']['id'],
+        imported_theme['variant']['id'],
+    )
+
+    assert bundle['package']['id'] == imported_theme['package']['id']
+    assert bundle['variant']['id'] == imported_theme['variant']['id']
+    assert bundle['theme_data']['name'] == 'Aurora Blue'
+    assert bundle['theme_data'] is not bundle['variant']['theme_data']
+
+
+def test_build_sendable_theme_bundle_rejects_missing_theme_name(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+    imported_theme = _import_theme_for_package(service, tmp_path, name='Nameless Demo')
+    package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
+
+    package_detail = service.get_package(package_id)
+    theme_file = tmp_path / package_detail['variants'][variant_id]['theme_file']
+    theme_file.write_text(json.dumps({'main_text_color': '#fff'}, ensure_ascii=False), encoding='utf-8')
+
+    try:
+        service.build_sendable_theme_bundle(package_id, variant_id)
+        assert False, 'expected ValueError'
+    except ValueError as exc:
+        assert str(exc) == '当前变体主题缺少 name，无法发送到 ST'
+
+
+def test_get_package_includes_variant_last_sent_to_st(tmp_path):
+    ui_data = {}
+    service = _build_service(tmp_path, ui_data)
+    imported_theme = _import_theme_for_package(service, tmp_path, name='Timestamp Demo')
+    package_id = imported_theme['package']['id']
+    variant_id = imported_theme['variant']['id']
+    ui_key = service.get_variant_send_state_key(package_id, variant_id)
+    ui_data[ui_key] = {'last_sent_to_st': 1712362222.75}
+
+    package_detail = service.get_package(package_id)
+
+    assert package_detail['variants'][variant_id]['last_sent_to_st'] == 1712362222.75
+
+
 def test_list_packages_uses_shared_variant_wallpaper_references_not_legacy_package_wallpapers(tmp_path):
     ui_data = {}
     service = _build_service(tmp_path, ui_data)

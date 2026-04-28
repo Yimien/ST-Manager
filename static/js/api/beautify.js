@@ -147,6 +147,15 @@ export async function updateBeautifyVariant(payload) {
   return parseJson(res);
 }
 
+export async function sendBeautifyThemeToSt(payload = {}) {
+  const res = await fetch("/api/beautify/send-theme-to-st", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  return parseJson(res);
+}
+
 export async function deleteBeautifyPackage(packageId) {
   const res = await fetch("/api/beautify/delete-package", {
     method: "POST",

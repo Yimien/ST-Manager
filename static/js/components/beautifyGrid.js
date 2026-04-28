@@ -12,6 +12,7 @@ import {
   importSharedPreviewWallpaperForBeautify,
   importBeautifyWallpaper,
   listBeautifyPackages,
+  sendBeautifyThemeToSt,
   selectSharedPreviewWallpaperForBeautify,
   updateBeautifyPackageIdentities,
   updateBeautifySettings,
@@ -44,6 +45,7 @@ export default function beautifyGrid() {
   return {
     isLoading: false,
     isActionLoading: false,
+    pendingThemeSendTarget: null,
     globalCharacterName: "",
     globalUserName: "",
     packageCharacterName: "",
@@ -789,6 +791,73 @@ export default function beautifyGrid() {
       }
 
       this.syncPreviewUnavailableState({ variant });
+    },
+
+    canSendActiveVariantToST() {
+      if (!this.selectedPackageId || !this.activeVariant) {
+        return false;
+      }
+      return !!String(this.activeVariant?.theme_data?.name || "").trim();
+    },
+
+    getActiveVariantSendToSTTitle() {
+      if (!this.activeVariant) {
+        return "请先选择一个可发送的主题变体";
+      }
+      if (!String(this.activeVariant?.theme_data?.name || "").trim()) {
+        return "当前变体主题缺少 name，无法发送到 ST";
+      }
+      return "发送当前主题到 ST，并自动切换为该主题；同名主题会覆盖 ST 中现有内容";
+    },
+
+    applyActiveVariantSentState(lastSentToSt) {
+      const packageId = String(
+        this.pendingThemeSendTarget?.packageId || this.selectedPackageId || "",
+      ).trim();
+      const variantId = String(
+        this.pendingThemeSendTarget?.variantId || this.activeVariant?.id || "",
+      ).trim();
+
+      if (this.$store.global.beautifyActiveVariant?.id === variantId) {
+        this.$store.global.beautifyActiveVariant.last_sent_to_st = lastSentToSt;
+      }
+
+      if (
+        this.activeDetail?.id === packageId &&
+        variantId &&
+        this.activeDetail?.variants?.[variantId]
+      ) {
+        this.activeDetail.variants[variantId].last_sent_to_st = lastSentToSt;
+      }
+    },
+
+    async sendActiveThemeToST() {
+      if (!this.canSendActiveVariantToST()) {
+        this.$store.global.showToast(this.getActiveVariantSendToSTTitle(), 2400);
+        return;
+      }
+
+      const packageId = this.selectedPackageId;
+      const variantId = this.activeVariant.id;
+
+      this.isActionLoading = true;
+      this.pendingThemeSendTarget = { packageId, variantId };
+      try {
+        const res = await sendBeautifyThemeToSt({
+          package_id: packageId,
+          variant_id: variantId,
+        });
+        if (!res?.success) {
+          throw new Error(res?.error || '发送主题到 ST 失败');
+        }
+        this.applyActiveVariantSentState(res.last_sent_to_st);
+        this.$store.global.showToast("🚀 主题已发送到 ST 并设为当前主题", 2200);
+      } catch (error) {
+        this.$store.global.showToast(String(error.message || error), 3200);
+      } finally {
+        this.pendingThemeSendTarget = null;
+        this.isActionLoading = false;
+      }
     },
 
     resolveActiveWallpaper(variant) {

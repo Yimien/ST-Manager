@@ -1,11 +1,17 @@
 import logging
 import os
 import tempfile
+import json
+import time
 
 from flask import Blueprint, jsonify, request, send_file
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
+from core.config import load_config
+from core.data.ui_store import load_ui_data, save_ui_data, set_last_sent_to_st
+from core.api.v1.system import _format_st_auth_error, _format_st_response_error
 from core.services.beautify_service import BeautifyService
+from core.services.st_auth import STAuthError, build_st_http_client
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,41 @@ def _get_json_object_payload():
     if not isinstance(payload, dict):
         return None, _error('请求体必须是 JSON 对象')
     return payload, None
+
+
+def _parse_st_settings_payload(response):
+    try:
+        outer_payload = response.json()
+    except (ValueError, TypeError):
+        raise ValueError('远程设置数据无效')
+
+    settings_raw = outer_payload.get('settings') if isinstance(outer_payload, dict) else None
+    if not isinstance(settings_raw, str):
+        raise ValueError('远程设置数据无效')
+
+    try:
+        settings_payload = json.loads(settings_raw)
+    except (TypeError, ValueError):
+        raise ValueError('远程设置数据无效')
+
+    if not isinstance(settings_payload, dict):
+        raise ValueError('远程设置数据无效')
+
+    power_user = settings_payload.get('power_user')
+    if not isinstance(power_user, dict):
+        raise ValueError('远程设置数据无效')
+
+    return settings_payload
+
+
+def _parse_st_success_response(response):
+    if not response.content:
+        return 'OK'
+
+    try:
+        return response.json()
+    except (ValueError, TypeError):
+        return response.text or 'OK'
 
 
 @bp.route('/list', methods=['GET'])
@@ -300,6 +341,71 @@ def update_variant():
         return jsonify({'success': True, 'item': item})
     except ValueError as exc:
         return _error(str(exc))
+
+
+@bp.route('/send-theme-to-st', methods=['POST'])
+def send_theme_to_st():
+    payload, error_response = _get_json_object_payload()
+    if error_response:
+        return error_response
+
+    package_id = str(payload.get('package_id') or '').strip()
+    variant_id = str(payload.get('variant_id') or '').strip()
+    if not package_id or not variant_id:
+        return _error('缺少 package_id 或 variant_id')
+
+    try:
+        _reject_unsupported_keys(payload, {'package_id', 'variant_id'})
+        service = get_beautify_service()
+        theme_bundle = service.build_sendable_theme_bundle(package_id, variant_id)
+    except LookupError as exc:
+        return _error(str(exc), status=404)
+    except ValueError as exc:
+        return _error(str(exc))
+
+    cfg = load_config()
+    auth_type = str(cfg.get('st_auth_type') or 'basic').strip().lower()
+    st_client = build_st_http_client(cfg, timeout=10)
+    theme_payload = theme_bundle.get('theme_data') if isinstance(theme_bundle.get('theme_data'), dict) else {}
+    theme_name = str(theme_payload.get('name') or '').strip()
+
+    try:
+        save_response = st_client.post('/api/themes/save', json=theme_payload, timeout=10)
+    except STAuthError as error:
+        return _error(_format_st_auth_error(error))
+
+    if save_response.status_code != 200:
+        return _error(_format_st_response_error(save_response, auth_type))
+
+    try:
+        settings_response = st_client.post('/api/settings/get', json={}, timeout=10)
+        if settings_response.status_code != 200:
+            raise ValueError(_format_st_response_error(settings_response, auth_type))
+
+        settings_payload = _parse_st_settings_payload(settings_response)
+        settings_payload['power_user']['theme'] = theme_name
+
+        apply_response = st_client.post('/api/settings/save', json=settings_payload, timeout=10)
+        if apply_response.status_code != 200:
+            raise ValueError(_format_st_response_error(apply_response, auth_type))
+    except STAuthError as error:
+        return _error(f'主题已导入 ST，但自动应用失败：{_format_st_auth_error(error)}')
+    except ValueError as exc:
+        return _error(f'主题已导入 ST，但自动应用失败：{exc}')
+
+    st_response = _parse_st_success_response(save_response)
+    ui_data = load_ui_data()
+    ui_key = service.get_variant_send_state_key(package_id, variant_id)
+    _, last_sent_to_st = set_last_sent_to_st(ui_data, ui_key, time.time())
+    if not save_ui_data(ui_data):
+        return _error('保存发送时间失败', status=500)
+
+    return jsonify({
+        'success': True,
+        'theme_name': theme_name,
+        'st_response': st_response,
+        'last_sent_to_st': last_sent_to_st,
+    })
 
 
 @bp.route('/delete-package', methods=['POST'])

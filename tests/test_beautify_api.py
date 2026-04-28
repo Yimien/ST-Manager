@@ -1,6 +1,7 @@
 import io
 import json
 import sys
+import types
 from pathlib import Path
 
 from flask import Flask
@@ -20,10 +21,59 @@ def _make_test_app():
     return app
 
 
+class DummyResponse:
+    def __init__(self, status_code=200, json_data=None, text='', content=None):
+        self.status_code = status_code
+        self._json_data = json_data
+        self.text = text
+        self.content = content if content is not None else (b'{}' if json_data is not None else text.encode('utf-8'))
+
+    def json(self):
+        if self._json_data is None:
+            raise ValueError('No JSON payload')
+        return self._json_data
+
+
+class FakeSequencedHTTPClient:
+    def __init__(self, responses=None, error=None):
+        self.responses = list(responses or [])
+        self.error = error
+        self.calls = []
+
+    def post(self, path, **kwargs):
+        self.calls.append((path, dict(kwargs)))
+        if self.error:
+            raise self.error
+        if not self.responses:
+            raise AssertionError(f'unexpected ST call: {path}')
+        return self.responses.pop(0)
+
+
+def _install_send_theme_stubs(monkeypatch, fake_http_client, *, ui_data=None, save_result=True, sent_at=1712345678.25):
+    saved_payloads = []
+    current_ui_data = dict(ui_data or {})
+
+    monkeypatch.setattr(beautify_api, 'load_config', lambda: {'st_auth_type': 'basic'}, raising=False)
+    monkeypatch.setattr(beautify_api, 'build_st_http_client', lambda cfg, timeout=10: fake_http_client, raising=False)
+    monkeypatch.setattr(beautify_api, 'load_ui_data', lambda: current_ui_data, raising=False)
+    monkeypatch.setattr(beautify_api, 'save_ui_data', lambda payload: saved_payloads.append(dict(payload)) or save_result, raising=False)
+    monkeypatch.setattr(beautify_api, 'time', types.SimpleNamespace(time=lambda: sent_at), raising=False)
+
+    return current_ui_data, saved_payloads, sent_at
+
+
 class FakeBeautifyService:
     def __init__(self):
         self.calls = []
         self.library_root = 'D:/Workspace/MyOwn/ST-Manager/data/library/beautify'
+        self.theme_bundle = {
+            'package': {'id': 'pkg_demo', 'name': 'Demo'},
+            'variant': {'id': 'var_demo', 'theme_data': {'name': 'Demo Theme', 'main_text_color': '#ffffff'}},
+            'theme_data': {
+                'name': 'Demo Theme',
+                'main_text_color': '#ffffff',
+            },
+        }
 
     def get_global_settings(self):
         self.calls.append(('get_global_settings',))
@@ -138,6 +188,14 @@ class FakeBeautifyService:
             'platform': platform or 'pc',
             'selected_wallpaper_id': selected_wallpaper_id,
         }
+
+    def get_variant_send_state_key(self, package_id, variant_id):
+        self.calls.append(('get_variant_send_state_key', package_id, variant_id))
+        return f'beautify::{package_id}::{variant_id}'
+
+    def build_sendable_theme_bundle(self, package_id, variant_id):
+        self.calls.append(('build_sendable_theme_bundle', package_id, variant_id))
+        return self.theme_bundle
 
     def delete_package(self, package_id):
         self.calls.append(('delete_package', package_id))
@@ -967,6 +1025,158 @@ def test_update_variant_endpoint_forwards_selected_wallpaper_id_without_requirin
         None,
         'package_embedded:wall_new',
     )
+
+
+def test_send_theme_to_st_updates_remote_theme_and_current_setting(monkeypatch):
+    app = _make_test_app()
+    client = app.test_client()
+    fake_service = FakeBeautifyService()
+    fake_http_client = FakeSequencedHTTPClient(
+        responses=[
+            DummyResponse(200, json_data={'saved': True}),
+            DummyResponse(200, json_data={'settings': json.dumps({'power_user': {'theme': 'Old Theme'}}, ensure_ascii=False)}),
+            DummyResponse(200, json_data={'applied': True}),
+        ]
+    )
+    ui_data, saved_payloads, sent_at = _install_send_theme_stubs(monkeypatch, fake_http_client)
+    monkeypatch.setattr(beautify_api, 'get_beautify_service', lambda: fake_service)
+
+    response = client.post(
+        '/api/beautify/send-theme-to-st',
+        json={'package_id': 'pkg_demo', 'variant_id': 'var_demo'},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload['success'] is True
+    assert payload['theme_name'] == 'Demo Theme'
+    assert payload['st_response'] == {'saved': True}
+    assert payload['last_sent_to_st'] == sent_at
+    assert fake_http_client.calls == [
+        (
+            '/api/themes/save',
+            {
+                'json': {'name': 'Demo Theme', 'main_text_color': '#ffffff'},
+                'timeout': 10,
+            },
+        ),
+        (
+            '/api/settings/get',
+            {
+                'json': {},
+                'timeout': 10,
+            },
+        ),
+        (
+            '/api/settings/save',
+            {
+                'json': {'power_user': {'theme': 'Demo Theme'}},
+                'timeout': 10,
+            },
+        ),
+    ]
+    assert ui_data == {'beautify::pkg_demo::var_demo': {'last_sent_to_st': sent_at}}
+    assert saved_payloads == [{'beautify::pkg_demo::var_demo': {'last_sent_to_st': sent_at}}]
+
+
+def test_send_theme_to_st_success_accepts_plain_text_theme_save_response(monkeypatch):
+    app = _make_test_app()
+    client = app.test_client()
+    fake_service = FakeBeautifyService()
+    fake_http_client = FakeSequencedHTTPClient(
+        responses=[
+            DummyResponse(200, json_data=None, text='saved-ok', content=b'saved-ok'),
+            DummyResponse(200, json_data={'settings': json.dumps({'power_user': {'theme': 'Old Theme'}}, ensure_ascii=False)}),
+            DummyResponse(200, json_data={'applied': True}),
+        ]
+    )
+    _ui_data, _saved_payloads, sent_at = _install_send_theme_stubs(monkeypatch, fake_http_client)
+    monkeypatch.setattr(beautify_api, 'get_beautify_service', lambda: fake_service)
+
+    response = client.post(
+        '/api/beautify/send-theme-to-st',
+        json={'package_id': 'pkg_demo', 'variant_id': 'var_demo'},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload['success'] is True
+    assert payload['theme_name'] == 'Demo Theme'
+    assert payload['st_response'] == 'saved-ok'
+    assert payload['last_sent_to_st'] == sent_at
+
+
+def test_send_theme_to_st_rejects_missing_variant_id(monkeypatch):
+    app = _make_test_app()
+    client = app.test_client()
+    fake_service = FakeBeautifyService()
+    monkeypatch.setattr(beautify_api, 'get_beautify_service', lambda: fake_service)
+    monkeypatch.setattr(
+        beautify_api,
+        'load_config',
+        lambda: (_ for _ in ()).throw(AssertionError('load_config should not be called')),
+        raising=False,
+    )
+
+    response = client.post('/api/beautify/send-theme-to-st', json={'package_id': 'pkg_demo'})
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload == {'success': False, 'error': '缺少 package_id 或 variant_id'}
+    assert fake_service.calls == []
+
+
+def test_send_theme_to_st_reports_invalid_st_settings_payload(monkeypatch):
+    app = _make_test_app()
+    client = app.test_client()
+    fake_service = FakeBeautifyService()
+    fake_http_client = FakeSequencedHTTPClient(
+        responses=[
+            DummyResponse(200, json_data={'saved': True}),
+            DummyResponse(200, json_data={'settings': {'power_user': {'theme': 'Old Theme'}}}),
+        ]
+    )
+    ui_data, saved_payloads, _sent_at = _install_send_theme_stubs(monkeypatch, fake_http_client)
+    monkeypatch.setattr(beautify_api, 'get_beautify_service', lambda: fake_service)
+
+    response = client.post(
+        '/api/beautify/send-theme-to-st',
+        json={'package_id': 'pkg_demo', 'variant_id': 'var_demo'},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload['success'] is False
+    assert payload['error'] == '主题已导入 ST，但自动应用失败：远程设置数据无效'
+    assert ui_data == {}
+    assert saved_payloads == []
+
+
+def test_send_theme_to_st_reports_partial_failure_without_persisting_timestamp(monkeypatch):
+    app = _make_test_app()
+    client = app.test_client()
+    fake_service = FakeBeautifyService()
+    fake_http_client = FakeSequencedHTTPClient(
+        responses=[
+            DummyResponse(200, json_data={'saved': True}),
+            DummyResponse(200, json_data={'settings': json.dumps({'power_user': {'theme': 'Old Theme'}}, ensure_ascii=False)}),
+            DummyResponse(500, json_data={'error': 'save failed'}, text='save failed'),
+        ]
+    )
+    ui_data, saved_payloads, _sent_at = _install_send_theme_stubs(monkeypatch, fake_http_client)
+    monkeypatch.setattr(beautify_api, 'get_beautify_service', lambda: fake_service)
+
+    response = client.post(
+        '/api/beautify/send-theme-to-st',
+        json={'package_id': 'pkg_demo', 'variant_id': 'var_demo'},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload['success'] is False
+    assert payload['error'] == '主题已导入 ST，但自动应用失败：ST Error: 500 - save failed'
+    assert ui_data == {}
+    assert saved_payloads == []
 
 
 def test_install_and_apply_endpoints_are_removed(monkeypatch):
