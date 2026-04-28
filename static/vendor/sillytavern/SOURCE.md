@@ -79,6 +79,7 @@
 - `public/sounds/message.mp3`
 - `public/webfonts/*`
 - `public/index.html` derived shell extraction: `static/vendor/sillytavern/preview-shell.js`
+- `public/index.html` selective drawer extractions: `static/vendor/sillytavern/preview-drawers.js`
 
 ## Local Notes
 
@@ -87,6 +88,8 @@
 - The baseline includes `style.css` top-level imports plus directly referenced nested CSS and image assets needed for a self-contained preview runtime.
 - `tests/test_beautify_preview_document_contracts.py` verifies the direct local dependencies declared in the vendored `index.html`; keep this list and the copied subtree in sync when refreshing upstream files.
 - `preview-shell.js` is a vendor-derived extraction of the preview shell anchors and drawer/frame relationships from `index.html`, kept separate so preview assembly can stay vendor-first without booting upstream runtime scripts.
+- `preview-drawers.js` is a vendor-derived set of selective drawer body copies from `index.html`; keep it as dumb copied markup only, with any preview-safe filtering or injection behavior deferred to a future adapter layer.
+- Upstream-relative asset references that remain inside vendor drawer fragments, such as `img/...`, stay vendor-owned and should be resolved by preview-owned assembly or adapter logic rather than rewritten in `preview-drawers.js`.
 
 ## Shell Anchors
 
@@ -99,5 +102,6 @@
 
 - Refresh upstream files from `D:\Workspace\SillyTavern` at a known commit and record the new revision here.
 - Re-extract `preview-shell.js` from upstream `public/index.html` without changing shell ownership of the anchor structure.
-- Keep preview-specific adaptations in `static/js/components/beautifyPreviewDocument.js` limited to slot fragment assembly.
+- Re-extract `preview-drawers.js` from upstream `public/index.html` by copying only the approved drawer regions for preview use, without adding manager-authored behavior into the vendor file.
+- Keep preview-specific adaptations in `static/js/components/beautifyPreviewDocument.js` limited to slot fragment assembly until a future adapter layer owns preview-safe injection behavior.
 - Re-run `pytest tests/test_beautify_preview_document_contracts.py -v` after any vendor refresh.

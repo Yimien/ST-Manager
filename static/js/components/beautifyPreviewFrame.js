@@ -280,6 +280,15 @@ export default function beautifyPreviewFrame() {
           ? resolveSettingsPreviewTheme(platform)
           : variant.theme_data || {},
         activeScene: this.activePreviewScene?.id || DEFAULT_PREVIEW_SCENE_ID,
+        detail: useGlobalOnly
+          ? {}
+          : {
+              packageName: String(detail.name || '').trim(),
+              tags: Array.isArray(detail.tags)
+                ? detail.tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 8)
+                : [],
+              notes: String(detail.notes || '').trim(),
+            },
         wallpaperUrl: resolvedWallpaperFile
           ? buildBeautifyPreviewAssetUrl(resolvedWallpaperFile)
           : "",

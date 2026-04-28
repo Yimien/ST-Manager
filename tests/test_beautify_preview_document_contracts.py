@@ -7,7 +7,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / 'static/js/components/beautifyPreviewDocument.js'
+ADAPTER_MODULE_PATH = ROOT / 'static/js/components/beautifyPreviewDrawerAdapters.js'
 VENDOR_SHELL_MODULE_PATH = ROOT / 'static/vendor/sillytavern/preview-shell.js'
+VENDOR_DRAWERS_MODULE_PATH = ROOT / 'static/vendor/sillytavern/preview-drawers.js'
 
 
 def test_vendored_sillytavern_shell_assets_exist_for_vendor_first_preview():
@@ -49,6 +51,137 @@ def test_vendor_first_preview_shell_artifact_exists_and_tracks_provenance():
     assert 'preview-shell.js' in source_md, 'Expected SOURCE.md to document preview-shell.js provenance'
 
 
+def test_drawer_module_exists_and_exports_three_markup_constants():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const modulePath = {json.dumps(str(VENDOR_DRAWERS_MODULE_PATH.resolve()))};
+        const module = await import(pathToFileURL(modulePath).href);
+
+        const expectedExports = [
+          'SETTINGS_DRAWER_VENDOR_MARKUP',
+          'FORMATTING_DRAWER_VENDOR_MARKUP',
+          'CHARACTER_DRAWER_VENDOR_MARKUP',
+        ];
+
+        for (const exportName of expectedExports) {{
+          const value = module[exportName];
+          if (typeof value !== 'string') throw new Error(`expected string export: ${{exportName}}`);
+          if (!value.trim()) throw new Error(`expected non-empty export: ${{exportName}}`);
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_keeps_expected_upstream_tokens_for_each_supported_drawer():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const module = await import(pathToFileURL({json.dumps(str(VENDOR_DRAWERS_MODULE_PATH.resolve()))}).href);
+
+        const expectedTokensByExport = {{
+          SETTINGS_DRAWER_VENDOR_MARKUP: [
+            'id="clickSlidersTips"',
+            'id="amount_gen"',
+            'id="max_context"',
+            'id="kobold_order"',
+            'id="samplers_order_recommended"',
+          ],
+          FORMATTING_DRAWER_VENDOR_MARKUP: [
+            'id="ContextSettings"',
+            'id="instruct_presets"',
+            'id="sysprompt_select"',
+            'id="custom_stopping_strings"',
+            'id="tokenizer"',
+          ],
+          CHARACTER_DRAWER_VENDOR_MARKUP: [
+            'id="rm_PinAndTabs"',
+            'id="rm_characters_block"',
+            'id="character_search_bar"',
+            'id="charListGridToggle"',
+            'id="rm_print_characters_block"',
+          ],
+        }};
+
+        for (const [exportName, expectedTokens] of Object.entries(expectedTokensByExport)) {{
+          const markup = module[exportName];
+          if (typeof markup !== 'string') throw new Error(`expected string export: ${{exportName}}`);
+
+          for (const token of expectedTokens) {{
+            if (!markup.includes(token)) {{
+              throw new Error(`missing token in ${{exportName}}: ${{token}}`);
+            }}
+          }}
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_character_drawer_vendor_markup_keeps_contiguous_upstream_region_between_tabs_and_list_end():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const module = await import(pathToFileURL({json.dumps(str(VENDOR_DRAWERS_MODULE_PATH.resolve()))}).href);
+        const markup = module.CHARACTER_DRAWER_VENDOR_MARKUP;
+
+        const orderedTokens = [
+          'id="rm_PinAndTabs"',
+          'id="description_textarea"',
+          'id="firstmessage_textarea"',
+          'id="hidden-divs"',
+          'id="group-chat-lorebook-dropdown"',
+          'id="rm_group_generation_mode"',
+          'id="groupCurrentMemberListToggle"',
+          'id="rm_group_members"',
+          'id="groupAddMemberListToggle"',
+          'id="rm_group_add_members"',
+          'id="rm_print_characters_block"',
+        ];
+
+        let previousIndex = -1;
+        for (const token of orderedTokens) {{
+          const index = markup.indexOf(token);
+          if (index === -1) throw new Error(`missing contiguous character drawer token: ${{token}}`);
+          if (index <= previousIndex) throw new Error(`out-of-order contiguous character drawer token: ${{token}}`);
+          previousIndex = index;
+        }}
+
+        for (const shellOwnedToken of [
+          'id="right-nav-panelheader"',
+          'id="CharListButtonAndHotSwaps"',
+        ]) {{
+          if (markup.includes(shellOwnedToken)) {{
+            throw new Error(`shell-owned token leaked into character drawer markup: ${{shellOwnedToken}}`);
+          }}
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def run_preview_document_check(script_body: str) -> None:
     node_script = textwrap.dedent(
         f'''
@@ -65,6 +198,283 @@ def run_preview_document_check(script_body: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def run_preview_drawer_adapter_check(script_body: str) -> None:
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const module = await import(pathToFileURL({json.dumps(str(ADAPTER_MODULE_PATH.resolve()))}).href);
+        {textwrap.dedent(script_body)}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_settings_drawer_adapter_keeps_core_sampling_controls_and_marks_preview_disabled_actions():
+    run_preview_drawer_adapter_check(
+        '''
+        const markup = module.buildSettingsDrawerPreviewMarkupFromVendor({ theme: {} });
+        const hasAttributes = (tag, attributes) => attributes.every((attribute) => tag.includes(attribute));
+
+        for (const token of [
+          'id="amount_gen"',
+          'id="max_context"',
+          'id="kobold_order"',
+          'id="samplers_order_recommended"',
+        ]) {
+          if (!markup.includes(token)) throw new Error(`missing preserved settings token: ${token}`);
+        }
+
+        if (!markup.includes('data-preview-disabled="true"')) {
+          throw new Error('expected preview-disabled marker in settings drawer');
+        }
+
+        for (const selector of [
+          'data-preset-manager-import="kobold"',
+          'data-preset-manager-export="kobold"',
+          'data-preset-manager-delete="kobold"',
+          'data-preset-manager-update="kobold"',
+          'data-preset-manager-rename="kobold"',
+          'data-preset-manager-new="kobold"',
+          'data-preset-manager-restore="kobold"',
+        ]) {
+          const match = markup.match(new RegExp(`<[^>]*${selector}[^>]*>`));
+          if (!match) throw new Error(`missing disabled settings action tag: ${selector}`);
+          if (!hasAttributes(match[0], [selector, 'data-preview-disabled="true"'])) {
+            throw new Error(`missing disabled settings action attribute: ${selector}`);
+          }
+        }
+        '''
+    )
+
+
+def test_formatting_drawer_adapter_injects_scene_prompt_and_keeps_core_sections():
+    run_preview_drawer_adapter_check(
+        '''
+        const scenePromptContent = '<scene prompt & details>';
+        const markup = module.buildFormattingDrawerPreviewMarkupFromVendor({ scenePromptContent });
+        const hasAttributes = (tag, attributes) => attributes.every((attribute) => tag.includes(attribute));
+
+        for (const token of [
+          'id="ContextSettings"',
+          'id="instruct_presets"',
+          'id="sysprompt_select"',
+          'id="custom_stopping_strings"',
+          'id="tokenizer"',
+        ]) {
+          if (!markup.includes(token)) throw new Error(`missing preserved formatting token: ${token}`);
+        }
+
+        if (!markup.includes('&lt;scene prompt &amp; details&gt;')) {
+          throw new Error('expected escaped scene prompt content in formatting drawer');
+        }
+
+        for (const selector of ['id="af_master_import"', 'id="af_master_export"']) {
+          const match = markup.match(new RegExp(`<[^>]*${selector}[^>]*>`));
+          if (!match) throw new Error(`missing disabled formatting action tag: ${selector}`);
+          if (!hasAttributes(match[0], [selector, 'data-preview-disabled="true"'])) {
+            throw new Error(`missing disabled formatting action attribute: ${selector}`);
+          }
+        }
+        '''
+    )
+
+
+def test_drawer_adapters_consume_vendor_markup_overrides_when_provided():
+    run_preview_drawer_adapter_check(
+        '''
+        const settingsMarkup = module.buildSettingsDrawerPreviewMarkupFromVendor({
+          vendorMarkup: '<section data-override="settings"><div data-preset-manager-import="kobold"></div></section>',
+        });
+        if (!settingsMarkup.includes('data-override="settings"')) {
+          throw new Error('settings adapter did not consume vendorMarkup override');
+        }
+        if (settingsMarkup.includes('id="amount_gen"')) {
+          throw new Error('settings adapter unexpectedly fell back to module-level vendor markup');
+        }
+        if (!settingsMarkup.includes('data-preview-disabled="true"')) {
+          throw new Error('settings adapter should still augment override markup');
+        }
+
+        const formattingMarkup = module.buildFormattingDrawerPreviewMarkupFromVendor({
+          scenePromptContent: 'override prompt',
+          vendorMarkup: '<section data-override="formatting"><textarea id="context_story_string"></textarea><button id="af_master_import"></button><button id="af_master_export"></button></section>',
+        });
+        if (!formattingMarkup.includes('data-override="formatting"')) {
+          throw new Error('formatting adapter did not consume vendorMarkup override');
+        }
+        if (formattingMarkup.includes('id="ContextSettings"')) {
+          throw new Error('formatting adapter unexpectedly fell back to module-level vendor markup');
+        }
+        if (!formattingMarkup.includes('>override prompt</textarea>')) {
+          throw new Error('formatting adapter should still inject prompt content into override markup');
+        }
+
+        const characterMarkup = module.buildCharacterDrawerPreviewMarkupFromVendor({
+          identities: { character: { name: 'Override Hero' } },
+          detail: {
+            packageName: 'Override Package',
+            description: 'Override Description',
+            firstMessage: 'Override First Message',
+            notes: 'Override Notes',
+            tags: ['override-tag'],
+          },
+          vendorMarkup: `
+            <section data-override="character">
+              <div id="rm_button_selected_ch"></div>
+              <div id="result_info"></div>
+              <input id="character_name_pole">
+              <textarea id="description_textarea"></textarea>
+              <textarea id="firstmessage_textarea"></textarea>
+              <div id="tagList" class="tags"></div>
+              <div id="rm_print_characters_block" class="flexFlowColumn"></div>
+              <div id="rm_button_search" class="search-btn"></div>
+              <div id="charListGridToggle" class="grid-btn"></div>
+              <div id="rm_button_back" class="back-btn"></div>
+              <div id="rm_button_create"></div>
+              <div id="rm_ch_create_block"></div>
+              <div id="rm_characters_block"></div>
+              <div id="hidden-divs"></div>
+              <!-- these divs are invisible and used for server communication purposes -->
+            </section>`,
+        });
+        if (!characterMarkup.includes('data-override="character"')) {
+          throw new Error('character adapter did not consume vendorMarkup override');
+        }
+        if (characterMarkup.includes('id="rm_PinAndTabs"')) {
+          throw new Error('character adapter unexpectedly fell back to module-level vendor markup');
+        }
+        if (!characterMarkup.includes('Override Hero')) {
+          throw new Error('character adapter should still inject identity data into override markup');
+        }
+        if (!characterMarkup.includes('data-preview-action="show-detail"')) {
+          throw new Error('character adapter should still inject preview hooks into override markup');
+        }
+        '''
+    )
+
+
+def test_character_drawer_adapter_injects_preview_identity_data_and_preview_hooks():
+    run_preview_drawer_adapter_check(
+        '''
+        const hasAttributes = (tag, attributes) => attributes.every((attribute) => tag.includes(attribute));
+        const markup = module.buildCharacterDrawerPreviewMarkupFromVendor({
+          identities: {
+            character: {
+              name: 'Preview Hero',
+              avatarSrc: '/static/img/preview-hero.webp',
+            },
+          },
+          detail: {
+            packageName: 'Demo Package',
+            description: 'A <b>preview</b> description',
+            firstMessage: 'Hello there',
+            personality: 'Calm and observant',
+            notes: 'Internal notes',
+            tags: ['alpha', 'beta'],
+          },
+        });
+
+        for (const token of [
+          'id="rm_characters_block"',
+          'id="rm_ch_create_block"',
+          'id="character_search_bar"',
+          'data-preview-character-card="primary"',
+          'Demo Package',
+          'A &lt;b&gt;preview&lt;/b&gt; description',
+          'data-preview-disabled="true"',
+        ]) {
+          if (!markup.includes(token)) throw new Error(`missing character preview token: ${token}`);
+        }
+
+        for (const token of [
+          'id="rm_button_selected_ch"',
+          'id="character_name_pole"',
+          'id="description_textarea"',
+          'id="firstmessage_textarea"',
+          'id="personality_textarea"',
+          'id="creator_notes_textarea"',
+          'id="tagList"',
+          'id="rm_button_search"',
+          'id="charListGridToggle"',
+          'id="rm_button_back"',
+        ]) {
+          if (!markup.includes(token)) throw new Error(`missing character control token: ${token}`);
+        }
+
+        for (const [selector, attributes] of [
+          ['id="rm_button_search"', ['data-preview-action="toggle-search"']],
+          ['id="charListGridToggle"', ['data-preview-action="toggle-grid"']],
+          ['id="rm_button_back"', ['data-preview-action="show-list"']],
+          ['data-preview-character-card="primary"', ['data-preview-action="show-detail"']],
+          ['id="rm_ch_create_block"', ['style="display: none;"']],
+          ['id="rm_characters_block"', ['style="display: block;"']],
+        ]) {
+          const match = markup.match(new RegExp(`<[^>]*${selector}[^>]*>`));
+          if (!match) throw new Error(`missing character preview hook tag: ${selector}`);
+          if (!hasAttributes(match[0], [selector, ...attributes])) {
+            throw new Error(`missing character preview hook attribute: ${selector}`);
+          }
+        }
+
+        const selectedCharacterStart = markup.indexOf('<div id="rm_button_selected_ch">');
+        const selectedCharacterEnd = markup.indexOf('<div id="result_info"', selectedCharacterStart);
+        if (selectedCharacterStart === -1 || selectedCharacterEnd === -1) {
+          throw new Error('missing selected character wrapper block');
+        }
+
+        const selectedCharacterBlock = markup.slice(selectedCharacterStart, selectedCharacterEnd);
+        if (!selectedCharacterBlock.includes('<h2 class="interactable">Preview Hero</h2>')) {
+          throw new Error('expected selected character wrapper to contain injected h2');
+        }
+        if (!markup.includes('value="Preview Hero"')) {
+          throw new Error('expected detail name field to come from identities.character.name');
+        }
+        if (!markup.includes('>Hello there</textarea>')) {
+          throw new Error('expected first message field to come from detail.firstMessage');
+        }
+        if (!markup.includes('>Internal notes</textarea>')) {
+          throw new Error('expected creator notes field to come from detail.notes');
+        }
+        if ((selectedCharacterBlock.match(/<h2\\b/g) || []).length !== 1) {
+          throw new Error('expected exactly one h2 in selected character wrapper');
+        }
+        if ((selectedCharacterBlock.match(/<\/h2>/g) || []).length !== 1) {
+          throw new Error('expected exactly one closing h2 in selected character wrapper');
+        }
+        if (!markup.includes(`'<div id="rm_button_selected_ch">`.slice(1, -1))) {
+          throw new Error('selected character wrapper opening tag is missing');
+        }
+        if (!selectedCharacterBlock.trimEnd().endsWith('</div>')) {
+          throw new Error('selected character wrapper markup was corrupted');
+        }
+
+        const firstMessageIndex = markup.indexOf('id="firstmessage_textarea"');
+        const personalityIndex = markup.indexOf('id="personality_textarea"');
+        const creatorNotesIndex = markup.indexOf('id="creator_notes_textarea"');
+        const hiddenDivsIndex = markup.indexOf('id="hidden-divs"');
+
+        if (firstMessageIndex === -1 || personalityIndex === -1 || creatorNotesIndex === -1 || hiddenDivsIndex === -1) {
+          throw new Error('missing expected character editor structure token');
+        }
+        if (!(firstMessageIndex < personalityIndex && personalityIndex < creatorNotesIndex && creatorNotesIndex < hiddenDivsIndex)) {
+          throw new Error('personality and creator notes were not inserted between first message and hidden divs');
+        }
+
+        const betweenFirstMessageAndHiddenDivs = markup.slice(firstMessageIndex, hiddenDivsIndex);
+        if (!betweenFirstMessageAndHiddenDivs.includes('</div>')) {
+          throw new Error('expected preserved wrapper closing structure before hidden divs');
+        }
+        '''
+    )
 
 
 def test_build_beautify_preview_document_loads_pc_vendored_st_assets_without_mobile_stylesheet():
@@ -267,14 +677,14 @@ def test_build_beautify_preview_document_keeps_vendor_character_strip_ids_unique
         if (hotSwapMatches.length !== 1) {
           throw new Error(`expected exactly one HotSwapWrapper id, got ${hotSwapMatches.length}`);
         }
-        if (pinAndTabsMatches.length !== 0) {
-          throw new Error(`expected no preview-owned rm_PinAndTabs id, got ${pinAndTabsMatches.length}`);
+        if (pinAndTabsMatches.length !== 1) {
+          throw new Error(`expected exactly one vendor character drawer rm_PinAndTabs id, got ${pinAndTabsMatches.length}`);
         }
-        if (panelTabsMatches.length !== 0) {
-          throw new Error(`expected no preview-owned right-nav-panel-tabs id, got ${panelTabsMatches.length}`);
+        if (panelTabsMatches.length !== 1) {
+          throw new Error(`expected exactly one vendor character drawer right-nav-panel-tabs id, got ${panelTabsMatches.length}`);
         }
-        if (selectedCharacterMatches.length > 0) {
-          throw new Error(`expected no duplicate selected-character shell id, got ${selectedCharacterMatches.length}`);
+        if (selectedCharacterMatches.length !== 1) {
+          throw new Error(`expected exactly one vendor selected-character id, got ${selectedCharacterMatches.length}`);
         }
         '''
     )
@@ -325,22 +735,145 @@ def test_build_beautify_preview_scene_options_renames_system_scene_to_style_demo
     )
 
 
-def test_build_beautify_preview_document_keeps_vendor_shell_owner_and_small_preview_fragments():
+def test_build_beautify_preview_document_imports_vendor_drawers_through_adapter_layer():
     source = MODULE_PATH.read_text(encoding='utf-8')
 
     for token in [
-        'buildSettingsDrawerPreviewMarkup',
-        'buildFormattingDrawerPreviewMarkup',
-        'buildCharacterDrawerPreviewMarkup',
+        'vendor/sillytavern/preview-drawers.js',
+        'beautifyPreviewDrawerAdapters.js',
+        'buildSettingsDrawerPreviewMarkupFromVendor',
+        'buildFormattingDrawerPreviewMarkupFromVendor',
+        'buildCharacterDrawerPreviewMarkupFromVendor',
     ]:
-        assert token in source, f'missing thin preview fragment helper: {token}'
+        assert token in source, f'missing vendor drawer adapter token: {token}'
 
     for removed in [
-        'const settingsDrawerContentMarkup = `',
-        'const formattingDrawerContentMarkup = `',
-        'const characterDrawerContentMarkup = `',
+        'function buildSettingsDrawerPreviewMarkup()',
+        'function buildFormattingDrawerPreviewMarkup(',
+        'function buildCharacterDrawerPreviewMarkup(',
     ]:
-        assert removed not in source, f'stale large inline drawer fragment remains: {removed}'
+        assert removed not in source, f'legacy local drawer helper remains: {removed}'
+
+
+def test_build_beautify_preview_document_assembles_vendor_drawers_with_preview_safe_character_hooks():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({
+          platform: 'pc',
+          theme: {},
+          identities: {
+            character: {
+              name: 'Preview Hero',
+              avatarSrc: '/static/img/preview-hero.webp',
+            },
+          },
+          detail: {
+            packageName: 'Demo Package',
+            description: 'A <b>preview</b> description',
+            firstMessage: 'Hello there',
+            personality: 'Calm and observant',
+            notes: 'Internal notes',
+            tags: ['alpha', 'beta'],
+          },
+        });
+
+        for (const token of [
+          'id="amount_gen"',
+          'id="sysprompt_select"',
+          'id="rm_characters_block"',
+          'data-preview-character-card="primary"',
+          'data-preview-disabled="true"',
+          'data-preview-action="show-detail"',
+          'Demo Package',
+          'alpha',
+          'beta',
+          'Internal notes',
+          'A &lt;b&gt;preview&lt;/b&gt; description',
+        ]) {
+          if (!html.includes(token)) throw new Error(`missing assembled vendor drawer token: ${token}`);
+        }
+        '''
+    )
+
+
+def test_build_vendor_first_preview_shell_accepts_full_drawer_bodies_without_owned_scrollable_wrappers():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const shellModule = await import(pathToFileURL({json.dumps(str(VENDOR_SHELL_MODULE_PATH.resolve()))}).href);
+        const markup = shellModule.buildVendorFirstPreviewShell({{
+          settingsDrawerContentMarkup: '<section class="scrollableInner" data-slot="settings">settings body</section>',
+          formattingDrawerContentMarkup: '<section class="scrollableInner" data-slot="formatting">formatting body</section>',
+          characterDrawerContentMarkup: '<section class="scrollableInner" data-slot="character">character body</section>',
+        }});
+
+        const expectedBodies = [
+          '<section class="scrollableInner" data-slot="settings">settings body</section>',
+          '<section class="scrollableInner" data-slot="formatting">formatting body</section>',
+          '<section class="scrollableInner" data-slot="character">character body</section>',
+        ];
+
+        for (const body of expectedBodies) {{
+          if (!markup.includes(body)) throw new Error(`missing full drawer body fragment: ${{body}}`);
+        }}
+
+        if (markup.includes('<div class="scrollableInner"><section class="scrollableInner" data-slot="settings">')) {{
+          throw new Error('settings drawer body should be inserted directly without shell-owned scrollableInner wrapper');
+        }}
+        if (markup.includes('<div class="scrollableInner"><section class="scrollableInner" data-slot="formatting">')) {{
+          throw new Error('formatting drawer body should be inserted directly without shell-owned scrollableInner wrapper');
+        }}
+        if (markup.includes('<div class="scrollableInner"><section class="scrollableInner" data-slot="character">')) {{
+          throw new Error('character drawer body should be inserted directly without shell-owned scrollableInner wrapper');
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_build_vendor_first_preview_shell_keeps_full_drawer_body_slots_after_fixed_anchors():
+    node_script = textwrap.dedent(
+        f'''
+        import {{ pathToFileURL }} from 'node:url';
+        const shellModule = await import(pathToFileURL({json.dumps(str(VENDOR_SHELL_MODULE_PATH.resolve()))}).href);
+        const markup = shellModule.buildVendorFirstPreviewShell({{
+          settingsDrawerContentMarkup: '<section data-slot="settings">settings body</section>',
+          formattingDrawerContentMarkup: '<section data-slot="formatting">formatting body</section>',
+          characterDrawerContentMarkup: '<section data-slot="character">character body</section>',
+        }});
+
+        const requiredOrder = [
+          ['id="left-nav-panelheader"', 'id="lm_button_panel_pin_div"', 'data-slot="settings"'],
+          ['id="advanced-formatting-button"', 'id="AdvancedFormatting"', 'data-slot="formatting"'],
+          ['id="right-nav-panelheader"', 'id="CharListButtonAndHotSwaps"', 'data-slot="character"'],
+        ];
+
+        for (const tokens of requiredOrder) {{
+          const indexes = tokens.map((token) => markup.indexOf(token));
+          if (indexes.some((index) => index === -1)) {{
+            throw new Error(`missing required drawer slot anchor: ${{JSON.stringify(tokens)}}`);
+          }}
+          if (!(indexes[0] < indexes[1] && indexes[1] < indexes[2])) {{
+            throw new Error(`expected fixed anchors before inserted drawer body: ${{JSON.stringify(tokens)}}`);
+          }}
+        }}
+        '''
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_build_beautify_preview_document_uses_vendored_shell_without_preview_scene_switcher_markup():
@@ -1018,6 +1551,225 @@ def test_build_beautify_preview_document_disables_navigation_for_marked_example_
     )
 
 
+def test_build_beautify_preview_document_runtime_supports_character_search_grid_and_detail_toggles():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
+        if (!scriptMatch) throw new Error('missing preview behavior script');
+
+        function createClassList(initial = []) {
+          const set = new Set(initial);
+          return {
+            add(...tokens) {
+              tokens.forEach((token) => set.add(token));
+            },
+            remove(...tokens) {
+              tokens.forEach((token) => set.delete(token));
+            },
+            toggle(token, force) {
+              if (force === undefined) {
+                if (set.has(token)) {
+                  set.delete(token);
+                  return false;
+                }
+                set.add(token);
+                return true;
+              }
+              if (force) {
+                set.add(token);
+                return true;
+              }
+              set.delete(token);
+              return false;
+            },
+            contains(token) {
+              return set.has(token);
+            },
+          };
+        }
+
+        function createClickableNode(dataset = {}) {
+          return {
+            dataset,
+            handler: null,
+            addEventListener(type, handler) {
+              if (type === 'click') {
+                this.handler = handler;
+              }
+            },
+          };
+        }
+
+        const root = { dataset: { activePanel: 'none' } };
+        const chat = { scrollTop: 0, scrollHeight: 30 };
+        const searchForm = { style: { display: 'none' } };
+        const listBlock = { style: { display: 'block' }, classList: createClassList() };
+        const detailBlock = { style: { display: 'none' } };
+        const toggleSearch = createClickableNode({ previewAction: 'toggle-search' });
+        const toggleGrid = createClickableNode({ previewAction: 'toggle-grid' });
+        const showDetail = createClickableNode({ previewAction: 'show-detail' });
+        const showList = createClickableNode({ previewAction: 'show-list' });
+
+        const document = {
+          querySelector(selector) {
+            if (selector === '.st-preview-root') return root;
+            if (selector === '#chat') return chat;
+            if (selector === '#form_character_search_form') return searchForm;
+            if (selector === '#rm_print_characters_block') return listBlock;
+            if (selector === '#rm_ch_create_block') return detailBlock;
+            return null;
+          },
+          querySelectorAll(selector) {
+            if (selector === '[data-panel-target]' || selector === '.inline-drawer' || selector === '[data-preview-link="disabled"]' || selector === '[data-preview-disabled="true"]') {
+              return [];
+            }
+            if (selector === '.drawer-content[data-panel-surface]') {
+              return [];
+            }
+            if (selector === '[data-preview-action="toggle-search"]') {
+              return [toggleSearch];
+            }
+            if (selector === '[data-preview-action="toggle-grid"]') {
+              return [toggleGrid];
+            }
+            if (selector === '[data-preview-action="show-detail"]') {
+              return [showDetail];
+            }
+            if (selector === '[data-preview-action="show-list"]') {
+              return [showList];
+            }
+            return [];
+          },
+        };
+
+        const window = {
+          requestAnimationFrame(callback) {
+            callback();
+          },
+          addEventListener() {},
+        };
+
+        class CustomEvent {
+          constructor(type, options = {}) {
+            this.type = type;
+            this.bubbles = Boolean(options.bubbles);
+          }
+        }
+
+        const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
+        runScript(document, window, CustomEvent);
+
+        if (typeof toggleSearch.handler !== 'function') throw new Error('missing toggle-search click binding');
+        if (typeof toggleGrid.handler !== 'function') throw new Error('missing toggle-grid click binding');
+        if (typeof showDetail.handler !== 'function') throw new Error('missing show-detail click binding');
+        if (typeof showList.handler !== 'function') throw new Error('missing show-list click binding');
+
+        toggleSearch.handler({ preventDefault() {} });
+        if (searchForm.style.display !== 'block') throw new Error(`toggle-search should show search form, got ${searchForm.style.display}`);
+
+        toggleSearch.handler({ preventDefault() {} });
+        if (searchForm.style.display !== 'none') throw new Error(`toggle-search should hide search form, got ${searchForm.style.display}`);
+
+        toggleGrid.handler({ preventDefault() {} });
+        if (!listBlock.classList.contains('is-grid-view')) throw new Error('toggle-grid should enable grid view');
+
+        toggleGrid.handler({ preventDefault() {} });
+        if (listBlock.classList.contains('is-grid-view')) throw new Error('toggle-grid should disable grid view');
+
+        showDetail.handler({ preventDefault() {} });
+        if (listBlock.style.display !== 'none') throw new Error(`show-detail should hide list block, got ${listBlock.style.display}`);
+        if (detailBlock.style.display !== 'block') throw new Error(`show-detail should show detail block, got ${detailBlock.style.display}`);
+
+        showList.handler({ preventDefault() {} });
+        if (listBlock.style.display !== 'block') throw new Error(`show-list should show list block, got ${listBlock.style.display}`);
+        if (detailBlock.style.display !== 'none') throw new Error(`show-list should hide detail block, got ${detailBlock.style.display}`);
+        '''
+    )
+
+
+def test_build_beautify_preview_document_runtime_prevents_preview_disabled_actions():
+    run_preview_document_check(
+        '''
+        const html = module.buildBeautifyPreviewDocument({ platform: 'pc', theme: {} });
+
+        const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
+        if (!scriptMatch) throw new Error('missing preview behavior script');
+
+        let disabledHandler = null;
+        const root = { dataset: { activePanel: 'none' } };
+        const chat = { scrollTop: 0, scrollHeight: 12 };
+        const disabledAction = {
+          addEventListener(type, handler) {
+            if (type === 'click') {
+              disabledHandler = handler;
+            }
+          },
+        };
+
+        const document = {
+          querySelector(selector) {
+            if (selector === '.st-preview-root') return root;
+            if (selector === '#chat') return chat;
+            return null;
+          },
+          querySelectorAll(selector) {
+            if (selector === '[data-preview-disabled="true"]') return [disabledAction];
+            if (
+              selector === '[data-panel-target]' ||
+              selector === '.drawer-content[data-panel-surface]' ||
+              selector === '.inline-drawer' ||
+              selector === '[data-preview-link="disabled"]' ||
+              selector === '[data-preview-action="toggle-search"]' ||
+              selector === '[data-preview-action="toggle-grid"]' ||
+              selector === '[data-preview-action="show-detail"]' ||
+              selector === '[data-preview-action="show-list"]'
+            ) {
+              return [];
+            }
+            return [];
+          },
+        };
+
+        const window = {
+          requestAnimationFrame(callback) {
+            callback();
+          },
+          addEventListener() {},
+        };
+
+        class CustomEvent {
+          constructor(type, options = {}) {
+            this.type = type;
+            this.bubbles = Boolean(options.bubbles);
+          }
+        }
+
+        const runScript = new Function('document', 'window', 'CustomEvent', scriptMatch[1]);
+        runScript(document, window, CustomEvent);
+
+        if (typeof disabledHandler !== 'function') throw new Error('missing preview-disabled click binding');
+
+        let preventDefaultCalls = 0;
+        let stopPropagationCalls = 0;
+        const event = {
+          preventDefault() {
+            preventDefaultCalls += 1;
+          },
+          stopPropagation() {
+            stopPropagationCalls += 1;
+          },
+        };
+
+        disabledHandler(event);
+
+        if (preventDefaultCalls !== 1) throw new Error(`expected one preventDefault call, got ${preventDefaultCalls}`);
+        if (stopPropagationCalls !== 1) throw new Error(`expected one stopPropagation call, got ${stopPropagationCalls}`);
+        '''
+    )
+
+
 def test_build_beautify_preview_document_uses_host_owned_active_scene_for_initial_message_render():
     run_preview_document_check(
         '''
@@ -1312,11 +2064,18 @@ def test_build_beautify_preview_sample_markup_contains_st_character_result_info_
           'data-i18n="[title]Total tokens"',
           '<span data-i18n="Calculating...">Calculating...</span>',
           '<small title="Permanent tokens" data-i18n="[title]Permanent tokens">',
-          'id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token &#39;Limits&#39;"',
-          'data-i18n="[title]About Token &#39;Limits&#39;"',
-          'class="fa-solid fa-ranking-star right_menu_button rm_stats_button" title="Click for stats!"',
+          'id="chartokenwarning"',
+          'href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens"',
+          'target="_blank"',
+          "About Token 'Limits'",
+          'class="right_menu_button fa-solid fa-triangle-exclamation"',
+          "[title]About Token 'Limits'",
+          'class="fa-solid fa-ranking-star right_menu_button rm_stats_button"',
+          'title="Click for stats!"',
           'data-i18n="[title]Click for stats!"',
-          'id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" title="Toggle character info panel"',
+          'id="hideCharPanelAvatarButton"',
+          'class="fa-solid fa-eye right_menu_button"',
+          'title="Toggle character info panel"',
           'data-i18n="[title]Toggle character info panel"',
         ]) {
           if (!html.includes(token)) throw new Error(`missing token: ${token}`);

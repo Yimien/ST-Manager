@@ -1,4 +1,14 @@
 import { buildVendorFirstPreviewShell } from '../../vendor/sillytavern/preview-shell.js';
+import {
+  CHARACTER_DRAWER_VENDOR_MARKUP,
+  FORMATTING_DRAWER_VENDOR_MARKUP,
+  SETTINGS_DRAWER_VENDOR_MARKUP,
+} from '../../vendor/sillytavern/preview-drawers.js';
+import {
+  buildCharacterDrawerPreviewMarkupFromVendor,
+  buildFormattingDrawerPreviewMarkupFromVendor,
+  buildSettingsDrawerPreviewMarkupFromVendor,
+} from './beautifyPreviewDrawerAdapters.js';
 
 export const DEFAULT_PREVIEW_SCENE_ID = 'daily';
 
@@ -583,68 +593,6 @@ function buildPreviewSceneMessages(scene, previewIdentities) {
     .join("");
 }
 
-function buildSettingsDrawerPreviewMarkup() {
-  return `
-    <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open">
-      <div class="right_menu_button"></div>
-      <div class="unchecked fa-solid fa-unlock right_menu_button"></div>
-      <div class="checked fa-solid fa-lock right_menu_button"></div>
-    </div>
-    <div id="clickSlidersTips" class="toggle-description">Click slider numbers to input manually.</div>
-    <a class="topRightInset notes-link" href="#" title="Documentation on sampling parameters.">
-      <span class="note-link-span fa-solid fa-circle-question"></span>
-    </a>
-    <div class="options-content" id="table_drawer_content">
-      <div class="margin0 title_restorable standoutHeader"><strong><span>Chat Completion Presets</span></strong></div>
-      <div class="flex-container flexNoGap">
-        <select id="settings_preset" class="flex1 text_pole"><option>Default</option></select>
-        <div class="flex-container marginLeft5 gap3px"><div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-save"></i></div></div>
-      </div>
-      <div class="online_status"><div class="online_status_indicator"></div><div class="online_status_text">Connected</div></div>
-      <div class="inline-drawer wide100p">
-        <div class="inline-drawer-toggle inline-drawer-header"><div class="inline-drawer-icon down"></div><b>Quick Prompts Edit</b><div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div></div>
-        <div class="inline-drawer-content"><textarea id="main_prompt_quick_edit_textarea" class="text_pole textarea_compact" rows="3">{{main}}</textarea></div>
-      </div>
-      <label class="st-preview-setting-row"><span>Blur Strength</span><input type="range" min="0" max="30" value="10"></label>
-    </div>
-  `;
-}
-
-function buildFormattingDrawerPreviewMarkup(scenePromptContent) {
-  return `
-    <div class="flex-container alignItemsBaseline">
-      <h3 class="margin0 flex1 flex-container alignItemsBaseline"><span class="standoutHeader">Advanced Formatting</span></h3>
-      <div class="flex-container"><div id="af_master_export" class="menu_button menu_button_icon" title="Export Advanced Formatting settings"><i class="fa-solid fa-file-export"></i><span>Export</span></div></div>
-    </div>
-    <div id="advanced-formatting-cc-notice" class="info-block warning"><i class="fa-solid fa-triangle-exclamation"></i><span>Preview-only formatting surfaces.</span></div>
-    <div id="ContextSettings" class="flex-container flexNoGap flexFlowColumn flex1">
-      <select id="context_presets" class="flex1 text_pole"><option>Default Context</option></select>
-      <textarea id="context_story_string" class="text_pole textarea_compact" rows="3">${escapeHtml(scenePromptContent)}</textarea>
-      <textarea id="context_chat_start" class="text_pole textarea_compact" rows="2">### Response:</textarea>
-    </div>
-    <div id="InstructSettingsColumn" class="flex-container flexNoGap flexFlowColumn flex1">
-      <select id="instruct_presets" class="flex1 text_pole"><option>Roleplay Default</option></select>
-      <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" placeholder="e.g. /llama(-)?[3|3.1]/i">
-      <label for="instruct_wrap" class="checkbox_label"><input id="instruct_wrap" type="checkbox" checked><small>Wrap Sequences with Newline</small></label>
-    </div>
-  `;
-}
-
-function buildCharacterDrawerPreviewMarkup(previewIdentities) {
-  return `
-    <div><h2 class="interactable">${escapeHtml(previewIdentities.character.name)}</h2></div>
-    <div class="st-preview-character-card">
-      <div class="avatar-container selected"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div></div>
-      <div class="st-preview-character-copy">
-        <div class="ch_name"><span class="name_text">${escapeHtml(previewIdentities.character.name)}</span></div>
-        <div id="result_info" class="flex-container" style="display: none;"><div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference."><div><strong id="result_info_total_tokens" title="Total tokens" data-i18n="[title]Total tokens"><span data-i18n="Calculating...">Calculating...</span></strong>&nbsp;<span data-i18n="Tokens">Tokens</span></div><div><small title="Permanent tokens" data-i18n="[title]Permanent tokens">(<span id="result_info_permanent_tokens"></span>&nbsp;<span data-i18n="Permanent">Permanent</span>)</small></div></div><a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token &#39;Limits&#39;" data-i18n="[title]About Token &#39;Limits&#39;"></a><i class="fa-solid fa-ranking-star right_menu_button rm_stats_button" title="Click for stats!" data-i18n="[title]Click for stats!"></i><i id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" title="Toggle character info panel" data-i18n="[title]Toggle character info panel"></i></div>
-        <div class="character_select"><div class="avatar"><img alt="${escapeHtml(previewIdentities.character.name)}" src="${escapeHtml(previewIdentities.character.avatarSrc)}"></div><div class="character_name_block"><h2>${escapeHtml(previewIdentities.character.name)}</h2><div class="ch_additional_info">默认演示角色</div></div></div>
-        <div class="st-preview-character-tags">fantasy · guide · preview persona</div>
-      </div>
-    </div>
-  `;
-}
-
 const VENDORED_ST_STYLESHEETS = [
   "/static/vendor/sillytavern/css/fontawesome.min.css",
   "/static/vendor/sillytavern/css/solid.min.css",
@@ -734,6 +682,87 @@ function buildPreviewBehaviorScript() {
         });
       };
 
+      const bindPreviewDisabledActions = () => {
+        document.querySelectorAll('[data-preview-disabled="true"]').forEach((node) => {
+          if (node.__stPreviewDisabledBound) {
+            return;
+          }
+          node.__stPreviewDisabledBound = true;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (typeof event.stopPropagation === 'function') {
+              event.stopPropagation();
+            }
+          });
+        });
+      };
+
+      const bindCharacterDrawerControls = () => {
+        const searchForm = document.querySelector('#form_character_search_form');
+        const characterList = document.querySelector('#rm_print_characters_block');
+        const characterDetail = document.querySelector('#rm_ch_create_block');
+
+        document.querySelectorAll('[data-preview-action="toggle-search"]').forEach((node) => {
+          if (node.__stPreviewToggleSearchBound) {
+            return;
+          }
+          node.__stPreviewToggleSearchBound = true;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (!searchForm || !searchForm.style) {
+              return;
+            }
+            searchForm.style.display = searchForm.style.display === 'none' ? 'block' : 'none';
+          });
+        });
+
+        document.querySelectorAll('[data-preview-action="toggle-grid"]').forEach((node) => {
+          if (node.__stPreviewToggleGridBound) {
+            return;
+          }
+          node.__stPreviewToggleGridBound = true;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (!characterList || !characterList.classList) {
+              return;
+            }
+            characterList.classList.toggle('is-grid-view');
+          });
+        });
+
+        document.querySelectorAll('[data-preview-action="show-detail"]').forEach((node) => {
+          if (node.__stPreviewShowDetailBound) {
+            return;
+          }
+          node.__stPreviewShowDetailBound = true;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (characterList && characterList.style) {
+              characterList.style.display = 'none';
+            }
+            if (characterDetail && characterDetail.style) {
+              characterDetail.style.display = 'block';
+            }
+          });
+        });
+
+        document.querySelectorAll('[data-preview-action="show-list"]').forEach((node) => {
+          if (node.__stPreviewShowListBound) {
+            return;
+          }
+          node.__stPreviewShowListBound = true;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (characterList && characterList.style) {
+              characterList.style.display = 'block';
+            }
+            if (characterDetail && characterDetail.style) {
+              characterDetail.style.display = 'none';
+            }
+          });
+        });
+      };
+
       const scrollChatToBottom = () => {
         const chat = document.querySelector('#chat');
         if (!chat) {
@@ -762,6 +791,8 @@ function buildPreviewBehaviorScript() {
 
       sync(root.dataset.activePanel || 'none');
       bindPreviewLinks();
+      bindPreviewDisabledActions();
+      bindCharacterDrawerControls();
       window.requestAnimationFrame(scrollChatToBottom);
       window.addEventListener('load', scrollChatToBottom);
     })();
@@ -815,9 +846,15 @@ export function buildBeautifyPreviewSampleMarkup(
   theme = {},
   identities = {},
   activeScene = "",
+  detail = {},
 ) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
   const previewIdentities = buildPreviewIdentities(identities);
+  const vendorDrawerMarkup = {
+    settings: SETTINGS_DRAWER_VENDOR_MARKUP,
+    formatting: FORMATTING_DRAWER_VENDOR_MARKUP,
+    character: CHARACTER_DRAWER_VENDOR_MARKUP,
+  };
   const previewScenes = buildPreviewScenes(normalizedPlatform);
   const selectedScene =
     previewScenes.find((scene) => scene.id === activeScene) ||
@@ -829,11 +866,19 @@ export function buildBeautifyPreviewSampleMarkup(
     sendFormClasses.push("compact");
   }
 
-  const settingsDrawerContentMarkup = buildSettingsDrawerPreviewMarkup();
-  const formattingDrawerContentMarkup = buildFormattingDrawerPreviewMarkup(
-    getPreviewSceneContextStoryString(selectedScene.id),
-  );
-  const characterDrawerContentMarkup = buildCharacterDrawerPreviewMarkup(previewIdentities);
+  const settingsDrawerContentMarkup = buildSettingsDrawerPreviewMarkupFromVendor({
+    theme,
+    vendorMarkup: vendorDrawerMarkup.settings,
+  });
+  const formattingDrawerContentMarkup = buildFormattingDrawerPreviewMarkupFromVendor({
+    scenePromptContent: getPreviewSceneContextStoryString(selectedScene.id),
+    vendorMarkup: vendorDrawerMarkup.formatting,
+  });
+  const characterDrawerContentMarkup = buildCharacterDrawerPreviewMarkupFromVendor({
+    identities: previewIdentities,
+    detail,
+    vendorMarkup: vendorDrawerMarkup.character,
+  });
   const chatMarkup = buildPreviewSceneMessages(selectedScene, previewIdentities);
 
   return buildVendorFirstPreviewShell({
@@ -852,6 +897,7 @@ export function buildBeautifyPreviewDocument({
   platform = "pc",
   identities = {},
   activeScene = "",
+  detail = {},
 } = {}) {
   const normalizedPlatform = platform === "mobile" ? "mobile" : "pc";
   const themeVars = buildBeautifyPreviewThemeVars(theme, wallpaperUrl, normalizedPlatform);
@@ -868,6 +914,7 @@ export function buildBeautifyPreviewDocument({
     theme,
     identities,
     activeScene,
+    detail,
   );
   const behaviorScript = buildPreviewBehaviorScript();
   const contentSecurityPolicy = escapeHtml(buildPreviewContentSecurityPolicy());

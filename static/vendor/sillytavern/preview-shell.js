@@ -35,7 +35,7 @@ export function buildVendorFirstPreviewShell({
                   <div class="checked fa-solid fa-lock right_menu_button"></div>
                 </label>
               </div>
-              <div class="scrollableInner">${settingsDrawerContentMarkup}</div>
+              ${settingsDrawerContentMarkup}
             </div>
           </div>
 
@@ -53,7 +53,7 @@ export function buildVendorFirstPreviewShell({
               <div class="drawer-icon fa-solid fa-font fa-fw closedIcon" title="AI Response Formatting"></div>
             </div>
             <div id="AdvancedFormatting" class="drawer-content closedDrawer" data-panel-surface="formatting">
-              <div class="scrollableInner">${formattingDrawerContentMarkup}</div>
+              ${formattingDrawerContentMarkup}
             </div>
           </div>
 
@@ -121,7 +121,7 @@ export function buildVendorFirstPreviewShell({
                   <div class="hotswap avatars_inline scroll-reset-container expander"></div>
                 </div>
               </div>
-              <div class="scrollableInner">${characterDrawerContentMarkup}</div>
+              ${characterDrawerContentMarkup}
             </nav>
           </div>
         </div>

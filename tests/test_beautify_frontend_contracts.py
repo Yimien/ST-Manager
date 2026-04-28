@@ -2671,6 +2671,59 @@ def test_beautify_preview_frame_resolve_preview_state_includes_host_owned_active
     )
 
 
+def test_beautify_preview_frame_passes_trimmed_package_meta_to_preview_document_builder():
+    run_beautify_preview_frame_runtime_check(
+        '''
+        const host = { innerHTML: '', __events: [] };
+        const component = module.default();
+        component.$store = {
+          global: {
+            beautifyWorkspace: 'packages',
+            beautifyPreviewDevice: 'pc',
+            beautifyActiveDetail: {
+              name: '  Warm Demo  ',
+              tags: [' night ', 'oled', '', '   ', ' dusk', 'sunrise ', ' cozy ', 'mono', 'contrast', ' late'],
+              notes: '  drawer preview notes  ',
+              identity_overrides: {},
+              wallpapers: {},
+            },
+            beautifyActiveVariant: {
+              theme_data: { name: 'Demo' },
+              selected_wallpaper_id: '',
+            },
+            beautifyActiveWallpaper: null,
+            beautifyGlobalSettings: {
+              wallpaper: null,
+              identities: {
+                character: { name: '全局角色', avatar_file: '' },
+                user: { name: '全局用户', avatar_file: '' },
+              },
+            },
+          },
+        };
+        component.$refs = { previewHost: host };
+
+        component.isPreviewLoaded = true;
+        component.renderPreview();
+
+        const renderEvent = host.__events.find((entry) => entry.type === 'render');
+        if (!renderEvent) {
+          throw new Error('expected preview render event');
+        }
+        const payload = JSON.parse(renderEvent.options.htmlPayload || '{}');
+        if (payload.detail?.packageName !== 'Warm Demo') {
+          throw new Error(`expected trimmed packageName, got ${payload.detail?.packageName}`);
+        }
+        if (JSON.stringify(payload.detail?.tags || []) !== JSON.stringify(['night', 'oled', 'dusk', 'sunrise', 'cozy', 'mono', 'contrast', 'late'])) {
+          throw new Error(`expected trimmed tags, got ${JSON.stringify(payload.detail?.tags || [])}`);
+        }
+        if (payload.detail?.notes !== 'drawer preview notes') {
+          throw new Error(`expected trimmed notes, got ${payload.detail?.notes}`);
+        }
+      '''
+    )
+
+
 def test_beautify_preview_frame_resolve_preview_state_uses_viewport_aware_shell_for_dual_target():
     run_beautify_preview_frame_runtime_check(
         '''
