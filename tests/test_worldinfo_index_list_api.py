@@ -13,7 +13,6 @@ if str(ROOT) not in sys.path:
 
 from core.api.v1 import world_info as world_info_api
 from core.data.index_runtime_store import ensure_index_runtime_schema
-from core.data.index_store import ensure_index_schema
 
 
 class _FakeCache:

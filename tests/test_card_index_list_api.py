@@ -15,7 +15,6 @@ if str(ROOT) not in sys.path:
 
 from core.api.v1 import cards as cards_api
 from core.data.index_runtime_store import ensure_index_runtime_schema
-from core.data.index_store import ensure_index_schema
 from core.data import ui_store as ui_store_module
 from core.data.ui_store import get_tag_taxonomy
 from core.services.card_index_query_service import query_indexed_cards

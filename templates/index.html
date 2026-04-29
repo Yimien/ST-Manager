@@ -3,7 +3,7 @@
 <!-- 顶部导航栏 -->
 {% include "components/header.html" %}
 
-<div class="main-container">
+<div class="main-container" x-data="beautifyGrid">
   <!-- 侧边栏 -->
   {% include "components/sidebar.html" %}
 
@@ -31,6 +31,9 @@
 
     <!-- 模式 4: 预设网格 -->
     {% include "components/grid_presets.html" %}
+
+    <!-- 模式 5: 美化库 -->
+    {% include "components/grid_beautify.html" %}
   </main>
 </div>
 
@@ -40,7 +43,9 @@
 <!-- 核心详情页 -->
 {% include "modals/detail_card.html" %} {% include
 "modals/detail_wi_fullscreen.html" %} {% include "modals/detail_wi_popup.html"
-%} {% include "modals/detail_preset_popup.html" %}
+%} {% include "modals/detail_preset_popup.html" %} {% include
+"modals/detail_preset_fullscreen.html" %} {% include
+"modals/preset_version_merge.html" %}
 
 <!-- 设置与工具 -->
 {% include "modals/settings.html" %} {% include "modals/advanced_editor.html" %}

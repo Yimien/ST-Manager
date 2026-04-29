@@ -52,6 +52,13 @@ class GlobalMetadataCache:
 
         return [str(t).strip() for t in raw_tags if str(t).strip()]
 
+    def _rebuild_global_tags_locked(self):
+        tags = set()
+        for card in self.id_map.values():
+            for tag in self._normalize_tags(card.get('tags')):
+                tags.add(tag)
+        self.global_tags = sorted(tags)
+
     def update_card_data(self, card_id, new_data):
         """
         [增量更新] 原地更新单个卡片对象的字段，无需重载数据库。
@@ -85,10 +92,7 @@ class GlobalMetadataCache:
                 
                 # 4. 更新全局标签池
                 if 'tags' in new_data:
-                    current_tags = set(self.global_tags)
-                    for t in card.get('tags', []):
-                        current_tags.add(t)
-                    self.global_tags = sorted(list(current_tags))
+                    self._rebuild_global_tags_locked()
 
                 return card
             return None
@@ -98,6 +102,22 @@ class GlobalMetadataCache:
         [增量更新] 文件夹移动/重命名时的批量更新。
         """
         with self.lock:
+            new_bundle_map = {}
+            for bundle_dir, bundle_card_id in self.bundle_map.items():
+                if bundle_dir == old_path_prefix:
+                    remapped_dir = new_path_prefix
+                elif bundle_dir.startswith(old_path_prefix + '/'):
+                    remapped_dir = new_path_prefix + bundle_dir[len(old_path_prefix):]
+                else:
+                    remapped_dir = bundle_dir
+
+                if bundle_card_id.startswith(old_path_prefix + '/'):
+                    remapped_card_id = new_path_prefix + bundle_card_id[len(old_path_prefix):]
+                else:
+                    remapped_card_id = bundle_card_id
+
+                new_bundle_map[remapped_dir] = remapped_card_id
+
             # 1. 找出所有受影响的卡片 ID
             affected_ids = []
             for cid in self.id_map.keys():
@@ -132,6 +152,18 @@ class GlobalMetadataCache:
                     elif b_dir.startswith(old_path_prefix + '/'):
                         card['bundle_dir'] = new_path_prefix + b_dir[len(old_path_prefix):]
 
+                    remapped_bundle_dir = card.get('bundle_dir', '')
+                    card['category'] = remapped_bundle_dir.rsplit('/', 1)[0] if '/' in remapped_bundle_dir else ''
+
+                    versions = card.get('versions')
+                    if isinstance(versions, list):
+                        for version in versions:
+                            if not isinstance(version, dict):
+                                continue
+                            version_id = str(version.get('id') or '')
+                            if version_id.startswith(old_path_prefix + '/'):
+                                version['id'] = new_path_prefix + version_id[len(old_path_prefix):]
+
                 # 更新 URL
                 encoded_id = quote(new_id)
                 mtime = card.get('last_modified', 0)
@@ -139,6 +171,8 @@ class GlobalMetadataCache:
                 card['thumb_url'] = f"/api/thumbnail/{encoded_id}?t={mtime}"
 
                 self.id_map[new_id] = card
+
+            self.bundle_map = new_bundle_map
 
             # 3. 重算计数 (全量重算最稳妥)
             self._recalculate_counts()
@@ -166,11 +200,7 @@ class GlobalMetadataCache:
             if card_id in self.id_map:
                 card = self.id_map[card_id]
                 card['tags'] = self._normalize_tags(new_tags)
-                
-                temp_tags = set(self.global_tags)
-                for t in card['tags']:
-                    temp_tags.add(t)
-                self.global_tags = sorted(list(temp_tags))
+                self._rebuild_global_tags_locked()
 
     def move_card_update(self, old_id, new_id, old_category, new_category, new_filename, full_path):
         """[增量更新] 单卡移动/重命名"""
@@ -193,6 +223,47 @@ class GlobalMetadataCache:
                 card['thumb_url'] = f"/api/thumbnail/{encoded_id}?t={mtime}"
                 
                 self.id_map[new_id] = card
+
+                source_bundle_id = self.bundle_map.get(old_category)
+                target_bundle_id = self.bundle_map.get(new_category)
+
+                if source_bundle_id and source_bundle_id == target_bundle_id:
+                    bundle_card = self.id_map.get(source_bundle_id)
+                    versions = bundle_card.get('versions') if isinstance(bundle_card, dict) else None
+                    if isinstance(versions, list):
+                        for version in versions:
+                            if not isinstance(version, dict):
+                                continue
+                            if version.get('id') in {old_id, new_id}:
+                                version['id'] = new_id
+                                version['filename'] = new_filename
+                                break
+                        else:
+                            versions.append({'id': new_id, 'filename': new_filename})
+                else:
+                    if source_bundle_id:
+                        source_bundle = self.id_map.get(source_bundle_id)
+                        source_versions = source_bundle.get('versions') if isinstance(source_bundle, dict) else None
+                        if isinstance(source_versions, list):
+                            source_bundle['versions'] = [
+                                version
+                                for version in source_versions
+                                if not (isinstance(version, dict) and version.get('id') == old_id)
+                            ]
+
+                    if target_bundle_id:
+                        target_bundle = self.id_map.get(target_bundle_id)
+                        target_versions = target_bundle.get('versions') if isinstance(target_bundle, dict) else None
+                        if isinstance(target_versions, list):
+                            for version in target_versions:
+                                if not isinstance(version, dict):
+                                    continue
+                                if version.get('id') in {old_id, new_id}:
+                                    version['id'] = new_id
+                                    version['filename'] = new_filename
+                                    break
+                            else:
+                                target_versions.append({'id': new_id, 'filename': new_filename})
                 
                 if old_category != new_category:
                     self._update_category_count(old_category, -1)

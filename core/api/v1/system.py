@@ -4,6 +4,7 @@ import platform
 import subprocess
 import shutil
 import logging
+import tempfile
 import time
 import re
 import uuid
@@ -16,7 +17,14 @@ from core.config import (
     load_config, save_config, get_cards_folder
 )
 from core.context import ctx
-from core.data.ui_store import load_ui_data, save_ui_data, set_last_sent_to_st, UI_DATA_FILE
+from core.data.ui_store import (
+    UI_DATA_FILE,
+    get_shared_wallpaper_library,
+    load_ui_data,
+    save_ui_data,
+    set_last_sent_to_st,
+    set_shared_wallpaper_library,
+)
 from core.consts import SIDECAR_EXTENSIONS, RESERVED_RESOURCE_NAMES
 
 # === 核心服务 ===
@@ -24,8 +32,11 @@ from core.services.scan_service import request_scan, suppress_fs_events
 from core.services.cache_service import schedule_reload, invalidate_wi_list_cache, update_card_cache
 from core.services.card_service import resolve_ui_key
 from core.services.index_service import get_index_status, request_index_rebuild
+from core.services.shared_wallpaper_service import SharedWallpaperService
 from core.services.st_client import refresh_st_client
 from core.services.st_auth import STAuthError, build_st_http_client
+from core.services.st_path_safety import evaluate_st_path_safety
+from core.services.user_db_backup_service import UserDbBackupService
 
 # === 工具函数 ===
 from core.utils.filesystem import (
@@ -37,7 +48,45 @@ from core.utils.hash import _calculate_data_hash
 
 bp = Blueprint('system', __name__)
 
+
+REMOVED_ST_PRESET_DIRECTORY_KEYS = (
+    'st_textgen_preset_dir',
+    'st_instruct_preset_dir',
+    'st_context_preset_dir',
+    'st_sysprompt_dir',
+    'st_reasoning_dir',
+)
+
 logger = logging.getLogger(__name__)
+
+_shared_wallpaper_service = None
+_user_db_backup_service = None
+
+
+def get_shared_wallpaper_service():
+    global _shared_wallpaper_service
+    if _shared_wallpaper_service is None:
+        _shared_wallpaper_service = SharedWallpaperService()
+    return _shared_wallpaper_service
+
+
+def get_user_db_backup_service():
+    global _user_db_backup_service
+    if _user_db_backup_service is None:
+        _user_db_backup_service = UserDbBackupService()
+    return _user_db_backup_service
+
+
+def _serialize_shared_wallpaper_items(items):
+    return [items[wallpaper_id] for wallpaper_id in sorted(items.keys())]
+
+
+def _save_upload_to_temp(upload):
+    suffix = os.path.splitext(upload.filename or '')[1]
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    upload.save(temp_path)
+    return temp_path
 
 
 def _format_st_auth_error(error):
@@ -161,6 +210,35 @@ def _is_valid_lorebook_path(path: str) -> bool:
 
     return False
 
+
+def _is_valid_preset_path(path: str) -> bool:
+    if not path:
+        return False
+    cfg = load_config()
+    raw_presets = cfg.get('presets_dir', 'data/library/presets')
+    presets_root = raw_presets if os.path.isabs(raw_presets) else os.path.join(BASE_DIR, raw_presets)
+
+    raw_res = cfg.get('resources_dir', 'data/assets/card_assets')
+    res_root = raw_res if os.path.isabs(raw_res) else os.path.join(BASE_DIR, raw_res)
+
+    if _is_under_base(path, presets_root):
+        return True
+
+    if _is_under_base(path, res_root):
+        rel_path = os.path.relpath(path, res_root).replace('\\', '/')
+        return '/presets/' in f'/{rel_path}/'
+
+    return False
+
+
+def _extract_settings_save_payload(raw_payload):
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    nested_config = payload.get('config') if isinstance(payload.get('config'), dict) else None
+    config = dict(nested_config if nested_config is not None else payload)
+    config.pop('confirm_risky_paths', None)
+    confirm_risky_paths = bool(payload.get('confirm_risky_paths'))
+    return config, confirm_risky_paths
+
 @bp.route('/api/status')
 def api_status():
     return jsonify(ctx.init_status)
@@ -190,12 +268,44 @@ def api_scan_now():
     except Exception as e:
         return jsonify({"success": False, "msg": str(e)})
 
+
+@bp.route('/api/settings_path_safety', methods=['POST'])
+def api_settings_path_safety():
+    config, _confirm_risky_paths = _extract_settings_save_payload(request.get_json(silent=True) or {})
+    evaluation = evaluate_st_path_safety(config)
+    return jsonify({'success': True, **evaluation})
+
 @bp.route('/api/save_settings', methods=['POST'])
 def api_save_settings():
     try:
-        new_config = request.json
-        save_config(new_config)
+        new_config, confirm_risky_paths = _extract_settings_save_payload(request.get_json(silent=True) or {})
+        evaluation = evaluate_st_path_safety(new_config)
+        if evaluation['conflicts'] and not confirm_risky_paths:
+            return jsonify({'success': False, 'requires_confirmation': True, **evaluation}), 409
+
+        config_payload = dict(new_config or {})
+        config_payload.pop('manager_wallpaper_id', None)
+        config_payload.pop('shared_wallpapers', None)
+        for key in REMOVED_ST_PRESET_DIRECTORY_KEYS:
+            config_payload.pop(key, None)
+        if not save_config(config_payload):
+            return jsonify({'success': False, 'msg': '保存配置失败'}), 500
+
         refresh_st_client()
+
+        ui_data = load_ui_data()
+        shared_wallpaper_library = get_shared_wallpaper_library(ui_data)
+        manager_wallpaper_id = shared_wallpaper_library.get('manager_wallpaper_id', '')
+        if isinstance(new_config, dict) and 'manager_wallpaper_id' in new_config:
+            manager_wallpaper_id = str(new_config.get('manager_wallpaper_id') or '').strip()
+        next_shared_wallpaper_payload = {
+            'items': dict(shared_wallpaper_library.get('items') or {}),
+            'manager_wallpaper_id': manager_wallpaper_id,
+            'preview_wallpaper_id': shared_wallpaper_library.get('preview_wallpaper_id', ''),
+        }
+        if set_shared_wallpaper_library(ui_data, next_shared_wallpaper_payload):
+            save_ui_data(ui_data)
+
         # 确保新卡片目录存在（使用动态路径解析）
         new_full_path = get_cards_folder()
         if not os.path.exists(new_full_path):
@@ -222,13 +332,19 @@ def api_save_settings():
             except Exception as e:
                 logger.warning(f"无法创建聊天目录 {chats_path}: {str(e)}")
 
-        return jsonify({"success": True})
+        response = {'success': True}
+        if evaluation['conflicts']:
+            response.update({'saved_with_warnings': True, **evaluation})
+        return jsonify(response)
     except Exception as e:
         return jsonify({"success": False, "msg": str(e)})
 
 @bp.route('/api/get_settings')
 def api_get_settings():
-    cfg = load_config()
+    cfg = dict(load_config())
+    for key in REMOVED_ST_PRESET_DIRECTORY_KEYS:
+        cfg.pop(key, None)
+
     # 确保有默认值，防止前端 undefined
     if 'cards_dir' not in cfg:
         cfg['cards_dir'] = 'data/library/characters'
@@ -238,13 +354,101 @@ def api_get_settings():
         cfg['chats_dir'] = 'data/library/chats'
     if 'presets_dir' not in cfg:
         cfg['presets_dir'] = 'data/library/presets'
+    if 'st_openai_preset_dir' not in cfg:
+        cfg['st_openai_preset_dir'] = ''
     if 'quick_replies_dir' not in cfg:
         cfg['quick_replies_dir'] = 'data/library/extensions/quick-replies'
     if 'default_sort' not in cfg:
         cfg['default_sort'] = 'date_desc'
     if 'show_header_sort' not in cfg:
         cfg['show_header_sort'] = True
+
+    shared_wallpaper_library = get_shared_wallpaper_service().migrate_legacy_backgrounds({
+        'bg_url': cfg.get('bg_url', ''),
+    })
+    cfg['manager_wallpaper_id'] = shared_wallpaper_library.get('manager_wallpaper_id', '')
+    cfg['shared_wallpapers'] = _serialize_shared_wallpaper_items(shared_wallpaper_library.get('items') or {})
     return jsonify(cfg)
+
+
+@bp.route('/api/shared-wallpapers/import', methods=['POST'])
+def api_import_shared_wallpaper():
+    upload = request.files.get('file')
+    if not upload:
+        return jsonify({'success': False, 'msg': '请上传壁纸文件'}), 400
+
+    selection_target = str(request.form.get('selection_target') or '').strip()
+    if selection_target and selection_target not in ('manager', 'preview'):
+        return jsonify({'success': False, 'msg': '无效的 selection_target'}), 400
+    temp_path = _save_upload_to_temp(upload)
+    try:
+        item = get_shared_wallpaper_service().import_wallpaper(
+            temp_path,
+            selection_target=selection_target,
+            source_name=upload.filename,
+        )
+        if not item:
+            return jsonify({'success': False, 'msg': '导入壁纸失败，请确认文件是有效图片'}), 400
+        return jsonify({'success': True, 'item': item})
+    except ValueError as exc:
+        return jsonify({'success': False, 'msg': str(exc)}), 400
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+@bp.route('/api/user-db-backup/export', methods=['POST'])
+def api_export_user_db_backup():
+    try:
+        result = get_user_db_backup_service().export_backup()
+        return jsonify({'success': True, 'msg': '已备份用户 DB 数据', **result})
+    except ValueError as exc:
+        return jsonify({'success': False, 'msg': str(exc)}), 400
+    except Exception as exc:
+        logger.exception('导出用户 DB 备份失败: %s', exc)
+        return jsonify({'success': False, 'msg': str(exc)}), 500
+
+
+@bp.route('/api/user-db-backup/import', methods=['POST'])
+def api_import_user_db_backup():
+    upload = request.files.get('file')
+    if not upload or not (upload.filename or '').lower().endswith('.json'):
+        return jsonify({'success': False, 'msg': '请上传 JSON 备份文件'}), 400
+
+    temp_path = _save_upload_to_temp(upload)
+    try:
+        result = get_user_db_backup_service().import_backup(
+            temp_path,
+            source_name=upload.filename,
+        )
+        return jsonify({'success': True, 'msg': '用户 DB 数据导入完成', **result})
+    except ValueError as exc:
+        return jsonify({'success': False, 'msg': str(exc)}), 400
+    except Exception as exc:
+        logger.exception('导入用户 DB 备份失败: %s', exc)
+        return jsonify({'success': False, 'msg': str(exc)}), 500
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+@bp.route('/api/shared-wallpapers/select', methods=['POST'])
+def api_select_shared_wallpaper():
+    payload = request.get_json(silent=True) or {}
+    wallpaper_id = str(payload.get('wallpaper_id') or '').strip()
+    selection_target = str(payload.get('selection_target') or '').strip()
+    if not wallpaper_id or not selection_target:
+        return jsonify({'success': False, 'msg': '缺少 wallpaper_id 或 selection_target'}), 400
+
+    try:
+        result = get_shared_wallpaper_service().select_wallpaper(wallpaper_id, selection_target)
+        return jsonify({'success': True, **result})
+    except ValueError as exc:
+        return jsonify({'success': False, 'msg': str(exc)}), 400
 
 @bp.route('/api/system_action', methods=['POST'])
 def api_system_action():
@@ -379,7 +583,10 @@ def api_create_snapshot():
         backups_root = ""
         
         # === 路径解析逻辑 (保持不变) ===
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            src_path = req_data.get('file_path')
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 src_path = os.path.join(CARDS_FOLDER, real_card_id.replace('/', os.sep))
@@ -399,7 +606,11 @@ def api_create_snapshot():
             src_path = os.path.join(CARDS_FOLDER, rel_path)
             backups_root = os.path.join(system_backups_dir, 'cards')
 
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
+            if not _is_valid_preset_path(src_path):
+                return jsonify({"success": False, "msg": "非法路径"})
+        elif snapshot_type == 'lorebook':
             src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
             if not _is_valid_lorebook_path(src_path):
                 return jsonify({"success": False, "msg": "非法路径"})
@@ -496,7 +707,11 @@ def api_smart_auto_snapshot():
         filename = ""
         
         # 解析路径逻辑
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            path = req_data.get('file_path')
+            filename = os.path.basename(path) if path else 'Unknown.json'
+            backups_root = os.path.join(res_base, 'backups', 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 filename = os.path.basename(real_card_id)
@@ -566,7 +781,7 @@ def api_smart_auto_snapshot():
         # 4. 执行保存 (如果没被跳过)
         # 复用之前的 create_snapshot 逻辑，但这里我们自己在内部处理，或者调用内部函数
         # 为了方便，这里简单重写核心路径逻辑 
-        ext = '.json' if snapshot_type == 'lorebook' else '.png' # 默认后缀
+        ext = '.json' if snapshot_type in ('lorebook', 'preset') else '.png' # 默认后缀
         # 尝试沿用原文件后缀
         if req_data.get('file_path'):
             ext = os.path.splitext(req_data.get('file_path'))[1]
@@ -593,8 +808,11 @@ def api_smart_auto_snapshot():
         elif req_data.get('file_path'):
              src_path = req_data.get('file_path')
              src_path = os.path.normpath(src_path if os.path.isabs(src_path) else os.path.join(BASE_DIR, src_path))
-             if not _is_valid_lorebook_path(src_path):
-                 return jsonify({"success": False, "msg": "非法路径"})
+             if snapshot_type == 'preset':
+                 if not _is_valid_preset_path(src_path):
+                     return jsonify({"success": False, "msg": "非法路径"})
+             elif not _is_valid_lorebook_path(src_path):
+                  return jsonify({"success": False, "msg": "非法路径"})
 
         if is_png and os.path.exists(src_path):
             write_snapshot_file(src_path, dst_path, content, True)
@@ -628,7 +846,13 @@ def api_list_backups():
         backups_root = ""
         filename = ""
         
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            if file_path_param:
+                filename = os.path.basename(file_path_param)
+            elif target_id:
+                filename = os.path.basename(target_id)
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id and target_id.startswith('embedded::'):
                 # 内嵌WI：备份在 cards 目录下，使用宿主卡片名
                 real_card_id = target_id.replace('embedded::', '')
@@ -715,7 +939,13 @@ def api_cleanup_init_backups():
         backups_root = ""
         filename = ""
 
-        if snapshot_type == 'lorebook':
+        if snapshot_type == 'preset':
+            if file_path_param:
+                filename = os.path.basename(file_path_param)
+            elif target_id:
+                filename = os.path.basename(target_id)
+            backups_root = os.path.join(system_backups_dir, 'presets')
+        elif snapshot_type == 'lorebook':
             if target_id and target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 filename = os.path.basename(real_card_id)
@@ -799,7 +1029,9 @@ def api_restore_backup():
 
         # 确定目标路径
         target_path = ""
-        if type_ == 'lorebook':
+        if type_ == 'preset':
+            target_path = target_file_path_param
+        elif type_ == 'lorebook':
             if target_id.startswith('embedded::'):
                 real_card_id = target_id.replace('embedded::', '')
                 target_path = os.path.join(CARDS_FOLDER, real_card_id.replace('/', os.sep))
@@ -840,7 +1072,9 @@ def api_restore_backup():
                     break
 
         # 4. 刷新缓存
-        if type_ == 'lorebook' and not target_id.startswith('embedded'):
+        if type_ == 'preset':
+            schedule_reload(reason="restore_backup")
+        elif type_ == 'lorebook' and not target_id.startswith('embedded'):
             invalidate_wi_list_cache()
         else:
             real_id = target_id.replace('embedded::', '') if 'embedded::' in target_id else target_id

@@ -1,354 +1,1194 @@
-<!-- 预设详情阅览界面 (Preset Detail Reader Modal) -->
-<div x-show="showModal" x-cloak class="modal-overlay z-modal-std flex items-center justify-center p-4"
-    @click.self="closeModal()"
-    x-data="presetDetailReader()">
-
-    <!-- 定义内部 Tab 状态 -->
-    <div class="preset-reader-modal bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-xl shadow-2xl
-              flex flex-col w-full max-w-7xl h-[90vh] overflow-hidden relative animate-scale-in"
+<!-- 预设详情阅览界面 -->
+<div
+  x-show="showModal"
+  x-cloak
+  class="modal-overlay preset-reader-overlay z-modal-std flex"
+  :class="$store.global.deviceType === 'mobile' ? 'items-stretch justify-stretch p-0' : 'items-center justify-center p-4'"
+  @click.self="closeModal()"
+  x-data="presetDetailReader()"
+>
+  <div
+    class="preset-reader-modal bg-[var(--bg-panel)] border border-[var(--border-light)] flex flex-col overflow-hidden"
+    :class="$store.global.deviceType === 'mobile' ? 'w-screen max-w-none h-[100dvh] min-h-[100dvh] rounded-none shadow-none' : 'w-full max-w-7xl h-[90vh] rounded-2xl shadow-2xl'"
+  >
+    <div
+      class="preset-reader-mobile-header"
+      :class="($store.global.deviceType === 'mobile' && presetMobileHeaderHidden) ? 'is-mobile-hidden' : ''"
+      x-show="$store.global.deviceType === 'mobile' && !showMobileDetailView"
+      x-ref="presetReaderMobileHeader"
+    >
+      <div class="preset-reader-mobile-header-main">
+        <button
+          @click="toggleMobileSidebar()"
+          class="btn-secondary py-1.5 px-3 text-xs"
         >
-
-        <!-- 1. 顶部工具栏 -->
+          目录
+        </button>
+        <div class="preset-reader-mobile-title-block">
+          <div
+            class="preset-reader-mobile-title"
+            x-text="activePresetDetail?.name || '未命名预设'"
+          ></div>
+          <div
+            class="preset-reader-mobile-subtitle"
+            x-text="getMobileHeaderMetaLine()"
+          ></div>
+        </div>
+        <button
+          @click="openFullscreenEditor()"
+          class="btn-primary py-1.5 px-3 text-xs"
+        >
+          编辑
+        </button>
+        <button
+          @click="closeModal()"
+          class="btn-secondary py-1.5 px-3 text-xs hover:text-red-300"
+        >
+          关闭
+        </button>
+      </div>
+      <div class="preset-reader-mobile-header-secondary">
         <div
-            class="preset-reader-topbar border-b border-[var(--border-light)] flex items-center gap-3 px-4 py-3 bg-[var(--bg-sub)] flex-shrink-0">
-            <div class="flex items-center gap-3 min-w-0 flex-1">
-                <div
-                    class="p-2 rounded-lg bg-gradient-to-br from-purple-500/20 to-blue-500/20 border border-white/5 flex-shrink-0">
-                    <span class="text-xl">🎛️</span>
-                </div>
-                <div class="min-w-0 flex-1">
-                    <div class="flex items-center flex-wrap gap-x-2 gap-y-1">
-                        <h3 class="text-base md:text-lg font-bold leading-tight truncate text-[var(--text-main)] max-w-[300px]"
-                            x-text="activePresetDetail?.name || '未命名预设'"></h3>
-                        <span
-                            class="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase border border-white/5"
-                            :class="activePresetDetail?.type === 'global' ? 'bg-blue-600/30 text-blue-200' : 'bg-green-600/30 text-green-200'"
-                            x-text="activePresetDetail?.type === 'global' ? 'GLOBAL' : 'RES'"></span>
-                    </div>
-                    <div class="text-[10px] text-[var(--text-dim)] font-mono flex items-center gap-2 mt-0.5">
-                        <span x-text="activePresetDetail?.path"></span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 操作按钮组 -->
-            <div class="flex items-center gap-2">
-                <button @click="editRaw()"
-                    class="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1.5" title="编辑源文件">
-                    <span>✏️</span> <span class="hidden sm:inline">JSON</span>
-                </button>
-                <button @click="closeModal()"
-                    class="text-[var(--text-dim)] hover:text-red-400 p-2 rounded-full hover:bg-[var(--bg-body)] transition-colors">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
+          class="preset-reader-mobile-context"
+          x-text="getMobileHeaderContextLabel()"
+        ></div>
+        <div
+          class="preset-reader-mobile-count"
+          x-text="getMobileHeaderCountLabel()"
+        ></div>
+        <div x-show="hasMultipleVersions" class="flex items-center gap-2">
+          <label class="sr-only">版本</label>
+          <select
+            class="rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] px-2 py-1 text-xs text-[var(--text-main)]"
+            :value="activePresetDetail?.id || ''"
+            @change="switchVersion($event.target.value)"
+          >
+            <template x-for="version in availableVersions" :key="version.id">
+              <option :value="version.id" x-text="version.version_label || version.name || version.id"></option>
+            </template>
+          </select>
         </div>
-
-        <!-- 2. 主体区域 -->
-        <div class="flex-1 flex overflow-hidden min-h-0">
-
-            <!-- 左侧：多标签参数面板 -->
-            <aside
-                class="w-[320px] flex-shrink-0 bg-[var(--bg-sub)] border-r border-[var(--border-main)] flex flex-col hidden md:flex">
-
-                <!-- Tab 切换 -->
-                <div class="flex border-b border-[var(--border-light)] px-2 pt-2 gap-1 bg-[var(--bg-panel)]">
-                    <button @click="sidebarTab = 'samplers'"
-                        class="flex-1 py-2 text-xs font-bold border-t border-l border-r rounded-t-lg transition-colors relative top-[1px]"
-                        :class="sidebarTab === 'samplers' ? 'bg-[var(--bg-sub)] border-[var(--border-main)] border-b-[var(--bg-sub)] text-[var(--text-main)]' : 'bg-transparent border-transparent text-[var(--text-dim)] hover:text-[var(--text-main)]'">
-                        Samplers
-                    </button>
-                    <button @click="sidebarTab = 'config'"
-                        class="flex-1 py-2 text-xs font-bold border-t border-l border-r rounded-t-lg transition-colors relative top-[1px]"
-                        :class="sidebarTab === 'config' ? 'bg-[var(--bg-sub)] border-[var(--border-main)] border-b-[var(--bg-sub)] text-[var(--text-main)]' : 'bg-transparent border-transparent text-[var(--text-dim)] hover:text-[var(--text-main)]'">
-                        Config
-                    </button>
-                    <button @click="sidebarTab = 'templates'"
-                        class="flex-1 py-2 text-xs font-bold border-t border-l border-r rounded-t-lg transition-colors relative top-[1px]"
-                        :class="sidebarTab === 'templates' ? 'bg-[var(--bg-sub)] border-[var(--border-main)] border-b-[var(--bg-sub)] text-[var(--text-main)]' : 'bg-transparent border-transparent text-[var(--text-dim)] hover:text-[var(--text-main)]'">
-                        Templates
-                    </button>
-                </div>
-
-                <!-- Tab 内容容器 -->
-                <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-
-                    <!-- TAB 1: 采样参数 (Samplers) -->
-                    <div x-show="sidebarTab === 'samplers'" class="space-y-4 animate-fade-in">
-                        <!-- 主要参数 -->
-                        <div class="space-y-3">
-                            <div class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider">Core
-                                Samplers</div>
-
-                            <div class="grid grid-cols-2 gap-2">
-                                <div class="p-2 bg-[var(--bg-body)] rounded border border-[var(--border-light)]">
-                                    <div class="text-[9px] text-[var(--text-dim)] uppercase">Temp</div>
-                                    <div class="font-mono font-bold text-orange-400"
-                                        x-text="formatParam(activePresetDetail?.samplers?.temperature)"></div>
-                                </div>
-                                <div class="p-2 bg-[var(--bg-body)] rounded border border-[var(--border-light)]">
-                                    <div class="text-[9px] text-[var(--text-dim)] uppercase">Max Tokens</div>
-                                    <div class="font-mono font-bold text-blue-400"
-                                        x-text="formatParam(activePresetDetail?.samplers?.max_tokens)"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 进阶采样 -->
-                        <div class="space-y-2">
-                            <div
-                                class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider border-t border-[var(--border-light)] pt-2">
-                                Probabilities</div>
-
-                            <template x-for="p in [
-                                {l:'Top P', v: activePresetDetail?.samplers?.top_p, c:'text-green-400'},
-                                {l:'Min P', v: activePresetDetail?.samplers?.min_p, c:'text-green-400'},
-                                {l:'Top K', v: activePresetDetail?.samplers?.top_k, c:'text-purple-400'},
-                                {l:'Top A', v: activePresetDetail?.samplers?.top_a, c:'text-purple-400'},
-                                {l:'Typical', v: activePresetDetail?.samplers?.typical_p, c:'text-cyan-400'},
-                                {l:'TFS', v: activePresetDetail?.samplers?.tail_free_sampling, c:'text-cyan-400'}
-                            ]">
-                                <div class="flex justify-between items-center text-xs"
-                                    x-show="p.v !== undefined && p.v !== null">
-                                    <span class="text-[var(--text-dim)]" x-text="p.l"></span>
-                                    <span class="font-mono font-bold" :class="p.c" x-text="formatParam(p.v)"></span>
-                                </div>
-                            </template>
-                        </div>
-
-                        <!-- 惩罚参数 -->
-                        <div class="space-y-2">
-                            <div
-                                class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider border-t border-[var(--border-light)] pt-2">
-                                Penalties</div>
-
-                            <template x-for="p in [
-                                {l:'Repetition Pen', v: activePresetDetail?.samplers?.repetition_penalty, c:'text-red-400'},
-                                {l:'Rep Pen Range', v: activePresetDetail?.samplers?.repetition_penalty_range, c:'text-red-300'},
-                                {l:'Freq Penalty', v: activePresetDetail?.samplers?.frequency_penalty, c:'text-yellow-400'},
-                                {l:'Pres Penalty', v: activePresetDetail?.samplers?.presence_penalty, c:'text-pink-400'}
-                            ]">
-                                <div class="flex justify-between items-center text-xs"
-                                    x-show="p.v !== undefined && p.v !== null">
-                                    <span class="text-[var(--text-dim)]" x-text="p.l"></span>
-                                    <span class="font-mono font-bold" :class="p.c" x-text="formatParam(p.v)"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- TAB 2: 配置 (Config) -->
-                    <div x-show="sidebarTab === 'config'" class="space-y-4 animate-fade-in">
-                        <div class="space-y-3">
-                            <div class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider">Context &
-                                Output</div>
-
-                            <div class="p-3 bg-[var(--bg-body)] rounded border border-[var(--border-light)] space-y-2">
-                                <div class="flex justify-between text-xs">
-                                    <span class="text-[var(--text-dim)]">Context Limit</span>
-                                    <span class="font-mono font-bold text-[var(--text-main)]"
-                                        x-text="activePresetDetail?.config?.context_length || 'Auto'"></span>
-                                </div>
-                                <div class="flex justify-between text-xs">
-                                    <span class="text-[var(--text-dim)]">Streaming</span>
-                                    <span class="font-bold"
-                                        :class="activePresetDetail?.config?.streaming ? 'text-green-400' : 'text-gray-500'"
-                                        x-text="activePresetDetail?.config?.streaming ? 'ON' : 'OFF'"></span>
-                                </div>
-                                <div class="flex justify-between text-xs">
-                                    <span class="text-[var(--text-dim)]">Wrap Quotes</span>
-                                    <span class="font-bold"
-                                        :class="activePresetDetail?.config?.wrap_in_quotes ? 'text-green-400' : 'text-gray-500'"
-                                        x-text="activePresetDetail?.config?.wrap_in_quotes ? 'ON' : 'OFF'"></span>
-                                </div>
-                                <div class="flex justify-between text-xs">
-                                    <span class="text-[var(--text-dim)]">Show Thoughts</span>
-                                    <span class="font-bold"
-                                        :class="activePresetDetail?.config?.show_thoughts ? 'text-green-400' : 'text-gray-500'"
-                                        x-text="activePresetDetail?.config?.show_thoughts ? 'ON' : 'OFF'"></span>
-                                </div>
-                            </div>
-
-                            <div class="p-3 bg-[var(--bg-body)] rounded border border-[var(--border-light)] space-y-1">
-                                <div class="text-[9px] text-[var(--text-dim)] uppercase mb-1">Bias Preset</div>
-                                <div class="text-xs font-bold text-[var(--text-main)] truncate"
-                                    x-text="activePresetDetail?.formatting?.bias_preset || 'None'"></div>
-                            </div>
-                        </div>
-
-                        <!-- 扩展显示 -->
-                        <div x-show="(activePresetDetail?.regex_count || 0) + (activePresetDetail?.script_count || 0) > 0"
-                            class="pt-4 border-t border-[var(--border-light)]">
-                            <div class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider mb-2">
-                                Attached Scripts</div>
-                            <button @click="openAdvancedExtensions()"
-                                class="w-full btn-secondary py-2 text-xs flex justify-between items-center px-3">
-                                <span>Advanced Scripts</span>
-                                <span class="bg-purple-500 text-white text-[10px] px-1.5 rounded-full"
-                                    x-text="(activePresetDetail?.regex_count || 0) + (activePresetDetail?.script_count || 0)"></span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- TAB 3: 模板 (Templates) -->
-                    <div x-show="sidebarTab === 'templates'" class="space-y-4 animate-fade-in">
-                        <div class="text-[10px] uppercase font-bold text-[var(--text-dim)] tracking-wider">Formatting
-                            Strings</div>
-
-                        <!-- 循环显示各种模板字符串 -->
-                        <div class="space-y-3">
-                            <template x-for="tpl in [
-                                {k:'wi_format', l:'World Info Format'},
-                                {k:'scenario_format', l:'Scenario Format'},
-                                {k:'personality_format', l:'Personality Format'},
-                                {k:'assistant_prefill', l:'Assistant Prefill'},
-                                {k:'new_chat_prompt', l:'New Chat Prompt'},
-                                {k:'impersonation_prompt', l:'Impersonation'}
-                            ]">
-                                <div x-show="activePresetDetail?.formatting?.[tpl.k]" class="group">
-                                    <div class="text-[9px] text-[var(--text-dim)] mb-1" x-text="tpl.l"></div>
-                                    <div class="bg-[var(--bg-body)] p-2 rounded border border-[var(--border-light)] text-[10px] font-mono text-[var(--text-sub)] break-all max-h-20 overflow-y-auto custom-scrollbar select-text"
-                                        x-text="activePresetDetail?.formatting?.[tpl.k]"></div>
-                                </div>
-                            </template>
-                        </div>
-
-                        <div x-show="!activePresetDetail?.formatting?.wi_format"
-                            class="text-xs text-[var(--text-dim)] italic text-center py-4">
-                            此预设未定义特殊的格式化模板
-                        </div>
-                    </div>
-
-                    <div class="p-3 border-t border-[var(--border-light)] bg-[var(--bg-panel)] flex-shrink-0"
-                        x-show="(activePresetDetail?.regex_count || 0) + (activePresetDetail?.script_count || 0) > 0">
-                        <button @click="openAdvancedExtensions()"
-                            class="w-full btn-secondary py-2.5 text-xs flex justify-between items-center px-4 hover:bg-purple-600 hover:text-white group transition-all">
-                            <div class="flex items-center gap-2">
-                                <span class="text-base group-hover:scale-110 transition-transform">🧩</span>
-                                <span class="font-bold">Advanced Scripts</span>
-                            </div>
-                            <div class="flex gap-1">
-                                <span x-show="(activePresetDetail?.regex_count || 0) > 0"
-                                    class="bg-green-500/20 text-green-300 border border-green-500/30 text-[9px] px-1.5 py-0.5 rounded font-mono"
-                                    title="Regex Scripts">R:<span
-                                        x-text="activePresetDetail?.regex_count"></span></span>
-                                <span x-show="(activePresetDetail?.script_count || 0) > 0"
-                                    class="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] px-1.5 py-0.5 rounded font-mono"
-                                    title="Tavern Scripts">S:<span
-                                        x-text="activePresetDetail?.script_count"></span></span>
-                            </div>
-                        </button>
-                    </div>
-
-                </div>
-            </aside>
-
-            <!-- 中间：Prompt 列表阅读器 -->
-            <main class="flex-1 flex flex-col min-w-0 bg-[var(--bg-body)] relative">
-
-                <!-- 列表头 -->
-                <div
-                    class="h-10 border-b border-[var(--border-light)] flex items-center justify-between px-4 bg-[var(--bg-body)]/80 backdrop-blur z-10 sticky top-0">
-                    <div
-                        class="text-xs font-bold text-[var(--text-dim)] uppercase tracking-wider flex items-center gap-2">
-                        <span>Prompt Context Sequence</span>
-                        <span class="bg-[var(--accent-main)]/10 text-[var(--accent-main)] px-1.5 rounded text-[10px]"
-                            x-text="activePresetDetail?.prompts?.length || 0"></span>
-                    </div>
-                </div>
-
-                <!-- 列表内容 -->
-                <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-                    <template x-for="(prompt, idx) in normalizePrompts(activePresetDetail?.prompts || [])"
-                        :key="prompt.key">
-
-                        <!-- 动态渲染：根据是否是 Marker (特殊占位符) 区分显示 -->
-                        <div :id="'preset-prompt-' + prompt.key" class="transition-all duration-200">
-
-                            <!-- CASE A: Marker / System Placeholder (只读开关) -->
-                            <!-- 判断逻辑: prompt.marker 为 true，或 identifier 在特定列表 -->
-                            <template
-                                x-if="prompt.meta.some(m => m.includes('marker: true')) || ['worldInfoBefore','worldInfoAfter','charDescription','charPersonality','scenario','chatHistory','dialogueExamples','personaDescription'].includes(prompt.key)">
-                                <div
-                                    class="flex items-center gap-3 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] opacity-80 hover:opacity-100 transition-opacity">
-                                    <!-- Icon -->
-                                    <div class="w-8 h-8 rounded-full flex items-center justify-center bg-[var(--bg-body)] text-lg select-none"
-                                        :class="prompt.enabled ? 'grayscale-0' : 'grayscale opacity-50'">
-                                        <span x-text="getPromptIcon(prompt.key)"></span>
-                                    </div>
-
-                                    <!-- Title -->
-                                    <div class="flex-1 min-w-0">
-                                        <div class="flex items-center gap-2">
-                                            <span class="text-sm font-bold text-[var(--text-main)] truncate"
-                                                :class="!prompt.enabled && 'line-through opacity-50'"
-                                                x-text="prompt.name"></span>
-                                            <span
-                                                class="text-[9px] px-1.5 border border-[var(--border-light)] rounded text-[var(--text-dim)] uppercase">Marker</span>
-                                        </div>
-                                        <div class="text-[10px] text-[var(--text-dim)] truncate mt-0.5">
-                                            系统自动注入的内容位置占位符
-                                        </div>
-                                    </div>
-
-                                    <!-- Switch Visual (Read Only) -->
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-[10px] font-bold uppercase"
-                                            :class="prompt.enabled ? 'text-green-500' : 'text-gray-500'"
-                                            x-text="prompt.enabled ? 'ON' : 'OFF'"></span>
-                                        <div class="w-8 h-4 rounded-full relative transition-colors"
-                                            :class="prompt.enabled ? 'bg-green-500/20' : 'bg-gray-600/20'">
-                                            <div class="absolute top-0.5 w-3 h-3 rounded-full shadow-sm transition-all"
-                                                :class="prompt.enabled ? 'right-0.5 bg-green-500' : 'left-0.5 bg-gray-400'">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
-
-                            <!-- CASE B: Text Prompt (显示具体内容) -->
-                            <template
-                                x-if="!(prompt.meta.some(m => m.includes('marker: true')) || ['worldInfoBefore','worldInfoAfter','charDescription','charPersonality','scenario','chatHistory','dialogueExamples','personaDescription'].includes(prompt.key))">
-                                <div
-                                    class="rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] overflow-hidden group">
-                                    <!-- Header -->
-                                    <div
-                                        class="flex items-center justify-between px-3 py-2 bg-[var(--bg-sub)] border-b border-[var(--border-light)]">
-                                        <div class="flex items-center gap-2">
-                                            <span class="text-lg">📝</span>
-                                            <span class="text-sm font-bold text-[var(--text-main)]"
-                                                x-text="prompt.name || 'Prompt ' + (idx+1)"></span>
-                                            <span
-                                                class="text-[10px] px-1.5 rounded bg-[var(--bg-body)] text-[var(--text-dim)] border border-[var(--border-light)]"
-                                                x-text="getPromptRole(prompt)"></span>
-                                        </div>
-                                        <!-- Enabled Status -->
-                                        <div class="flex items-center gap-1.5" :title="prompt.enabled ? '已启用' : '已禁用'">
-                                            <div class="w-2 h-2 rounded-full"
-                                                :class="prompt.enabled ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-red-500'">
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Content -->
-                                    <div class="p-3">
-                                        <div class="text-xs font-mono text-[var(--text-sub)] whitespace-pre-wrap break-words leading-relaxed select-text opacity-90"
-                                            x-text="prompt.content"></div>
-                                        <div x-show="!prompt.content" class="text-xs text-[var(--text-dim)] italic">
-                                            (无内容)
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
-
-                        </div>
-                    </template>
-                </div>
-            </main>
-
-        </div>
+        <button
+          @click="toggleMobileMoreMenu()"
+          class="btn-secondary py-1 px-3 text-xs"
+        >
+          更多
+        </button>
+      </div>
     </div>
+
+    <div
+      x-show="$store.global.deviceType === 'mobile' && showMobileMoreMenu && !showMobileDetailView"
+      x-cloak
+      class="preset-reader-mobile-more-menu"
+    >
+      <button
+        x-show="canSendActivePresetToST()"
+        @click="sendActivePresetToST(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+        title="发送到 ST（对话补全预设，同名将直接覆盖 ST 中现有预设）"
+        :title="getActivePresetSendToSTTitle()"
+        :disabled="isSendingPresetToST"
+      >
+        发送到 ST
+      </button>
+      <button
+        x-show="canImportActivePresetVersion()"
+        @click="triggerImportActivePresetVersion(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+      >
+        导入并合并
+      </button>
+      <button
+        @click="exportActivePreset(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+      >
+        导出
+      </button>
+      <button
+        @click="openAdvancedExtensions(); showMobileMoreMenu = false"
+        class="btn-secondary py-1.5 px-3 text-xs"
+      >
+        编辑扩展
+      </button>
+    </div>
+
+    <div
+      x-show="$store.global.deviceType !== 'mobile'"
+      class="border-b border-[var(--border-light)] px-4 py-3 bg-[var(--bg-sub)] flex items-center justify-between gap-3"
+    >
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3
+            class="text-base md:text-lg font-bold text-[var(--text-main)] truncate"
+            x-text="activePresetDetail?.name || '未命名预设'"
+          ></h3>
+          <span
+            class="px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-[var(--border-light)] bg-[var(--bg-panel)] text-[var(--text-main)]"
+            x-text="activePresetDetail?.preset_kind || '预设'"
+          ></span>
+          <span
+            class="px-2 py-0.5 rounded text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+            x-text="getSourceLabel()"
+          ></span>
+          <span
+            class="px-2 py-0.5 rounded text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+            x-text="readerView.family_label || '通用预设'"
+          ></span>
+        </div>
+        <div
+          class="text-[11px] text-[var(--text-dim)] truncate mt-1"
+          x-text="activePresetDetail?.path || ''"
+        ></div>
+      </div>
+
+      <div class="flex items-center gap-2 flex-wrap justify-end">
+        <div x-show="hasMultipleVersions" class="flex items-center gap-2">
+          <label class="text-[11px] text-[var(--text-dim)]">版本</label>
+          <select
+            class="rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-xs text-[var(--text-main)]"
+            :value="activePresetDetail?.id || ''"
+            @change="switchVersion($event.target.value)"
+          >
+            <template x-for="version in availableVersions" :key="version.id">
+              <option :value="version.id" x-text="version.version_label || version.name || version.id"></option>
+            </template>
+          </select>
+        </div>
+        <button
+          x-show="canSendActivePresetToST()"
+          @click="sendActivePresetToST()"
+          class="btn-secondary py-1.5 px-3 text-xs"
+          title="发送到 ST（对话补全预设，同名将直接覆盖 ST 中现有预设）"
+          :title="getActivePresetSendToSTTitle()"
+          :disabled="isSendingPresetToST"
+        >
+          发送到 ST
+        </button>
+        <button
+          x-show="canImportActivePresetVersion()"
+          @click="triggerImportActivePresetVersion()"
+          class="btn-secondary py-1.5 px-3 text-xs"
+        >
+          导入并合并
+        </button>
+        <button
+          x-show="$store.global.deviceType !== 'mobile'"
+          @click="exportActivePreset()"
+          class="btn-secondary py-1.5 px-3 text-xs"
+        >
+          导出
+        </button>
+        <button
+          x-show="$store.global.deviceType !== 'mobile'"
+          @click="openAdvancedExtensions()"
+          class="btn-secondary py-1.5 px-3 text-xs"
+        >
+          编辑扩展
+        </button>
+        <button
+          @click="openFullscreenEditor()"
+          class="btn-primary py-1.5 px-3 text-xs"
+        >
+          全屏编辑
+        </button>
+        <button
+          @click="closeModal()"
+          class="btn-secondary py-1.5 px-3 text-xs hover:text-red-300"
+        >
+          关闭
+        </button>
+      </div>
+    </div>
+
+    <div class="flex-1 min-h-0 flex overflow-hidden bg-[var(--bg-body)]">
+      <template x-if="isLoading">
+        <div
+          class="h-full w-full flex items-center justify-center text-sm text-[var(--text-dim)]"
+        >
+          正在加载预设详情...
+        </div>
+      </template>
+
+      <template x-if="!isLoading && activePresetDetail">
+        <div class="flex-1 min-h-0 flex overflow-hidden">
+          <div
+            x-show="$store.global.deviceType === 'mobile' && showMobileSidebar"
+            @click="showMobileSidebar = false"
+            class="fixed inset-0 bg-black/50 z-30"
+          ></div>
+
+          <aside
+            class="w-full md:w-[260px] lg:w-[280px] flex-shrink-0 bg-[var(--bg-sub)] border-r border-[var(--border-light)] flex flex-col min-h-0 z-40"
+            :class="{
+              'preset-reader-mobile-sidebar': true,
+              'fixed left-0 bottom-0 max-w-[88vw] shadow-2xl': $store.global.deviceType === 'mobile',
+              'hidden md:flex': $store.global.deviceType !== 'mobile',
+              'flex': $store.global.deviceType === 'mobile' && showMobileSidebar,
+              'hidden': $store.global.deviceType === 'mobile' && !showMobileSidebar
+            }"
+          >
+            <div class="p-4 border-b border-[var(--border-light)] space-y-3">
+              <div
+                x-show="!isPromptWorkspaceReader || activeWorkspace === 'prompts'"
+                class="space-y-2"
+              >
+                <div
+                  class="text-[11px] font-bold text-[var(--text-dim)] uppercase tracking-wide"
+                >
+                  搜索
+                </div>
+                <input
+                  :value="searchTerm"
+                  @input="updateSearchTerm($event.target.value)"
+                  type="text"
+                  placeholder="搜索条目、分组、字段..."
+                  class="w-full rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] px-3 py-2 text-sm text-[var(--text-main)] outline-none"
+                />
+              </div>
+
+              <div
+                x-show="!isPromptWorkspaceReader || activeWorkspace === 'prompts'"
+                class="space-y-2"
+              >
+                <div
+                  class="text-[11px] font-bold text-[var(--text-dim)] uppercase tracking-wide"
+                >
+                  筛选条件
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <template x-for="filter in uiFilters" :key="filter.id">
+                    <button
+                      @click="setUiFilter(filter.id)"
+                      class="px-2.5 py-1 rounded-lg text-xs border transition"
+                      :class="uiFilter === filter.id ? 'bg-[var(--accent-main)]/20 border-[var(--accent-main)] text-[var(--text-main)]' : 'bg-[var(--bg-panel)] border-[var(--border-light)] text-[var(--text-dim)]'"
+                      x-text="filter.label"
+                    ></button>
+                  </template>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div
+                  class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
+                >
+                  <div class="text-[var(--text-dim)]">当前可见</div>
+                  <div
+                    class="mt-1 text-base font-bold text-[var(--text-main)]"
+                    x-text="readerStats.visible_count"
+                  ></div>
+                </div>
+                <div
+                  class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
+                >
+                  <div class="text-[var(--text-dim)]">条目总数</div>
+                  <div
+                    class="mt-1 text-base font-bold text-[var(--text-main)]"
+                    x-text="readerStats.total_count"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+              <template x-if="!isPromptWorkspaceReader">
+                <div class="space-y-2">
+                  <button
+                    @click="selectGroup('all')"
+                    class="w-full text-left rounded-xl border px-3 py-3 transition"
+                    :class="activeGroup === 'all' ? 'bg-[var(--accent-main)]/15 border-[var(--accent-main)]' : 'bg-[var(--bg-panel)] border-[var(--border-light)]'"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <div
+                          class="text-sm font-semibold text-[var(--text-main)]"
+                        >
+                          全部条目
+                        </div>
+                        <div class="text-[11px] text-[var(--text-dim)]">
+                          按当前筛选查看
+                        </div>
+                      </div>
+                      <div
+                        class="text-xs font-mono text-[var(--text-sub)]"
+                        x-text="readerStats.total_count"
+                      ></div>
+                    </div>
+                  </button>
+
+                  <template x-if="readerGroups.length === 0">
+                    <div
+                      class="rounded-xl border border-dashed border-[var(--border-light)] p-4 text-sm text-[var(--text-dim)] bg-[var(--bg-panel)]"
+                    >
+                      当前预设暂无可展示分组。
+                    </div>
+                  </template>
+
+                  <template x-for="group in readerGroups" :key="group.id">
+                    <button
+                      @click="selectGroup(group.id)"
+                      class="w-full text-left rounded-xl border px-3 py-3 transition"
+                      :class="activeGroup === group.id ? 'bg-[var(--accent-main)]/15 border-[var(--accent-main)]' : 'bg-[var(--bg-panel)] border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <div>
+                          <div
+                            class="text-sm font-semibold text-[var(--text-main)]"
+                            x-text="group.label"
+                          ></div>
+                          <div
+                            class="text-[11px] text-[var(--text-dim)]"
+                            x-text="group.id"
+                          ></div>
+                        </div>
+                        <div
+                          class="text-xs font-mono text-[var(--text-sub)]"
+                          x-text="group.count"
+                        ></div>
+                      </div>
+                    </button>
+                  </template>
+                </div>
+              </template>
+
+              <template x-if="isPromptWorkspaceReader">
+                <div class="space-y-2">
+                  <button
+                    @click="selectWorkspace('prompts')"
+                    class="w-full text-left rounded-xl border px-3 py-3 transition"
+                    :class="activeWorkspace === 'prompts' ? 'bg-[var(--accent-main)]/15 border-[var(--accent-main)]' : 'bg-[var(--bg-panel)] border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <div
+                          class="text-sm font-semibold text-[var(--text-main)]"
+                        >
+                          提示词列表
+                        </div>
+                        <div class="text-[11px] text-[var(--text-dim)]">
+                          prompts
+                        </div>
+                      </div>
+                      <div
+                        class="text-xs font-mono text-[var(--text-sub)]"
+                        x-text="orderedPromptItems.length"
+                      ></div>
+                    </div>
+                  </button>
+
+                  <template
+                    x-for="group in readerGroups.filter((group) => group.id !== 'prompts')"
+                    :key="group.id"
+                  >
+                    <button
+                      @click="selectWorkspace(group.id)"
+                      class="w-full text-left rounded-xl border px-3 py-3 transition"
+                      :class="activeWorkspace === group.id ? 'bg-[var(--accent-main)]/15 border-[var(--accent-main)]' : 'bg-[var(--bg-panel)] border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <div>
+                          <div
+                            class="text-sm font-semibold text-[var(--text-main)]"
+                            x-text="group.label"
+                          ></div>
+                          <div
+                            class="text-[11px] text-[var(--text-dim)]"
+                            x-text="group.id"
+                          ></div>
+                        </div>
+                        <div
+                          class="text-xs font-mono text-[var(--text-sub)]"
+                          x-text="group.count"
+                        ></div>
+                      </div>
+                    </button>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </aside>
+
+          <section
+            class="flex-1 min-w-0 flex flex-col border-r border-[var(--border-light)] md:border-r-0 lg:border-r lg:border-[var(--border-light)]"
+            :class="{
+              'flex': $store.global.deviceType !== 'mobile' || !$store.global.deviceType || !showMobileDetailView,
+              'hidden': $store.global.deviceType === 'mobile' && showMobileDetailView
+            }"
+          >
+            <div
+              class="px-4 py-3 border-b border-[var(--border-light)] bg-[var(--bg-body)] flex items-center justify-between gap-3"
+            >
+              <div>
+                <div class="text-sm font-bold text-[var(--text-main)]">
+                  <span x-show="!isPromptWorkspaceReader">内容流</span>
+                  <span
+                    x-show="isPromptWorkspaceReader && activeWorkspace === 'prompts'"
+                    >提示词列表</span
+                  >
+                  <span
+                    x-show="isPromptWorkspaceReader && activeWorkspace !== 'prompts'"
+                    >内容流</span
+                  >
+                </div>
+                <div class="text-[11px] text-[var(--text-dim)]">
+                  <span
+                    x-show="!isPromptWorkspaceReader"
+                    x-text="activeGroup === 'all' ? '全部分组' : getItemGroupLabel({ group: activeGroup })"
+                  ></span>
+                  <span
+                    x-show="isPromptWorkspaceReader && activeWorkspace === 'prompts'"
+                    >按提示词顺序排序</span
+                  >
+                  <span
+                    x-show="isPromptWorkspaceReader && activeWorkspace !== 'prompts'"
+                    x-text="getItemGroupLabel({ group: activeWorkspace })"
+                  ></span>
+                  ·
+                  <span
+                    x-text="isPromptWorkspaceReader && activeWorkspace === 'prompts' ? `${promptFilteredItems.length} / ${orderedPromptItems.length}` : isScalarWorkspaceReader ? `${readerStats.visible_count} / ${readerStats.total_count}` : `${filteredItems.length} / ${readerStats.total_count}`"
+                  ></span>
+                </div>
+              </div>
+              <div
+                class="text-[11px] text-[var(--text-dim)]"
+                x-text="activePresetDetail?.preset_kind_label || '-' "
+              ></div>
+            </div>
+
+            <div class="flex-1 min-h-0">
+              <div
+                class="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-3"
+                x-ref="presetReaderContentScroll"
+                @scroll.passive="handleMobileContentScroll($event)"
+              >
+                <template x-if="readerItems.length === 0">
+                  <div
+                    class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                  >
+                    <div
+                      class="text-base font-semibold text-[var(--text-main)]"
+                    >
+                      当前预设暂无可展示内容
+                    </div>
+                    <div class="mt-2 text-sm text-[var(--text-dim)]">
+                      当前预设还没有可查看的内容。
+                    </div>
+                  </div>
+                </template>
+
+                <template x-if="!isPromptWorkspaceReader">
+                  <div class="space-y-3">
+                    <template
+                      x-if="readerItems.length > 0 && filteredItems.length === 0"
+                    >
+                      <div
+                        class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                      >
+                        <div
+                          class="text-base font-semibold text-[var(--text-main)]"
+                        >
+                          没有匹配结果
+                        </div>
+                        <div class="mt-2 text-sm text-[var(--text-dim)]">
+                          可以尝试切换分组、清空搜索词或调整筛选条件。
+                        </div>
+                      </div>
+                    </template>
+
+                    <template x-for="item in filteredItems" :key="item.id">
+                      <article
+                        @click="selectItem(item.id)"
+                        class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
+                        :class="activeItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                      >
+                        <div>
+                          <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0 flex-1">
+                              <div class="flex items-center gap-2 flex-wrap">
+                                <div
+                                  class="text-sm font-bold text-[var(--text-main)] break-all"
+                                  x-text="item.title"
+                                ></div>
+                                <span
+                                  class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                  x-text="getItemBadge(item)"
+                                ></span>
+                                <span
+                                  class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                  x-text="getItemGroupLabel(item)"
+                                ></span>
+                              </div>
+                            </div>
+                            <div
+                              class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
+                              x-text="item.summary || '-' "
+                            ></div>
+                          </div>
+
+                          <div
+                            class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
+                            x-text="getItemValuePreview(item)"
+                          ></div>
+                        </div>
+
+                        <template x-if="item.type === 'extension'">
+                          <div class="mt-3 text-[11px] text-[var(--text-dim)]">
+                            扩展键名：
+                            <span
+                              class="font-mono"
+                              x-text="item.payload?.key || item.title"
+                            ></span>
+                          </div>
+                        </template>
+
+                        <template x-if="item.type === 'field'">
+                          <div class="mt-3 text-[11px] text-[var(--text-dim)]">
+                            字段键名：
+                            <span
+                              class="font-mono"
+                              x-text="item.payload?.key || item.title"
+                            ></span>
+                          </div>
+                        </template>
+
+                        <template x-if="item.type === 'structured'">
+                          <div class="mt-3 text-[11px] text-[var(--text-dim)]">
+                            结构化内容可在详情面板中查看完整信息。
+                          </div>
+                        </template>
+                      </article>
+                    </template>
+                  </div>
+                </template>
+
+                <template x-if="isPromptWorkspaceReader">
+                  <div class="space-y-3">
+                    <template
+                      x-if="activeWorkspace === 'prompts' && orderedPromptItems.length === 0"
+                    >
+                      <div
+                        class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                      >
+                        <div
+                          class="text-base font-semibold text-[var(--text-main)]"
+                        >
+                          当前预设里还没有可查看的提示词条目。
+                        </div>
+                        <div class="mt-2 text-sm text-[var(--text-dim)]">
+                          当前预设还没有可查看的内容。
+                        </div>
+                      </div>
+                    </template>
+
+                    <template x-if="activeWorkspace === 'prompts'">
+                      <div class="space-y-3">
+                        <template
+                          x-if="activeWorkspace === 'prompts' && orderedPromptItems.length > 0 && promptFilteredItems.length === 0"
+                        >
+                          <div
+                            class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                          >
+                            <div
+                              class="text-base font-semibold text-[var(--text-main)]"
+                            >
+                              没有匹配的提示词
+                            </div>
+                            <div class="mt-2 text-sm text-[var(--text-dim)]">
+                              可以尝试清空搜索词或调整筛选条件。
+                            </div>
+                          </div>
+                        </template>
+
+                        <template
+                          x-for="item in promptFilteredItems"
+                          :key="item.id"
+                        >
+                          <article
+                            @click="selectPrompt(item.id)"
+                            class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
+                            :class="activePromptItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                          >
+                            <div class="flex items-start gap-3">
+                              <template x-if="item.prompt_meta?.is_marker">
+                                <span
+                                  aria-hidden="true"
+                                  class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-500/10 text-sky-200"
+                                  x-html="getPromptMarkerIcon(item)"
+                                ></span>
+                              </template>
+                              <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                  <div
+                                    class="min-w-0 flex-1 text-sm font-bold text-[var(--text-main)] break-all"
+                                    x-text="item.title"
+                                  ></div>
+                                  <span
+                                    class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                    x-text="getPromptPositionLabel(item)"
+                                  ></span>
+                                  <span
+                                    x-show="item.prompt_meta?.is_marker"
+                                    class="px-2 py-0.5 rounded-full text-[10px] border border-sky-400/40 bg-sky-500/10 text-sky-300"
+                                  >
+                                    预留字段
+                                  </span>
+                                  <span
+                                    class="sr-only"
+                                    x-text="item.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
+                                  ></span>
+                                  <span
+                                    aria-hidden="true"
+                                    :title="item.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
+                                    class="ml-auto relative h-5 w-9 flex-shrink-0 rounded-full transition-colors"
+                                    :class="item.prompt_meta?.is_enabled ? 'bg-emerald-500/80' : 'bg-amber-500/40'"
+                                  >
+                                    <span
+                                      aria-hidden="true"
+                                      class="absolute inset-0 flex items-center justify-center text-[10px] font-bold leading-none text-white"
+                                      x-text="item.prompt_meta?.is_enabled ? '✓' : '−'"
+                                    ></span>
+                                    <span
+                                      aria-hidden="true"
+                                      class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform"
+                                      :class="item.prompt_meta?.is_enabled ? 'left-4' : 'left-0.5'"
+                                    ></span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
+                              x-show="getPromptPreview(item)"
+                              class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
+                              x-text="getPromptPreview(item)"
+                            ></div>
+                          </article>
+                        </template>
+                      </div>
+                    </template>
+
+                    <template x-if="isScalarWorkspaceReader">
+                      <div class="space-y-4">
+                        <template
+                          x-if="isScalarWorkspaceReader && isMirroredProfileReader && editorProfile"
+                        >
+                          <section
+                            class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-sub)] p-4 space-y-4"
+                          >
+                            <div
+                              class="flex items-center justify-between gap-3 flex-wrap"
+                            >
+                              <div>
+                                <div
+                                  class="text-sm font-bold text-[var(--text-main)]"
+                                >
+                                  参数一览
+                                </div>
+                                <div class="text-[11px] text-[var(--text-dim)]">
+                                  快速查看当前分区的重要参数与状态。
+                                </div>
+                              </div>
+                              <div
+                                class="text-[11px] text-[var(--text-dim)]"
+                                x-text="editorProfile?.label || editorProfile?.id || '参数一览'"
+                              ></div>
+                            </div>
+
+                            <div
+                              class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+                            >
+                              <template
+                                x-for="section in readerMirroredProfileSections"
+                                :key="section.id"
+                              >
+                                <div
+                                  class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
+                                  :class="section.id === 'formatting_and_templates' ? 'md:col-span-2 xl:col-span-3' : ''"
+                                >
+                                  <div>
+                                    <div
+                                      class="text-sm font-bold text-[var(--text-main)]"
+                                      x-text="section.label"
+                                    ></div>
+                                    <div
+                                      class="text-[11px] text-[var(--text-dim)]"
+                                      x-text="section.description || section.id"
+                                    ></div>
+                                  </div>
+
+                                  <template
+                                    x-for="field in getProfileSectionFields(section.id)"
+                                    :key="field.canonical_key"
+                                  >
+                                    <div
+                                      class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-body)] p-3 space-y-2"
+                                    >
+                                      <div
+                                        class="flex items-center justify-between gap-3"
+                                      >
+                                        <div
+                                          class="text-sm text-[var(--text-main)]"
+                                          x-text="field.label"
+                                        ></div>
+                                        <div
+                                          class="text-xs font-mono text-[var(--text-sub)]"
+                                          x-text="getProfileFieldDisplay(field.canonical_key)"
+                                        ></div>
+                                      </div>
+
+                                      <template
+                                        x-if="isProfileFieldSlider(field)"
+                                      >
+                                        <div class="space-y-2">
+                                          <div
+                                            class="h-2 rounded-full bg-[var(--bg-sub)] overflow-hidden"
+                                          >
+                                            <div
+                                              class="h-full rounded-full bg-[var(--accent-main)]"
+                                              :style="`width: ${getProfileFieldPercent(field.canonical_key)}%`"
+                                            ></div>
+                                          </div>
+                                          <div
+                                            class="flex items-center justify-between text-[10px] text-[var(--text-dim)] font-mono"
+                                          >
+                                            <span
+                                              x-text="field.min ?? '-' "
+                                            ></span>
+                                            <span
+                                              x-text="resolveProfileFieldMax(field) ?? '-' "
+                                            ></span>
+                                          </div>
+                                        </div>
+                                      </template>
+
+                                      <template
+                                        x-if="isProfileFieldToggle(field)"
+                                      >
+                                        <div
+                                          class="flex items-center justify-between text-xs text-[var(--text-dim)]"
+                                        >
+                                          <span>状态</span>
+                                          <span
+                                            x-text="getProfileFieldValue(field.canonical_key) ? '启用' : '关闭'"
+                                          ></span>
+                                        </div>
+                                      </template>
+
+                                      <template
+                                        x-if="isProfileFieldSelect(field)"
+                                      >
+                                        <div
+                                          class="inline-flex items-center rounded-full border border-[var(--border-light)] px-2.5 py-1 text-[11px] text-[var(--text-main)] bg-[var(--bg-sub)]"
+                                          x-text="getProfileFieldDisplay(field.canonical_key)"
+                                        ></div>
+                                      </template>
+
+                                      <template
+                                        x-if="field.control === 'sortable_string_list'"
+                                      >
+                                        <div class="space-y-2">
+                                          <template
+                                            x-for="(entry, index) in (Array.isArray(getProfileFieldValue(field.canonical_key)) ? getProfileFieldValue(field.canonical_key) : [])"
+                                            :key="`${field.canonical_key}-${index}`"
+                                          >
+                                            <div
+                                              class="rounded-lg border border-[var(--border-light)] bg-[var(--bg-sub)] px-3 py-2 text-xs text-[var(--text-main)]"
+                                              x-text="entry || '—'"
+                                            ></div>
+                                          </template>
+                                        </div>
+                                      </template>
+
+                                      <template
+                                        x-if="field.control === 'prompt_workspace'"
+                                      >
+                                        <div
+                                          class="space-y-2 text-xs text-[var(--text-dim)]"
+                                        >
+                                          <div
+                                            class="rounded-lg border border-[var(--border-light)] bg-[var(--bg-sub)] px-3 py-2"
+                                          >
+                                            提示词列表
+                                          </div>
+                                          <div
+                                            class="break-words"
+                                            x-text="getProfileFieldDisplay(field.canonical_key)"
+                                          ></div>
+                                        </div>
+                                      </template>
+                                    </div>
+                                  </template>
+                                </div>
+                              </template>
+                            </div>
+                          </section>
+                        </template>
+                      </div>
+                    </template>
+
+                    <div
+                      x-show="activeWorkspace !== 'prompts'"
+                      class="space-y-3"
+                    >
+                      <template x-if="!isScalarWorkspaceReader">
+                        <div class="space-y-3">
+                          <template
+                            x-if="readerItems.length > 0 && filteredItems.length === 0"
+                          >
+                            <div
+                              class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-8 text-center"
+                            >
+                              <div
+                                class="text-base font-semibold text-[var(--text-main)]"
+                              >
+                                没有匹配结果
+                              </div>
+                              <div class="mt-2 text-sm text-[var(--text-dim)]">
+                                可以尝试切换工作区或清空搜索词。
+                              </div>
+                            </div>
+                          </template>
+
+                          <template
+                            x-for="item in filteredItems"
+                            :key="item.id"
+                          >
+                            <article
+                              @click="selectItem(item.id)"
+                              class="rounded-2xl border p-4 bg-[var(--bg-panel)] cursor-pointer transition"
+                              :class="activeContextItem?.id === item.id ? 'border-[var(--accent-main)] shadow-[0_0_0_1px_rgba(99,102,241,.25)]' : 'border-[var(--border-light)] hover:border-[var(--text-dim)]'"
+                            >
+                              <div>
+                                <div
+                                  class="flex items-start justify-between gap-3"
+                                >
+                                  <div class="min-w-0 flex-1">
+                                    <div
+                                      class="flex items-center gap-2 flex-wrap"
+                                    >
+                                      <div
+                                        class="text-sm font-bold text-[var(--text-main)] break-all"
+                                        x-text="item.title"
+                                      ></div>
+                                      <span
+                                        class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                        x-text="getItemBadge(item)"
+                                      ></span>
+                                      <span
+                                        class="px-2 py-0.5 rounded-full text-[10px] border border-[var(--border-light)] text-[var(--text-dim)]"
+                                        x-text="getItemGroupLabel(item)"
+                                      ></span>
+                                    </div>
+                                  </div>
+                                  <div
+                                    class="text-[11px] text-[var(--text-sub)] whitespace-nowrap"
+                                    x-text="item.summary || '-' "
+                                  ></div>
+                                </div>
+
+                                <div
+                                  class="mt-3 text-sm text-[var(--text-sub)] whitespace-pre-wrap break-words line-clamp-3"
+                                  x-text="getItemValuePreview(item)"
+                                ></div>
+                              </div>
+                            </article>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </section>
+
+          <aside
+            x-show="($store.global.deviceType !== 'mobile' && showRightPanel) || ($store.global.deviceType === 'mobile' && showMobileDetailView)"
+            class="w-full lg:w-[340px] xl:w-[380px] flex-shrink-0 bg-[var(--bg-sub)] border-l border-[var(--border-light)] flex flex-col min-h-0"
+            :class="{
+              'preset-reader-mobile-detail-panel': true,
+              'fixed right-0 bottom-0 z-40 max-w-[92vw] shadow-2xl': $store.global.deviceType === 'mobile',
+              'hidden lg:flex': $store.global.deviceType !== 'mobile',
+              'flex': $store.global.deviceType === 'mobile' && showMobileDetailView,
+              'hidden': $store.global.deviceType === 'mobile' && !showMobileDetailView
+            }"
+          >
+            <div
+              x-show="$store.global.deviceType === 'mobile'"
+              class="preset-reader-mobile-detail-header p-4 border-b border-[var(--border-light)] flex items-center justify-between gap-3"
+            >
+              <button
+                @click="closeMobileDetailView()"
+                class="btn-secondary py-1.5 px-3 text-xs"
+              >
+                返回列表
+              </button>
+              <div class="min-w-0 flex-1 text-right">
+                <div class="text-[11px] text-[var(--text-dim)]">详情</div>
+                <div
+                  class="text-sm font-semibold text-[var(--text-main)] truncate"
+                  x-text="activeContextItem?.title || '未选择条目'"
+                ></div>
+              </div>
+            </div>
+            <div class="p-4 border-b border-[var(--border-light)] space-y-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex flex-1 items-start gap-3">
+                  <template
+                    x-if="activeContextItem?.group === 'prompts' && activeContextItem?.prompt_meta?.is_marker"
+                  >
+                    <span
+                      aria-hidden="true"
+                      class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-500/10 text-sky-200"
+                      x-html="getPromptMarkerIcon(activeContextItem)"
+                    ></span>
+                  </template>
+                  <div class="min-w-0 flex-1">
+                    <div
+                      class="text-xs text-[var(--text-dim)]"
+                      x-text="activeContextItem?.group === 'prompts' ? '活动提示词' : '当前条目'"
+                    ></div>
+                    <div
+                      class="text-lg font-bold text-[var(--text-main)] break-all"
+                      x-text="activeContextItem?.title || (activeContextItem?.group === 'prompts' ? '尚未选择提示词' : '未选择条目')"
+                    ></div>
+                    <div
+                      class="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-[var(--text-dim)]"
+                    >
+                      <span
+                        class="px-2 py-0.5 rounded-full border border-[var(--border-light)]"
+                        x-text="activeContextItem ? getItemBadge(activeContextItem) : '空状态'"
+                      ></span>
+                      <span
+                        x-text="activeContextItem ? getItemGroupLabel(activeContextItem) : '-' "
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  x-show="$store.global.deviceType === 'mobile'"
+                  @click="closeMobileDetailView()"
+                  class="btn-secondary py-1 px-2 text-xs"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div
+                x-show="$store.global.deviceType !== 'mobile'"
+                class="grid grid-cols-2 gap-2 text-xs"
+              >
+                <div
+                  class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
+                >
+                  <div class="text-[var(--text-dim)]">修改时间</div>
+                  <div
+                    class="mt-1 text-[var(--text-main)]"
+                    x-text="formatDate(activePresetDetail?.mtime)"
+                  ></div>
+                </div>
+                <div
+                  class="rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-3"
+                >
+                  <div class="text-[var(--text-dim)]">文件大小</div>
+                  <div
+                    class="mt-1 text-[var(--text-main)]"
+                    x-text="formatSize(activePresetDetail?.file_size)"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="preset-reader-mobile-detail-body flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4"
+            >
+              <div class="hidden" x-show="!isPromptWorkspaceReader">
+                <span x-text="activeItem?.title || '未选择条目'"></span>
+                <span x-text="getItemFullDetail(activeItem)"></span>
+              </div>
+
+              <template x-if="!activeContextItem">
+                <div
+                  class="rounded-2xl border border-dashed border-[var(--border-light)] bg-[var(--bg-panel)] p-6 text-center"
+                >
+                  <div class="text-base font-semibold text-[var(--text-main)]">
+                    请选择一个条目
+                  </div>
+                  <div class="mt-2 text-sm text-[var(--text-dim)]">
+                    从左侧选择条目后，可在这里查看完整内容。
+                  </div>
+                </div>
+              </template>
+
+              <template x-if="activeContextItem">
+                <div class="space-y-4">
+                  <template x-if="activeContextItem?.group === 'prompts'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
+                    >
+                      <div
+                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                      >
+                        提示词状态
+                      </div>
+                      <div
+                        class="flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div class="flex flex-wrap items-center gap-3 min-w-0">
+                          <span
+                            class="sr-only"
+                            x-text="activeContextItem?.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
+                          ></span>
+                          <span
+                            aria-hidden="true"
+                            class="relative h-5 w-9 rounded-full transition-colors"
+                            :title="activeContextItem?.prompt_meta?.is_enabled ? '提示词已启用' : '提示词已禁用'"
+                            :class="activeContextItem?.prompt_meta?.is_enabled ? 'bg-emerald-500/80' : 'bg-amber-500/40'"
+                          >
+                            <span
+                              aria-hidden="true"
+                              class="absolute inset-0 flex items-center justify-center text-[10px] font-bold leading-none text-white"
+                              x-text="activeContextItem?.prompt_meta?.is_enabled ? '✓' : '−'"
+                            ></span>
+                            <span
+                              aria-hidden="true"
+                              class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform"
+                              :class="activeContextItem?.prompt_meta?.is_enabled ? 'left-4' : 'left-0.5'"
+                            ></span>
+                          </span>
+                        </div>
+                        <span
+                          x-show="activeContextItem?.prompt_meta?.is_marker"
+                          class="px-2 py-0.5 rounded-full border border-sky-400/40 bg-sky-500/10 text-[10px] text-sky-300"
+                        >
+                          预留字段
+                        </span>
+                        <span
+                          class="px-2 py-0.5 rounded-full border border-[var(--border-light)] text-[10px] text-[var(--text-dim)]"
+                          x-text="getPromptPositionLabel(activeContextItem)"
+                        ></span>
+                        <template
+                          x-if="activeContextItem?.group === 'prompts' && getPromptFullDetail(activeContextItem)"
+                        >
+                          <button
+                            @click="copyText(getPromptFullDetail(activeContextItem), '条目内容')"
+                            class="btn-secondary px-2 py-1 text-xs"
+                          >
+                            复制
+                          </button>
+                        </template>
+                      </div>
+                      <div class="grid grid-cols-1 gap-2 text-xs">
+                        <div>
+                          <div class="text-[var(--text-dim)]">标识符</div>
+                          <div
+                            class="font-mono break-all text-[var(--text-main)]"
+                            x-text="activeContextItem?.payload?.identifier || activeContextItem?.prompt_meta?.identifier || activeContextItem?.id || '-'"
+                          ></div>
+                        </div>
+                      </div>
+                      <div
+                        x-show="getPromptFullDetail(activeContextItem)"
+                        class="text-sm text-[var(--text-main)] whitespace-pre-wrap break-words"
+                      >
+                        <span
+                          x-text="getPromptFullDetail(activeContextItem)"
+                        ></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="activeContextItem?.type === 'extension'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
+                    >
+                      <div
+                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                      >
+                        扩展信息
+                      </div>
+                      <div class="text-sm text-[var(--text-main)]">
+                        扩展键名：<span
+                          class="font-mono"
+                          x-text="activeContextItem?.payload?.key || activeContextItem?.title"
+                        ></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="activeContextItem?.type === 'field'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
+                    >
+                      <div
+                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                      >
+                        字段信息
+                      </div>
+                      <div class="text-sm text-[var(--text-main)]">
+                        字段键名：<span
+                          class="font-mono"
+                          x-text="activeContextItem?.payload?.key || activeContextItem?.title"
+                        ></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="activeContextItem?.type === 'structured'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4 space-y-3"
+                    >
+                      <div
+                        class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                      >
+                        结构化内容
+                      </div>
+                      <div class="text-sm text-[var(--text-main)]">
+                        这是结构化内容，下面展示完整信息以便查看。
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="activeContextItem?.group !== 'prompts'">
+                    <div
+                      class="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-panel)] p-4"
+                    >
+                      <div class="flex items-center justify-between gap-2 mb-2">
+                        <div
+                          class="text-xs uppercase tracking-wide text-[var(--text-dim)]"
+                        >
+                          内容
+                        </div>
+                        <button
+                          @click="copyText(getItemFullDetail(activeContextItem), '条目内容')"
+                          class="btn-secondary px-2 py-1 text-xs"
+                        >
+                          复制
+                        </button>
+                      </div>
+                      <pre
+                        class="text-xs whitespace-pre-wrap break-words text-[var(--text-main)] font-mono max-h-[28rem] overflow-auto custom-scrollbar"
+                        x-text="getItemFullDetail(activeContextItem)"
+                      ></pre>
+                    </div>
+                  </template>
+
+                  <template x-if="activeContextItem?.group !== 'prompts'">
+                    <div class="hidden">
+                      <span
+                        x-text="getItemValuePreview(activeContextItem)"
+                      ></span>
+                      <span
+                        x-text="getItemFullDetail(activeContextItem)"
+                      ></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </aside>
+        </div>
+      </template>
+    </div>
+  </div>
 </div>

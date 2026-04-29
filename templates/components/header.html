@@ -58,6 +58,13 @@
               :placeholder="currentMode === 'regex' ? '搜索正则...' : (currentMode === 'scripts' ? '搜索 ST 脚本...' : '搜索快速回复...')"
               class="mobile-search-input"
             />
+            <input
+              x-show="currentMode === 'beautify'"
+              type="text"
+              x-model.debounce.300ms="beautifySearch"
+              placeholder="搜索美化包..."
+              class="mobile-search-input"
+            />
           </div>
           <button
             x-show="showMobileUploadButton"
@@ -170,7 +177,7 @@
             border-radius: 4px;
             margin-left: 0.25rem;
           "
-          >V99</span
+          >V100</span
         >
       </div>
     </div>
@@ -307,6 +314,16 @@
         🗑️ 删除世界书
       </button>
       <button
+        x-show="selectedIds.length > 1 && currentMode === 'presets'"
+        @click="mergeSelectedPresets()"
+        :disabled="!canMergePresetSelection()"
+        :title="getPresetMergeSelectionTitle()"
+        class="text-xs px-2 py-1 rounded text-white"
+        style="background-color: #7c3aed"
+      >
+        合并为多版本
+      </button>
+      <button
         x-show="currentMode === 'presets' && canMovePresetSelection()"
         @click="moveSelectedPresets()"
         class="text-xs px-2 py-1 rounded text-white bg-blue-700 hover:bg-blue-600 transition-all"
@@ -437,6 +454,14 @@
           class="search-input"
           :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'"
         />
+        <input
+          x-show="currentMode === 'beautify'"
+          type="text"
+          x-model.debounce.300ms="beautifySearch"
+          placeholder="搜索美化包、作者或主题名..."
+          class="search-input"
+          :class="currentMode === 'cards' ? 'search-input-with-type' : 'search-input-standalone'"
+        />
         <button
           x-show="currentMode === 'cards' && searchQuery"
           @click="searchQuery=''"
@@ -454,6 +479,13 @@
         <button
           x-show="['regex','scripts','quick_replies'].includes(currentMode) && extensionSearch"
           @click="extensionSearch=''"
+          class="search-clear-btn"
+        >
+          ✕
+        </button>
+        <button
+          x-show="currentMode === 'beautify' && beautifySearch"
+          @click="beautifySearch=''"
           class="search-clear-btn"
         >
           ✕

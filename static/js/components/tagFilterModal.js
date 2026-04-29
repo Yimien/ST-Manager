@@ -795,6 +795,23 @@ export default function tagFilterModal() {
       return addedCount;
     },
 
+    appendTokensToBlacklistSelection(tokens) {
+      const selected = new Set(
+        this.normalizeTagList(this.selectedBlacklistTags || []),
+      );
+      let addedCount = 0;
+
+      (tokens || []).forEach((rawToken) => {
+        const token = String(rawToken || "").trim();
+        if (!token || selected.has(token)) return;
+        selected.add(token);
+        addedCount += 1;
+      });
+
+      this.selectedBlacklistTags = [...selected];
+      return addedCount;
+    },
+
     normalizeOpacity(value, fallback = 16) {
       const fallbackNum = Number.isFinite(Number(fallback))
         ? Number(fallback)
@@ -1374,10 +1391,7 @@ export default function tagFilterModal() {
       const tokens = this.splitManualTagInput(this.blacklistSelectionInput);
       if (!tokens.length) return;
 
-      const addedCount = this.appendTokensToSelection(
-        tokens,
-        "selectedBlacklistTags",
-      );
+      const addedCount = this.appendTokensToBlacklistSelection(tokens);
       this.blacklistSelectionInput = "";
 
       if (addedCount > 0) {
@@ -1456,12 +1470,20 @@ export default function tagFilterModal() {
       });
     },
 
-    saveBlacklistSelection() {
-      const selected = this.normalizeTagList(this.selectedBlacklistTags || []);
-      if (!selected.length) {
+    mergeTagsIntoBlacklist(tags, options = {}) {
+      const normalizedTags = this.normalizeTagList(tags || []);
+      if (!normalizedTags.length) {
         alert("请先选择要加入黑名单的标签");
-        return;
+        return Promise.resolve(false);
       }
+
+      const {
+        successMessage,
+        duplicateMessage = "所选标签已在黑名单中",
+        clearBlacklistSelectionOnSuccess = false,
+        clearBlacklistInputOnSuccess = false,
+        clearDeleteSelectionOnSuccess = false,
+      } = options;
 
       const nextBlacklist = [
         ...this.normalizeTagList(this.tagBlacklistTags || []),
@@ -1469,31 +1491,66 @@ export default function tagFilterModal() {
       const existing = new Set(nextBlacklist);
       let addedCount = 0;
 
-      selected.forEach((tag) => {
+      normalizedTags.forEach((tag) => {
         if (existing.has(tag)) return;
         existing.add(tag);
         nextBlacklist.push(tag);
         addedCount += 1;
       });
 
+      if (addedCount === 0) {
+        if (clearBlacklistSelectionOnSuccess) this.selectedBlacklistTags = [];
+        if (clearBlacklistInputOnSuccess) this.blacklistSelectionInput = "";
+        this.$store.global.showToast(duplicateMessage, 1800);
+        return Promise.resolve(false);
+      }
+
+      const previousBlacklist = this.normalizeTagList(
+        this.tagBlacklistTags || [],
+      );
+      const previousBlacklistInput = this.tagBlacklistInput;
       this.tagBlacklistTags = nextBlacklist;
       this.tagBlacklistInput = nextBlacklist.join(", ");
 
-      if (addedCount === 0) {
-        this.selectedBlacklistTags = [];
-        this.blacklistSelectionInput = "";
-        this.$store.global.showToast("所选标签已在黑名单中", 1800);
+      return this.saveTagManagementPrefsState()
+        .then((prefs) => {
+          if (!prefs) {
+            this.tagBlacklistTags = previousBlacklist;
+            this.tagBlacklistInput = previousBlacklistInput;
+            return false;
+          }
+          if (clearBlacklistSelectionOnSuccess) this.selectedBlacklistTags = [];
+          if (clearBlacklistInputOnSuccess) this.blacklistSelectionInput = "";
+          if (clearDeleteSelectionOnSuccess) this.selectedTagsForDeletion = [];
+          this.$store.global.showToast(
+            successMessage || `✅ 已加入 ${addedCount} 个黑名单标签`,
+            1800,
+          );
+          return true;
+        })
+        .catch(() => {
+          this.tagBlacklistTags = previousBlacklist;
+          this.tagBlacklistInput = previousBlacklistInput;
+          return false;
+        });
+    },
+
+    saveBlacklistSelection() {
+      return this.mergeTagsIntoBlacklist(this.selectedBlacklistTags, {
+        clearBlacklistSelectionOnSuccess: true,
+        clearBlacklistInputOnSuccess: true,
+      });
+    },
+
+    addDeleteSelectionToBlacklist() {
+      if (this.selectedTagsForDeletion.length === 0) {
+        alert("请先选择要加入黑名单的标签");
         return;
       }
 
-      this.saveTagManagementPrefsState().then((prefs) => {
-        if (!prefs) return;
-        this.selectedBlacklistTags = [];
-        this.blacklistSelectionInput = "";
-        this.$store.global.showToast(
-          `✅ 已加入 ${addedCount} 个黑名单标签`,
-          1800,
-        );
+      return this.mergeTagsIntoBlacklist(this.selectedTagsForDeletion, {
+        successMessage: `✅ 已将 ${this.selectedTagsForDeletion.length} 个待删除标签加入黑名单`,
+        clearDeleteSelectionOnSuccess: true,
       });
     },
 

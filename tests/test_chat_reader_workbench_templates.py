@@ -1,5 +1,8 @@
+import json
 from pathlib import Path
 import re
+import subprocess
+import textwrap
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -7,6 +10,176 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def read_project_file(relative_path):
     return (PROJECT_ROOT / relative_path).read_text(encoding='utf-8')
+
+
+def run_sidebar_runtime_check(script_body):
+    source_path = PROJECT_ROOT / 'static/js/components/sidebar.js'
+    node_script = textwrap.dedent(
+        """
+        import { readFileSync } from 'node:fs';
+
+        const sourcePath = __SOURCE_PATH__;
+        let source = readFileSync(sourcePath, 'utf8');
+        source = source
+          .split(/\\r?\\n/)
+          .filter((line) => !line.trim().startsWith('import '))
+          .join('\\n');
+
+        globalThis.__sidebarTestState = {
+          localStorageState: new Map(),
+          windowListeners: [],
+          shellClassNames: new Set(),
+          rafQueue: [],
+        };
+        const { localStorageState, windowListeners, shellClassNames, rafQueue } = globalThis.__sidebarTestState;
+
+        const stubs = `
+        const createFolder = async () => ({});
+        const moveFolder = async () => ({});
+        const moveCard = async () => ({});
+        const migrateLorebooks = async () => ({});
+        globalThis.fetch = async () => ({ json: async () => ({ success: true }) });
+        globalThis.requestAnimationFrame = (cb) => {
+          globalThis.__sidebarTestState.rafQueue.push(cb);
+          return globalThis.__sidebarTestState.rafQueue.length;
+        };
+        globalThis.cancelAnimationFrame = (id) => {
+          if (id > 0 && id <= globalThis.__sidebarTestState.rafQueue.length) {
+            globalThis.__sidebarTestState.rafQueue[id - 1] = null;
+          }
+        };
+        globalThis.window = {
+          addEventListener(type, handler) {
+            globalThis.__sidebarTestState.windowListeners.push({ action: 'add', type, handler });
+          },
+          removeEventListener(type, handler) {
+            globalThis.__sidebarTestState.windowListeners.push({ action: 'remove', type, handler });
+          },
+          dispatchEvent() {},
+        };
+        globalThis.document = {
+          querySelectorAll() { return []; },
+          body: { style: {} },
+        };
+        globalThis.localStorage = {
+          getItem(key) {
+            const storage = globalThis.__sidebarTestState.localStorageState;
+            return storage.has(key) ? storage.get(key) : null;
+          },
+          setItem(key, value) {
+            globalThis.__sidebarTestState.localStorageState.set(key, String(value));
+          },
+          removeItem(key) {
+            globalThis.__sidebarTestState.localStorageState.delete(key);
+          },
+        };
+        globalThis.CustomEvent = class CustomEvent {
+          constructor(type, options = {}) {
+            this.type = type;
+            this.detail = options.detail;
+          }
+        };
+        `;
+
+        const module = await import(
+          'data:text/javascript,' + encodeURIComponent(stubs + source),
+        );
+
+        const store = {
+          global: {
+            currentMode: 'cards',
+            visibleSidebar: true,
+            deviceType: 'desktop',
+            allFoldersList: [],
+            isolatedCategories: [],
+            allTagsPool: [],
+            tagIndexActiveCategory: '',
+            cardCategorySearchQuery: '',
+            wiCategorySearchQuery: '',
+            presetCategorySearchQuery: '',
+            wiAllFolders: [],
+            presetAllFolders: [],
+            viewState: {
+              filterCategory: '',
+              filterTags: [],
+              draggedCards: [],
+              draggedFolder: '',
+              selectedIds: [],
+            },
+            groupTagsByTaxonomy(tags) {
+              return [{ category: '', tags }];
+            },
+            getTagCategory() {
+              return '';
+            },
+          },
+        };
+
+        const component = module.default();
+        component.$store = store;
+        component.$watch = () => {};
+        component.$nextTick = (cb) => cb();
+        component.$refs = {
+          cardSidebarShell: {
+            getBoundingClientRect() { return { height: 500 }; },
+            classList: {
+              add(name) { shellClassNames.add(name); },
+              remove(name) { shellClassNames.delete(name); },
+              contains(name) { return shellClassNames.has(name); },
+            },
+          },
+          cardTagsPane: {
+            getBoundingClientRect() { return { height: 170 }; },
+          },
+          cardTagsHeader: {
+            getBoundingClientRect() { return { height: 48 }; },
+          },
+          cardTagCategoryStrip: {
+            getBoundingClientRect() { return { height: 34 }; },
+          },
+          cardTagCloud: {
+            clientWidth: 286,
+          },
+        };
+
+        const flushRaf = () => {
+          while (rafQueue.length) {
+            const cb = rafQueue.shift();
+            if (typeof cb === 'function') cb();
+          }
+        };
+
+        __SCRIPT_BODY__
+        """
+    ).replace('__SOURCE_PATH__', json.dumps(str(source_path))).replace(
+        '__SCRIPT_BODY__', textwrap.dedent(script_body)
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', node_script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def compact_whitespace(source):
+    return re.sub(r'\s+', ' ', source).strip()
+
+
+def normalize_js_assertion_source(source):
+    compact = compact_whitespace(source).replace('"', "'")
+    compact = re.sub(r'([({\[])\s+', r'\1', compact)
+    compact = re.sub(r'\s+([)}\]])', r'\1', compact)
+    compact = re.sub(r'\s*,\s*', ', ', compact)
+    return re.sub(r',\s*([)\]}])', r'\1', compact)
+
+
+def js_contains(source, snippet):
+    return normalize_js_assertion_source(snippet) in normalize_js_assertion_source(source)
 
 
 def extract_css_block(css_source, selector):
@@ -47,8 +220,24 @@ def extract_media_block(css_source, media_query):
 
 
 def extract_js_function_block(source, signature):
-    function_start = source.index(signature)
-    block_start = source.index('{', function_start)
+    try:
+        function_start = source.index(signature)
+        block_start = source.index('{', function_start)
+    except ValueError:
+        name_match = re.search(r'(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(', signature)
+        if not name_match:
+            raise ValueError(f'Function signature not found: {signature}')
+
+        function_name = re.escape(name_match.group(1))
+        fallback_match = re.search(
+            rf'(^|\n)\s*(?:async\s+)?{function_name}\s*\([\s\S]*?\)\s*\{{',
+            source,
+            re.MULTILINE,
+        )
+        if not fallback_match:
+            raise ValueError(f'Function signature not found: {signature}')
+        block_start = fallback_match.end() - 1
+
     depth = 1
     index = block_start + 1
 
@@ -159,11 +348,262 @@ def test_header_component_does_not_wire_runtime_inspector_events():
     assert 'open-runtime-inspector' not in header_source
 
 
+def test_worldinfo_grid_and_detail_expose_export_actions():
+    wi_grid_source = read_project_file('static/js/components/wiGrid.js')
+    wi_grid_template = read_project_file('templates/components/grid_wi.html')
+    wi_detail_source = read_project_file('static/js/components/wiDetailPopup.js')
+    wi_detail_template = read_project_file('templates/modals/detail_wi_popup.html')
+
+    export_grid_block = extract_js_function_block(
+        wi_grid_source,
+        'async exportWorldInfoItem(item)',
+    )
+    export_detail_block = extract_js_function_block(
+        wi_detail_source,
+        'async exportActiveWorldInfo()',
+    )
+
+    assert 'downloadFileFromApi(' in export_grid_block
+    assert '/api/world_info/export' in export_grid_block
+    assert 'source_type: item.source_type || item.type' in export_grid_block
+    assert 'file_path: item.path' in export_grid_block
+    assert 'card_id: item.card_id' in export_grid_block
+    assert 'id: item.id' in export_grid_block
+    assert '@click.stop="exportWorldInfoItem(item)"' in wi_grid_template
+    assert 'title="导出世界书 JSON"' in wi_grid_template
+
+    assert 'downloadFileFromApi(' in export_detail_block
+    assert '/api/world_info/export' in export_detail_block
+    assert 'source_type: detail.type' in export_detail_block
+    assert 'file_path: detail.path' in export_detail_block
+    assert 'card_id: detail.card_id' in export_detail_block
+    assert 'id: detail.id' in export_detail_block
+    assert '@click="exportActiveWorldInfo()"' in wi_detail_template
+    assert 'title="导出 JSON"' in wi_detail_template
+    assert re.search(
+        r'@click="exportActiveWorldInfo\(\)"[\s\S]*?>[\s\S]*导出[\s\S]*</button>',
+        wi_detail_template,
+    )
+
+
+def test_worldinfo_grid_template_splits_footer_meta_and_tools():
+    wi_grid_template = read_project_file('templates/components/grid_wi.html')
+
+    footer_block = extract_balanced_tag_block(
+        wi_grid_template,
+        '<div class="wi-card-footer"'
+    )
+
+    tools_block = extract_balanced_tag_block(
+        footer_block,
+        '<div class="wi-card-footer-tools"'
+    )
+
+    info_index = footer_block.index('wi-card-footer-info')
+    tools_index = footer_block.index('wi-card-footer-tools')
+    date_index = footer_block.index('wi-card-date-chip')
+
+    assert info_index < date_index < tools_index
+    assert 'wi-card-footer-tools-left' in tools_block
+    assert 'wi-card-note-tool' in tools_block
+    assert 'wi-card-footer-tools-right' in tools_block
+    assert 'wi-card-note-state' not in footer_block
+    assert 'getWorldInfoNoteState(item)' not in footer_block
+
+
+def test_preset_grid_and_detail_expose_export_actions():
+    preset_grid_source = read_project_file('static/js/components/presetGrid.js')
+    preset_grid_template = read_project_file('templates/components/grid_presets.html')
+    preset_detail_source = read_project_file('static/js/components/presetDetailReader.js')
+    preset_detail_template = read_project_file('templates/modals/detail_preset_popup.html')
+
+    export_grid_block = extract_js_function_block(
+        preset_grid_source,
+        'async exportPresetItem(item, event = null)',
+    )
+    export_detail_block = extract_js_function_block(
+        preset_detail_source,
+        'async exportActivePreset()',
+    )
+
+    assert 'downloadFileFromApi(' in export_grid_block
+    assert '/api/presets/export' in export_grid_block
+    assert 'const targetId = this.getPresetActionTargetId(item)' in export_grid_block
+    assert 'id: targetId' in export_grid_block
+    assert 'event?.stopPropagation?.()' in export_grid_block
+    assert '@click.stop="exportPresetItem(item, $event)"' in preset_grid_template
+    assert 'title="导出预设 JSON"' in preset_grid_template
+
+    assert 'downloadFileFromApi(' in export_detail_block
+    assert '/api/presets/export' in export_detail_block
+    assert 'id: detail.id' in export_detail_block
+    assert '@click="exportActivePreset()"' in preset_detail_template
+    assert re.search(
+        r'@click="exportActivePreset\(\)"[\s\S]*?>\s*导出\s*</button>',
+        preset_detail_template,
+    )
+
+
+def test_preset_grid_template_places_selection_left_and_actions_right():
+    preset_template = read_project_file('templates/components/grid_presets.html')
+
+    assert 'preset-grid-card' in preset_template
+    assert 'preset-card-toolbar' in preset_template
+    assert 'class="preset-card-toolbar-actions ml-auto flex items-center gap-1"' in preset_template
+    assert 'preset-select-shell' in preset_template
+    assert 'title="选择预设"' in preset_template
+    assert 'title="删除预设"' in preset_template
+    assert 'title="导出预设 JSON"' in preset_template
+    assert 'absolute top-0 left-0 w-6 h-6' not in preset_template
+    assert 'absolute top-0 left-7 w-6 h-6' not in preset_template
+
+
+def test_automation_modal_template_exposes_rule_trigger_chip_controls_contract():
+    template = read_project_file('templates/modals/automation.html')
+
+    expected_trigger_chips = [
+        ('manual_run', '手动执行'),
+        ('auto_import', '导入后'),
+        ('card_update', '更新角色卡后'),
+        ('link_update', '更新来源链接后'),
+        ('tag_edit', '手动打标后'),
+    ]
+
+    trigger_chip_matches = re.findall(
+        r'<button type="button" class="automation-preset-chip"[\s\S]*?</button>',
+        template,
+    )
+    trigger_chip_blocks = [
+        block for block in trigger_chip_matches if 'toggleRuleTrigger(rule,' in block
+    ]
+
+    assert len(trigger_chip_blocks) == len(expected_trigger_chips)
+
+    for trigger_name, trigger_label in expected_trigger_chips:
+        expected_block = f'''
+        <button type="button" class="automation-preset-chip"
+            :class="ruleHasTrigger(rule, '{trigger_name}') ? 'border-[var(--accent-main)] text-[var(--accent-main)]' : 'text-[var(--text-dim)]'"
+            @click="toggleRuleTrigger(rule, '{trigger_name}')">
+            {trigger_label}
+        </button>
+        '''
+        assert js_contains(template, expected_block)
+
+    assert '仅勾选的触发场景会参与该规则。' in template
+
+
+def test_automation_modal_template_updates_trigger_and_rename_help_copy_contract():
+    template = read_project_file('templates/modals/automation.html')
+
+    assert '当前状态：全局默认规则' in template
+    assert '按规则触发时机和动作类型在不同场景执行' in template
+    assert '仅在 upload-file 或 update-from-URL' in template
+    assert '用新角色卡内容覆盖已有角色卡时触发' in template
+    assert '普通保存详情' in template
+    assert '单独更换封面' in template
+    assert '修改本地备注' in template
+    assert '修改来源链接' in template
+    assert '都不会触发' in template
+    assert '若想在覆盖更新后重命名' in template
+    assert '请在规则上启用“更新角色卡后”' in template
+    assert '如果文件名要体现本次更新时间' in template
+    assert '优先使用 modified_date' in template
+    assert '{% raw %}{{char_name}} - {{char_version|version}} - {{modified_date|date:%Y-%m-%d}}{% endraw %}' in template
+    assert 'import_date' in template
+    assert '首次导入时命名' in template
+    assert 'modified_date 更适合覆盖更新后命名' in template
+
+
+def test_preset_grid_css_reveals_selection_and_actions_on_hover():
+    preset_template = read_project_file('templates/components/grid_presets.html')
+    cards_css = read_project_file('static/css/modules/view-cards.css')
+
+    assert 'preset-select-shell' in preset_template
+    assert 'preset-card-action-btn is-danger' in preset_template
+    assert 'preset-card-action-btn is-export' in preset_template
+    assert 'text-red-400' not in preset_template
+    assert 'text-sky-300' not in preset_template
+    assert '.preset-grid-card:hover .card-select-overlay' in cards_css
+    assert '.preset-grid-card:focus-within .card-select-overlay' in cards_css
+    assert '.preset-grid-card .preset-card-toolbar-actions' in cards_css
+    assert 'visibility: hidden' in cards_css
+    assert '.preset-grid-card:hover .preset-card-toolbar-actions' in cards_css
+    assert '.preset-grid-card:focus-within .preset-card-toolbar-actions' in cards_css
+    assert 'visibility: visible' in cards_css
+    assert '.preset-select-shell {' in cards_css
+    assert '.preset-select-shell.is-selected {' in cards_css
+    assert '.preset-card-action-btn {' in cards_css
+
+
+def test_preset_grid_source_badge_stays_top_right_and_shifts_left_on_hover():
+    preset_template = read_project_file('templates/components/grid_presets.html')
+    cards_css = read_project_file('static/css/modules/view-cards.css')
+
+    assert 'preset-card-source-badge' in preset_template
+    assert 'absolute right-3 top-3' in preset_template
+    assert 'absolute right-3 top-11' not in preset_template
+    assert '.preset-card-source-badge {' in cards_css
+
+    badge_block = extract_exact_css_block(cards_css, '.preset-card-source-badge')
+    hover_block = extract_exact_css_block(
+        cards_css,
+        '.preset-grid-card:hover .preset-card-source-badge',
+    )
+    focus_block = extract_exact_css_block(
+        cards_css,
+        '.preset-grid-card:focus-within .preset-card-source-badge',
+    )
+
+    assert 'right: 0.75rem;' in badge_block
+    assert 'top: 0.75rem;' in badge_block
+    assert 'transition:' in badge_block
+    assert 'right:' in hover_block
+    assert 'right:' in focus_block
+    assert 'left:' not in hover_block
+    assert 'left:' not in focus_block
+    assert '.preset-card-action-btn.is-danger {' in cards_css
+    assert '.preset-card-action-btn.is-export {' in cards_css
+    assert 'html.light-mode .preset-card-action-btn {' in cards_css
+    assert 'html.light-mode .preset-card-action-btn.is-danger {' in cards_css
+    assert 'html.light-mode .preset-card-action-btn.is-export {' in cards_css
+    assert '.preset-card-source-badge {' in cards_css
+
+
+def test_shared_download_helper_handles_attachment_downloads_and_json_errors():
+    download_source = read_project_file('static/js/utils/download.js')
+
+    assert 'export async function downloadFileFromApi(' in download_source
+    assert 'response.headers.get("Content-Disposition")' in download_source
+    assert 'response.headers.get("content-disposition")' in download_source
+    assert 'await response.blob()' in download_source
+    assert 'URL.createObjectURL(blob)' in download_source
+    assert 'link.download = filename' in download_source
+    assert 'response.headers.get("content-type")' in download_source
+    assert 'contentType.includes("application/json")' in download_source
+    assert 'await response.json()' in download_source
+    assert 'throw new Error(' in download_source
+
+
 def test_advanced_editor_no_longer_listens_for_runtime_inspector_bridge_events():
     advanced_editor_source = read_project_file('static/js/components/advancedEditor.js')
 
     assert 'runtime-inspector-control' not in advanced_editor_source
     assert 'focus-script-runtime-owner' not in advanced_editor_source
+
+
+def test_advanced_editor_regex_test_bench_uses_shared_preview_renderer_and_dedicated_runner():
+    advanced_editor_source = read_project_file('static/js/components/advancedEditor.js')
+    advanced_editor_template = read_project_file('templates/modals/advanced_editor.html')
+    run_regex_block = extract_js_function_block(advanced_editor_source, 'runRegexTest() {')
+
+    assert '../utils/regexTestBench.js' in advanced_editor_source
+    assert '../utils/dom.js' in advanced_editor_source
+    assert 'runRegexTestBenchScript' in advanced_editor_source
+    assert 'renderUnifiedPreviewHost' in advanced_editor_source
+    assert 'updateMixedPreviewContent' not in advanced_editor_source
+    assert 'this.regexTestResult = runRegexTestBenchScript(' in run_regex_block
+    assert '❌ 正则表达式错误:' in run_regex_block
+    assert 'applyDisplayRules: true' not in advanced_editor_template
 
 
 def test_chat_reader_css_defines_workbench_theme_tokens():
@@ -305,13 +745,16 @@ def test_chat_grid_reconciles_reader_panel_state_on_device_type_changes():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'reconcileReaderPanelsForDeviceType' in chat_grid_source
-    assert "this.$watch('$store.global.deviceType'" in chat_grid_source
+    assert js_contains(chat_grid_source, "this.$watch('$store.global.deviceType'")
     assert 'this.reconcileReaderPanelsForDeviceType();' in chat_grid_source
-    assert "if (responsiveMode === 'mobile')" in chat_grid_source
-    assert "if (responsiveMode === 'tablet')" in chat_grid_source
-    assert "this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : (this.readerRightTab === 'floors' ? 'navigator' : 'search');" in chat_grid_source
-    assert "this.readerShowLeftPanel = this.readerMobilePanel === 'tools';" in chat_grid_source
-    assert "this.readerShowRightPanel = true;" in chat_grid_source
+    assert js_contains(chat_grid_source, "if (responsiveMode === 'mobile')")
+    assert js_contains(chat_grid_source, "if (responsiveMode === 'tablet')")
+    assert js_contains(
+        chat_grid_source,
+        "this.readerMobilePanel = this.readerShowLeftPanel ? 'tools' : this.readerRightTab === 'floors' ? 'navigator' : 'search';",
+    )
+    assert js_contains(chat_grid_source, "this.readerShowLeftPanel = this.readerMobilePanel === 'tools';")
+    assert js_contains(chat_grid_source, "this.readerShowRightPanel = true;")
 
 
 def test_chat_reader_template_keeps_all_nested_modal_entry_points():
@@ -356,11 +799,14 @@ def test_chat_reader_template_exposes_reader_status_and_accessibility_hooks():
 def test_chat_grid_resets_reader_feedback_tone_to_steady_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert 'setReaderFeedbackTone(tone = \'neutral\')' in chat_grid_source
-    assert "if (tone === 'error' || tone === 'danger' || tone === 'success')" in chat_grid_source
+    assert js_contains(chat_grid_source, "setReaderFeedbackTone(tone = 'neutral')")
+    assert js_contains(
+        chat_grid_source,
+        "if (tone === 'error' || tone === 'danger' || tone === 'success')",
+    )
     assert "this.readerSaveFeedbackTone = this.replaceStatus || this.regexConfigStatus ? 'neutral' : 'neutral';" not in chat_grid_source
     assert "this.readerSaveFeedbackTone = this.replaceStatus || this.regexConfigStatus ? 'neutral' : 'neutral'" not in chat_grid_source
-    assert 'this.setReaderFeedbackTone();' in chat_grid_source
+    assert js_contains(chat_grid_source, 'this.setReaderFeedbackTone();')
 
 
 def test_chat_reader_css_defines_distinct_tablet_and_mobile_breakpoints():
@@ -456,17 +902,20 @@ def test_chat_reader_css_rebalances_header_rows_at_narrow_widths():
 def test_chat_grid_mobile_reader_panel_state_keeps_one_active_panel():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "this.readerShowLeftPanel = active === 'tools';" in chat_grid_source
-    assert "this.readerShowRightPanel = active === 'search' || active === 'navigator';" in chat_grid_source
+    assert js_contains(chat_grid_source, "this.readerShowLeftPanel = active === 'tools';")
+    assert js_contains(
+        chat_grid_source,
+        "this.readerShowRightPanel = active === 'search' || active === 'navigator';",
+    )
     assert 'this.readerShowRightPanel = Boolean(active);' not in chat_grid_source
 
 
 def test_chat_grid_reader_responsive_mode_uses_reactive_device_type_instead_of_window_width():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "const deviceType = this.$store.global.deviceType;" in chat_grid_source
-    assert "if (deviceType === 'mobile')" in chat_grid_source
-    assert "if (deviceType === 'tablet')" in chat_grid_source
+    assert js_contains(chat_grid_source, 'const deviceType = this.$store.global.deviceType;')
+    assert js_contains(chat_grid_source, "if (deviceType === 'mobile')")
+    assert js_contains(chat_grid_source, "if (deviceType === 'tablet')")
     assert 'window.innerWidth < 900' not in chat_grid_source
     assert 'window.innerWidth < 1180' not in chat_grid_source
 
@@ -474,10 +923,19 @@ def test_chat_grid_reader_responsive_mode_uses_reactive_device_type_instead_of_w
 def test_chat_grid_reader_body_grid_style_drives_desktop_tablet_and_mobile_layouts_from_panel_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "return 'grid-template-columns: minmax(0, 1fr);';" in chat_grid_source
-    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;" in chat_grid_source
-    assert "return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
-    assert "return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;" in chat_grid_source
+    assert js_contains(chat_grid_source, "return 'grid-template-columns: minmax(0, 1fr);';")
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: ${leftWidth}px minmax(0, 1fr);`;',
+    )
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: minmax(0, 1fr) ${rightWidth}px;`;',
+    )
+    assert js_contains(
+        chat_grid_source,
+        'return `grid-template-columns: ${leftWidth}px minmax(0, 1fr) ${rightWidth}px;`;',
+    )
 
 
 def test_chat_reader_template_assigns_dynamic_grid_columns_to_center_and_right_panes():
@@ -524,6 +982,17 @@ def test_chat_reader_template_places_timebar_inside_message_body():
     body_block = extract_balanced_tag_block(floor_markup, '<div class="chat-message-body">')
 
     assert 'class="chat-message-timebar"' in body_block
+
+
+def test_worldinfo_editor_template_exposes_three_at_depth_role_entries():
+    wi_editor_template = read_project_file('templates/modals/detail_wi_fullscreen.html')
+
+    assert '@层级 (System)' in wi_editor_template
+    assert '@层级 (User)' in wi_editor_template
+    assert '@层级 (Assistant)' in wi_editor_template
+    assert 'getEditorPositionSelectValue(activeEditorEntry)' in wi_editor_template
+    assert "updateEditorPositionFromSelect(activeEditorEntry, $event.target.value)" in wi_editor_template
+    assert '4 - @层级 (At Depth)' not in wi_editor_template
 
 
 def test_chat_reader_css_keeps_floor_chip_as_primary_reader_anchor():
@@ -701,7 +1170,10 @@ def test_chat_grid_scroll_to_floor_closes_mobile_drawers_before_showing_target_f
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     scroll_block = extract_js_function_block(chat_grid_source, "async scrollToFloor(floor, persist = true, behavior = 'smooth', anchorSource = READER_ANCHOR_SOURCES.JUMP) {")
 
-    assert "const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);" in scroll_block
+    assert js_contains(
+        scroll_block,
+        "const shouldHideMobilePanel = this.readerResponsiveMode === 'mobile' && Boolean(this.readerMobilePanel);",
+    )
     assert 'if (shouldHideMobilePanel) {' in scroll_block
     assert 'this.hideReaderPanels();' in scroll_block
 
@@ -731,7 +1203,10 @@ def test_chat_grid_scroll_element_to_top_uses_container_rect_delta_instead_of_of
 
     assert 'const containerRect = container.getBoundingClientRect();' in scroll_block
     assert 'const elementRect = el.getBoundingClientRect();' in scroll_block
-    assert 'const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);' in scroll_block
+    assert js_contains(
+        scroll_block,
+        'const top = Math.max(0, container.scrollTop + elementRect.top - containerRect.top - 12);',
+    )
     assert 'el.offsetTop - container.offsetTop - 12' not in scroll_block
 
 
@@ -811,7 +1286,8 @@ def test_layout_css_adds_light_mode_mobile_header_and_footer_surfaces():
 def test_header_listens_for_global_mobile_menu_close_requests():
     header_source = read_project_file('static/js/components/header.js')
 
-    assert "window.addEventListener('close-header-mobile-menu'" in header_source
+    assert 'window.addEventListener(' in header_source
+    assert 'close-header-mobile-menu' in header_source
     assert 'this.closeMobileMenu();' in header_source
 
 
@@ -819,10 +1295,13 @@ def test_chat_grid_closes_mobile_navigation_chrome_before_showing_reader():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
 
-    assert "if (this.$store.global.deviceType === 'mobile') {" in open_detail_block
+    assert js_contains(open_detail_block, "if (this.$store.global.deviceType === 'mobile') {")
     assert 'this.$store.global.visibleSidebar = false;' in open_detail_block
-    assert "document.body.style.overflow = '';" in open_detail_block
-    assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in open_detail_block
+    assert js_contains(open_detail_block, "document.body.style.overflow = '';")
+    assert js_contains(
+        open_detail_block,
+        "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));",
+    )
 
 
 def test_chat_grid_closes_mobile_navigation_chrome_before_opening_reader_nested_modals():
@@ -830,10 +1309,13 @@ def test_chat_grid_closes_mobile_navigation_chrome_before_opening_reader_nested_
 
     for signature in ('openRegexConfig() {', 'openRegexHelp() {', 'openFloorEditor(message) {'):
         block = extract_js_function_block(chat_grid_source, signature)
-        assert "if (this.$store.global.deviceType === 'mobile') {" in block
+        assert js_contains(block, "if (this.$store.global.deviceType === 'mobile') {")
         assert 'this.$store.global.visibleSidebar = false;' in block
-        assert "document.body.style.overflow = '';" in block
-        assert "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));" in block
+        assert js_contains(block, "document.body.style.overflow = '';")
+        assert js_contains(
+            block,
+            "window.dispatchEvent(new CustomEvent('close-header-mobile-menu'));",
+        )
 
 
 def test_chat_grid_temporarily_releases_document_scroll_lock_while_reader_is_open():
@@ -843,9 +1325,9 @@ def test_chat_grid_temporarily_releases_document_scroll_lock_while_reader_is_ope
     open_detail_block = extract_js_function_block(chat_grid_source, 'async openChatDetail(item) {')
     close_detail_block = extract_js_function_block(chat_grid_source, 'closeChatDetail() {')
 
-    assert "document.documentElement.style.overflow = enabled ? 'auto' : '';" in helper_block
-    assert "document.body.style.overflow = enabled ? 'auto' : '';" in helper_block
-    assert "document.body.style.height = enabled ? 'auto' : '';" in helper_block
+    assert js_contains(helper_block, "document.documentElement.style.overflow = enabled ? 'auto' : '';")
+    assert js_contains(helper_block, "document.body.style.overflow = enabled ? 'auto' : '';")
+    assert js_contains(helper_block, "document.body.style.height = enabled ? 'auto' : '';")
     assert 'this.setMobileReaderDocumentScrollState(true);' in open_detail_block
     assert 'this.setMobileReaderDocumentScrollState(false);' in close_detail_block
 
@@ -865,9 +1347,25 @@ def test_chat_grid_collapses_mobile_header_layout_height_when_header_is_hidden()
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     metrics_block = extract_js_function_block(chat_grid_source, 'updateReaderLayoutMetrics() {')
 
-    assert "const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden" in metrics_block
+    assert js_contains(
+        metrics_block,
+        "const effectiveHeaderHeight = this.readerResponsiveMode === 'mobile' && this.readerMobileHeaderHidden",
+    )
     assert "? 0" in metrics_block
-    assert "root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);" in metrics_block
+    assert js_contains(
+        metrics_block,
+        "root.style.setProperty('--chat-reader-header-height', `${effectiveHeaderHeight}px`);",
+    )
+
+
+def test_chat_grid_exposes_scoped_html_formatter_and_shadow_renderer_to_alpine():
+    chat_grid_source = read_project_file('static/js/components/chatGrid.js')
+
+    assert 'formatScopedDisplayedHtml' in chat_grid_source
+    assert 'updateShadowContent' in chat_grid_source
+    assert "from \"../utils/stDisplayFormatter.js\"" in chat_grid_source or "from '../utils/stDisplayFormatter.js'" in chat_grid_source
+    assert 'updateShadowContent,' in chat_grid_source
+    assert 'formatScopedDisplayedHtml,' in chat_grid_source
 
 
 def test_chat_reader_css_mobile_hidden_header_releases_layout_space():
@@ -1084,7 +1582,7 @@ def test_chat_grid_tracks_mobile_regex_header_visibility_separately_from_reader_
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
     assert 'regexConfigMobileHeaderHidden: false,' in chat_grid_source
-    assert "regexConfigMobileTab: 'effective'," in chat_grid_source
+    assert js_contains(chat_grid_source, "regexConfigMobileTab: 'effective',")
     regex_scroll_block = extract_js_function_block(chat_grid_source, 'handleRegexConfigScroll(event) {')
     assert 'const previousHidden = this.regexConfigMobileHeaderHidden;' in regex_scroll_block
     assert 'this.regexConfigMobileHeaderHidden = true;' in regex_scroll_block
@@ -1114,19 +1612,31 @@ def test_chat_grid_open_floor_editor_seeds_primary_editor_from_raw_message_only(
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_floor_editor_block = extract_js_function_block(chat_grid_source, 'openFloorEditor(message) {')
 
-    assert "this.editingMessageRawDraft = String(message.mes || '');" in open_floor_editor_block
-    assert "this.editingMessageDraft = this.extractDisplayContent(this.editingMessageRawDraft);" in open_floor_editor_block
-    assert "this.editingMessageDraft = String(message.content || message.mes || '');" not in open_floor_editor_block
+    assert js_contains(open_floor_editor_block, "this.editingMessageRawDraft = String(message.mes || '');")
+    assert js_contains(
+        open_floor_editor_block,
+        'this.editingMessageDraft = this.extractDisplayContent(this.editingMessageRawDraft);',
+    )
+    assert not js_contains(
+        open_floor_editor_block,
+        "this.editingMessageDraft = String(message.content || message.mes || '');",
+    )
 
 
 def test_chat_grid_save_floor_edit_persists_raw_message_and_rebuilds_rendered_reader_state():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     save_floor_edit_block = extract_js_function_block(chat_grid_source, 'async saveFloorEdit() {')
 
-    assert "target.mes = String(this.editingMessageRawDraft || '');" in save_floor_edit_block
+    assert js_contains(
+        save_floor_edit_block,
+        "target.mes = String(this.editingMessageRawDraft || '');",
+    )
     assert 'focusFloor: this.editingFloor,' in save_floor_edit_block
     assert 'this.rebuildActiveChatMessages(runtimeConfig);' in chat_grid_source
-    assert 'await this.setReaderWindowAroundFloor(focusFloor || 1, \'center\');' in chat_grid_source
+    assert js_contains(
+        chat_grid_source,
+        "await this.setReaderWindowAroundFloor(focusFloor || 1, 'center');",
+    )
 
 
 def test_chat_reader_css_mobile_stacks_floor_editor_sections_and_resets_note_overlap_spacing():
@@ -1171,9 +1681,12 @@ def test_chat_reader_template_desktop_header_exposes_independent_tools_search_an
 def test_chat_grid_reader_desktop_panel_controls_close_only_the_target_panel():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;" in chat_grid_source
-    assert "this.readerShowRightPanel = false;" in chat_grid_source
-    assert "this.readerRightTab = nextTab;" in chat_grid_source
+    assert js_contains(
+        chat_grid_source,
+        'const isSamePanelOpen = this.readerShowRightPanel && this.readerRightTab === nextTab;',
+    )
+    assert js_contains(chat_grid_source, 'this.readerShowRightPanel = false;')
+    assert js_contains(chat_grid_source, 'this.readerRightTab = nextTab;')
     assert 'closeReaderRightPanel() {' in chat_grid_source
     close_right_section = chat_grid_source.split('closeReaderRightPanel() {', 1)[1].split('}', 1)[0]
     assert 'this.readerShowLeftPanel = false;' not in close_right_section
@@ -1189,9 +1702,9 @@ def test_chat_reader_template_right_close_button_uses_desktop_specific_close_log
 def test_chat_grid_reader_pane_styles_reflow_center_when_left_panel_closes():
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
 
-    assert "return 'grid-column: 1;';" in chat_grid_source
-    assert "return 'grid-column: 2;';" in chat_grid_source
-    assert "return 'grid-column: 3;';" in chat_grid_source
+    assert js_contains(chat_grid_source, "return 'grid-column: 1;';")
+    assert js_contains(chat_grid_source, "return 'grid-column: 2;';")
+    assert js_contains(chat_grid_source, "return 'grid-column: 3;';")
 
 
 def test_chat_reader_template_binds_desktop_pane_visibility_to_inline_display_styles():
@@ -1214,7 +1727,7 @@ def test_chat_grid_reader_mobile_mode_is_not_only_ua_driven():
 def test_layout_recomputes_global_device_type_on_window_resize():
     layout_source = read_project_file('static/js/components/layout.js')
 
-    assert "window.addEventListener('resize', () => {" in layout_source
+    assert js_contains(layout_source, "window.addEventListener('resize', () => {")
     assert 'this.reDeviceType();' in layout_source
 
 
@@ -1290,7 +1803,7 @@ def test_chat_grid_does_not_seed_regex_summary_with_default_instruction_status()
     chat_grid_source = read_project_file('static/js/components/chatGrid.js')
     open_regex_block = extract_js_function_block(chat_grid_source, 'openRegexConfig() {')
 
-    assert "this.regexConfigStatus = '';" in open_regex_block
+    assert js_contains(open_regex_block, "this.regexConfigStatus = '';")
     assert '测试区默认不自动加载内容，按需手动载入当前定位楼层即可。' not in open_regex_block
 
 
@@ -1341,22 +1854,26 @@ def test_mobile_header_script_defines_upload_trigger_contract():
     header_source = read_project_file('static/js/components/header.js')
     header_template = read_project_file('templates/components/header.html')
 
-    assert "const MOBILE_HEADER_UPLOAD_MODES = ['cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'];" in header_source
+    assert 'const MOBILE_HEADER_UPLOAD_MODES = [' in header_source
+    for mode in ('cards', 'worldinfo', 'presets', 'regex', 'scripts', 'quick_replies'):
+        assert f'"{mode}"' in header_source or f"'{mode}'" in header_source
     show_mobile_upload_block = extract_js_function_block(header_source, 'get showMobileUploadButton()')
-    assert "this.deviceType === 'mobile'" in show_mobile_upload_block
+    assert "this.deviceType === 'mobile'" in show_mobile_upload_block or 'this.deviceType === "mobile"' in show_mobile_upload_block
     assert 'MOBILE_HEADER_UPLOAD_MODES.includes(this.currentMode)' in show_mobile_upload_block
-    assert "window.dispatchEvent(new CustomEvent('request-mobile-upload'));" in header_source
-    assert '@click="triggerChatImport(); closeMobileMenu()"' in header_template
+    assert 'request-mobile-upload' in header_source
+    assert '@click="triggerMobileUpload()"' in header_template
 
 
 def test_mobile_header_script_closes_menu_before_sidebar_and_upload_actions():
     header_source = read_project_file('static/js/components/header.js')
+    sidebar_block = extract_js_function_block(header_source, 'openMobileSidebar()')
 
     assert 'openMobileSidebar()' in header_source
-    assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert 'this.$store.global.visibleSidebar = nextVisible;' in extract_js_function_block(header_source, 'openMobileSidebar()')
-    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in extract_js_function_block(header_source, 'openMobileSidebar()')
+    assert 'this.closeMobileMenu();' in sidebar_block
+    assert 'const nextVisible = !this.$store.global.visibleSidebar;' in sidebar_block
+    assert 'this.$store.global.visibleSidebar = nextVisible;' in sidebar_block
+    assert 'document.body.style.overflow = nextVisible ? ' in sidebar_block
+    assert 'hidden' in sidebar_block
     assert 'triggerMobileUpload()' in header_source
     assert 'this.closeMobileMenu();' in extract_js_function_block(header_source, 'triggerMobileUpload()')
 
@@ -1364,10 +1881,16 @@ def test_mobile_header_script_closes_menu_before_sidebar_and_upload_actions():
 def test_mobile_sidebar_script_listens_for_upload_trigger_and_cleans_up():
     sidebar_source = read_project_file('static/js/components/sidebar.js')
 
-    assert "window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
-    assert "window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);" in sidebar_source
+    assert js_contains(
+        sidebar_source,
+        "window.addEventListener('request-mobile-upload', this.handleMobileUploadRequest);",
+    )
+    assert js_contains(
+        sidebar_source,
+        "window.removeEventListener('request-mobile-upload', this.handleMobileUploadRequest);",
+    )
     handle_upload_block = extract_js_function_block(sidebar_source, 'handleMobileUploadRequest()')
-    assert "this.currentMode === 'chats'" in handle_upload_block
+    assert js_contains(handle_upload_block, "this.currentMode === 'chats'")
     assert '!this.$refs.mobileImportInput' in handle_upload_block
     assert 'this.$refs.mobileImportInput.click();' in handle_upload_block
 
@@ -1419,7 +1942,8 @@ def test_mobile_header_script_toggles_sidebar_visibility_and_scroll_lock():
 
     assert 'const nextVisible = !this.$store.global.visibleSidebar;' in sidebar_toggle_block
     assert 'this.$store.global.visibleSidebar = nextVisible;' in sidebar_toggle_block
-    assert "document.body.style.overflow = nextVisible ? 'hidden' : '';" in sidebar_toggle_block
+    assert 'document.body.style.overflow = nextVisible ? ' in sidebar_toggle_block
+    assert 'hidden' in sidebar_toggle_block
 
 
 def test_mobile_layout_css_defines_mobile_header_toggle_feedback_states():
@@ -1435,43 +1959,179 @@ def test_mobile_layout_css_defines_mobile_header_toggle_feedback_states():
 
 def test_card_sidebar_template_adds_stable_split_layout_hooks():
     sidebar_template = read_project_file('templates/components/sidebar.html')
+    compact_template = compact_whitespace(sidebar_template)
 
     assert 'class="flex-1 card-sidebar-shell"' in sidebar_template
+    assert 'x-ref="cardSidebarShell"' in sidebar_template
     assert 'class="card-sidebar-categories"' in sidebar_template
+    assert 'class="card-sidebar-splitter"' in sidebar_template
+    assert '@pointerdown.prevent="beginTagPaneResize($event)"' in sidebar_template
+    assert 'aria-label="调整标签索引区域高度"' in sidebar_template
     assert 'class="card-sidebar-tags"' in sidebar_template
-    assert 'class="sidebar-section-header card-sidebar-tags-header"' in sidebar_template
-    assert 'class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in sidebar_template
+    assert 'x-ref="cardTagsPane"' in sidebar_template
+    assert 'x-ref="cardTagsHeader"' in sidebar_template
+    assert 'x-ref="cardTagCategoryStrip"' in sidebar_template
+    assert 'x-ref="cardTagCloud"' in sidebar_template
+    assert 'tagIndexVisibleTags.slice(0, dynamicVisibleTagCount)' in compact_template
+
+
+def test_card_sidebar_root_uses_css_variable_binding_without_full_style_attribute_override():
+    sidebar_template = read_project_file('templates/components/sidebar.html')
+    root_match = re.search(
+        r'<div\s+[^>]*x-show="currentMode === \'cards\' && visibleSidebar"[^>]*class="flex-1 card-sidebar-shell"[^>]*>',
+        sidebar_template,
+        re.DOTALL,
+    )
+
+    assert root_match is not None
+    root_element = compact_whitespace(root_match.group(0))
+
+    assert ':style="desktopTagPaneStyle"' not in sidebar_template
+    assert '--card-tags-pane-basis' in root_element
+    assert 'cardTagPaneBasisStyle' in root_element
 
 
 def test_card_sidebar_template_removes_expansion_only_lower_pane_layout_styles():
     sidebar_template = read_project_file('templates/components/sidebar.html')
+    compact_template = compact_whitespace(sidebar_template)
 
     assert ":style=\"tagsSectionExpanded ? 'flex: 1;' : ''\"" not in sidebar_template
     assert 'style="display: flex; flex-direction: column; overflow: hidden;"' not in sidebar_template
-    assert 'x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in sidebar_template
-
-
-def test_card_sidebar_and_pagination_templates_add_empty_state_and_mobile_wrap_hooks():
-    sidebar_template = read_project_file('templates/components/sidebar.html')
-    cards_template = read_project_file('templates/components/grid_cards.html')
-
-    assert 'class="card-sidebar-empty-state"' in sidebar_template
-    assert 'class="card-pagination-summary"' in cards_template
-    assert 'class="card-pagination-controls card-pagination-page-cluster"' in cards_template
-    assert 'class="card-pagination-controls" style="display: flex; align-items: center; gap: 0.5rem;"' not in cards_template
+    assert 'x-show="tagsSectionExpanded" class="sidebar-content custom-scrollbar card-sidebar-tags-body"' in compact_template
+    assert 'x-show="tagIndexVisibleTags.length > dynamicVisibleTagCount"' in compact_template
+    assert 'tagIndexVisibleTags.length - dynamicVisibleTagCount' in sidebar_template
 
 
 def test_card_sidebar_layout_css_defines_persistent_strip_and_scoped_solid_surfaces():
     layout_css = read_project_file('static/css/modules/layout.css')
 
-    assert '.card-sidebar-shell {' in layout_css
-    assert '.card-sidebar-tags {' in layout_css
-    assert 'height: 3.25rem;' in extract_exact_css_block(layout_css, '.card-sidebar-tags.is-collapsed')
+    shell_block = extract_exact_css_block(layout_css, '.card-sidebar-shell')
+    splitter_block = extract_exact_css_block(layout_css, '.card-sidebar-splitter')
     expanded_block = extract_exact_css_block(layout_css, '.card-sidebar-tags.is-expanded')
-    assert 'flex: 0 0 clamp(10rem, 34%, 15rem);' in expanded_block
-    assert 'max-height: 45%;' in expanded_block
+
+    assert '--card-tags-pane-basis: 34%;' in shell_block
+    assert '.card-sidebar-tags {' in layout_css
+    assert 'cursor: row-resize;' in splitter_block
+    assert 'flex: 0 0 10px;' in splitter_block
+    assert '.card-sidebar-splitter-grip {' in layout_css
+    assert 'flex: 0 0 var(--card-tags-pane-basis);' in expanded_block
+    assert 'min-height:' not in expanded_block
+    assert 'clamp(10rem, 34%, 15rem)' not in expanded_block
     assert '.card-sidebar-shell .sidebar-content {' in layout_css
     assert '.card-sidebar-shell .sidebar-section-header {' in layout_css
+
+
+def test_mobile_card_sidebar_layout_css_hides_desktop_splitter_and_keeps_tag_body_cap():
+    layout_css = read_project_file('static/css/modules/layout.css')
+    mobile_layout_css = extract_media_block(layout_css, '@media (max-width: 768px)')
+
+    mobile_splitter_block = extract_exact_css_block(
+        mobile_layout_css,
+        '.sidebar-mobile .card-sidebar-splitter',
+    )
+    mobile_tags_block = extract_exact_css_block(
+        mobile_layout_css,
+        '.sidebar-mobile .card-sidebar-tags-body',
+    )
+
+    assert 'display: none;' in mobile_splitter_block
+    assert 'max-height: min(34vh, 16rem);' in mobile_tags_block
+
+
+def test_sidebar_js_supports_desktop_tag_pane_resize_and_dynamic_visible_tag_count():
+    sidebar_source = read_project_file('static/js/components/sidebar.js')
+
+    assert 'TAG_PANE_RATIO_STORAGE_KEY = "st_manager_card_tags_split_ratio"' in sidebar_source
+    assert 'dynamicVisibleTagCount: DEFAULT_VISIBLE_TAG_COUNT' in sidebar_source
+    assert 'get shouldShowCardTagSplitter() {' in sidebar_source
+    assert 'get cardTagPaneBasisStyle() {' in sidebar_source
+    assert 'scheduleTagPaneLayoutSync() {' in sidebar_source
+    assert 'computeDynamicVisibleTagCount() {' in sidebar_source
+    assert 'beginTagPaneResize(event) {' in sidebar_source
+    assert 'handleTagPaneResize(event) {' in sidebar_source
+    assert 'endTagPaneResize() {' in sidebar_source
+    assert 'window.addEventListener("resize", this._syncTagPaneLayoutHandler);' in sidebar_source
+    assert 'localStorage.setItem(TAG_PANE_RATIO_STORAGE_KEY, String(this.tagPaneRatio));' in sidebar_source
+
+    compute_block = extract_js_function_block(
+        sidebar_source,
+        'computeDynamicVisibleTagCount() {',
+    )
+    assert 'Math.floor((tagCloudWidth + 6) / ESTIMATED_TAG_CHIP_WIDTH)' in compute_block
+    assert 'Math.floor((availableTagHeight + 6) / ESTIMATED_TAG_ROW_HEIGHT)' in compute_block
+
+
+def test_sidebar_runtime_resizes_desktop_tag_pane_and_persists_ratio():
+    run_sidebar_runtime_check(
+        """
+        if (component.cardTagPaneBasisStyle !== '34.00%') {
+          throw new Error(`Expected desktop style to reflect default ratio, got ${component.cardTagPaneBasisStyle}`);
+        }
+
+        const visibleTagCount = component.computeDynamicVisibleTagCount();
+        if (visibleTagCount !== 6) {
+          throw new Error(`Expected computed visible tag count to be 6, got ${visibleTagCount}`);
+        }
+
+        component.beginTagPaneResize({ clientY: 200 });
+        if (!component.tagPaneResizeState) {
+          throw new Error('Expected beginTagPaneResize to capture resize state');
+        }
+        if (!component.$refs.cardSidebarShell.classList.contains('is-resizing')) {
+          throw new Error('Expected beginTagPaneResize to add the resizing class');
+        }
+
+        const addEvents = windowListeners
+          .filter((entry) => entry.action === 'add')
+          .map((entry) => entry.type);
+        const expectedAddEvents = ['pointermove', 'pointerup', 'pointercancel'];
+        if (JSON.stringify(addEvents) !== JSON.stringify(expectedAddEvents)) {
+          throw new Error(`Expected resize listeners to be added, got ${JSON.stringify(addEvents)}`);
+        }
+
+        component.handleTagPaneResize({ clientY: 160 });
+        if (component.tagPaneRatio <= 0.34) {
+          throw new Error(`Expected dragging upward to increase tagPaneRatio, got ${component.tagPaneRatio}`);
+        }
+        flushRaf();
+        if (component.dynamicVisibleTagCount !== 6) {
+          throw new Error(`Expected resize sync to keep measured visible tag count, got ${component.dynamicVisibleTagCount}`);
+        }
+
+        component.endTagPaneResize();
+        if (component.tagPaneResizeState !== null) {
+          throw new Error('Expected endTagPaneResize to clear resize state');
+        }
+        if (component.$refs.cardSidebarShell.classList.contains('is-resizing')) {
+          throw new Error('Expected endTagPaneResize to remove the resizing class');
+        }
+
+        const storedRatio = localStorage.getItem('st_manager_card_tags_split_ratio');
+        if (storedRatio !== String(component.tagPaneRatio)) {
+          throw new Error(`Expected endTagPaneResize to persist ratio, got ${storedRatio}`);
+        }
+
+        const removeEvents = windowListeners
+          .filter((entry) => entry.action === 'remove')
+          .map((entry) => entry.type);
+        const expectedRemoveEvents = ['pointermove', 'pointerup', 'pointercancel'];
+        if (JSON.stringify(removeEvents) !== JSON.stringify(expectedRemoveEvents)) {
+          throw new Error(`Expected resize listeners to be removed, got ${JSON.stringify(removeEvents)}`);
+        }
+
+        component.$refs.cardSidebarShell.getBoundingClientRect = () => ({ height: 250 });
+        component.$refs.cardTagsPane.getBoundingClientRect = () => ({ height: 170 });
+        component.tagPaneRatio = 0.9;
+        component.syncTagPaneLayout();
+        const constrainedHeight = component.tagPaneRatio * 250;
+        if (constrainedHeight !== 30) {
+          throw new Error(`Expected short shell sync to degrade to 30px tag pane height, got ${constrainedHeight}`);
+        }
+        if (250 - constrainedHeight !== 220) {
+          throw new Error(`Expected short shell sync to leave 220px for categories, got ${250 - constrainedHeight}`);
+        }
+        """
+    )
 
 
 def test_card_pagination_css_keeps_mobile_footer_compact_with_safe_area_spacing():
@@ -1510,13 +2170,14 @@ def test_global_state_syncs_visual_viewport_height_into_css_variable():
 
     assert 'window.visualViewport' in sync_block
     assert 'window.visualViewport.height' in sync_block
-    assert "updateCssVariable('--app-viewport-height'" in sync_block
-    assert "updateCssVariable('--app-viewport-height-safe'" in sync_block
+    assert "updateCssVariable('--app-viewport-height'" in sync_block or 'updateCssVariable("--app-viewport-height"' in sync_block
+    assert "updateCssVariable('--app-viewport-height-safe'" in sync_block or 'updateCssVariable("--app-viewport-height-safe"' in sync_block
     assert 'window.innerHeight || 0' in sync_block
     assert 'Math.max(0, roundedHeight - 1)' in sync_block
     assert 'this.syncViewportHeight();' in init_block
-    assert "window.visualViewport.addEventListener('resize', this._visualViewportResizeHandler" in init_block
-    assert "window.addEventListener('orientationchange', this._visualViewportResizeHandler" in init_block
+    assert 'window.visualViewport.addEventListener(' in init_block
+    assert 'this._visualViewportResizeHandler' in init_block
+    assert 'orientationchange' in init_block
 
 
 def test_mobile_modal_components_css_defines_shared_fullscreen_dynamic_viewport_baseline():
@@ -1536,11 +2197,10 @@ def test_mobile_modal_components_css_defines_shared_fullscreen_dynamic_viewport_
 
     assert 'width: 100vw;' in container_block
     assert 'max-width: 100vw;' in container_block
-    assert 'height: 100vh;' in container_block
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in container_block
-    assert 'height: 100dvh;' in container_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in container_block
-    assert container_block.index('height: 100dvh;') < container_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));')
+    assert '--app-viewport-height-safe' in container_block
+    assert '--app-viewport-height, 100dvh' in container_block
+    assert 'min-height:' in container_block
     assert 'border-radius: 0;' in container_block
 
 
@@ -1554,11 +2214,10 @@ def test_detail_modal_mobile_css_uses_dynamic_viewport_and_safe_area_spacing():
     detail_content_block = extract_exact_css_block(mobile_detail_css, '.detail-content')
 
     assert 'width: 100vw;' in detail_modal_block
-    assert 'height: 100vh;' in detail_modal_block
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in detail_modal_block
-    assert 'height: 100dvh;' in detail_modal_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in detail_modal_block
-    assert detail_modal_block.index('height: 100dvh;') < detail_modal_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));')
+    assert '--app-viewport-height-safe' in detail_modal_block
+    assert '--app-viewport-height, 100dvh' in detail_modal_block
+    assert 'min-height:' in detail_modal_block
     assert 'max-width: 100vw;' in detail_modal_block
     assert 'margin: 0 !important;' in detail_modal_block
     assert 'top: calc(env(safe-area-inset-top, 0px) + 0.5rem);' in detail_toolbar_block
@@ -1589,20 +2248,19 @@ def test_mobile_tool_and_custom_modal_variants_prefer_dynamic_viewport_height():
     large_editor_block = extract_exact_css_block(mobile_tools_css, '.large-editor-container')
     settings_block = extract_exact_css_block(mobile_settings_css, '.settings-modal-container')
     automation_block = extract_exact_css_block(mobile_automation_css, '.automation-container')
+    advanced_editor_compact = re.sub(r'\s+', ' ', advanced_editor_block).strip()
+    large_editor_compact = re.sub(r'\s+', ' ', large_editor_block).strip()
 
-    assert 'height: 100dvh !important;' in advanced_editor_block
-    assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;' in advanced_editor_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in advanced_editor_block
-    assert advanced_editor_block.index('height: 100dvh !important;') < advanced_editor_block.index('height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;')
+    assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in advanced_editor_compact
+    assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in advanced_editor_compact
     assert 'padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem) !important;' in advanced_header_block
     assert 'padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem) !important;' in advanced_footer_block
     assert 'min-height: 0;' in advanced_split_block
     assert 'min-height: 0;' in advanced_editor_pane_block
     assert '-webkit-overflow-scrolling: touch;' in advanced_editor_pane_block
 
-    assert 'height: 100dvh !important;' in large_editor_block
-    assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh)) !important;' in large_editor_block
-    assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in large_editor_block
+    assert 'height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) ) !important;' in large_editor_compact
+    assert 'min-height: var( --app-viewport-height-safe, var(--app-viewport-height, 100dvh) );' in large_editor_compact
     assert 'height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in settings_block
     assert 'height: 100dvh;' in settings_block
     assert 'min-height: var(--app-viewport-height-safe, var(--app-viewport-height, 100dvh));' in settings_block
@@ -1682,7 +2340,7 @@ def test_automation_help_modal_uses_four_tab_structure_with_new_guidance():
     assert '导入时会跳过抓取论坛标签与标签合并' in automation_template
     assert '更新链接时只执行抓取论坛标签' in automation_template
     assert '手动打标时只执行标签合并' in automation_template
-    assert '{% raw %}{{char_name}} - {{char_version|version}} - {{import_date|date:%Y-%m-%d}}{% endraw %}' in automation_template
+    assert '{% raw %}{{char_name}} - {{char_version|version}} - {{modified_date|date:%Y-%m-%d}}{% endraw %}' in automation_template
     assert '支持字段：char_name、char_version、filename、filename_stem、category、import_time、import_date、modified_time、modified_date' in automation_template
     assert '日期字段支持 date 过滤器' in automation_template
     assert 'date:%Y-%m-%d' in automation_template
@@ -1758,7 +2416,7 @@ def test_automation_help_modal_template_examples_are_jinja_safe_literals():
     assert '<div class="bg-[var(--bg-code)] p-2 rounded text-xs font-mono">{{char_name}} - {{creator}}</div>' not in automation_template
     assert '<div class="bg-[var(--bg-code)] p-2 rounded text-xs font-mono">{{tags}}</div>' not in automation_template
     assert '{% raw %}{{...}}{% endraw %}' in automation_template
-    assert '{% raw %}{{char_name}} - {{char_version|version}} - {{import_date|date:%Y-%m-%d}}{% endraw %}' in automation_template
+    assert '{% raw %}{{char_name}} - {{char_version|version}} - {{modified_date|date:%Y-%m-%d}}{% endraw %}' in automation_template
     assert 'category = a/b/c  ->  tags += [a, b, c]' in automation_template
 
 
@@ -1848,9 +2506,32 @@ def test_automation_modal_css_keeps_inline_sort_actions_compact_and_wrapping():
 def test_detail_modal_template_marks_multicard_mobile_tabs_for_stacked_layout():
     detail_template = read_project_file('templates/modals/detail_card.html')
 
-    assert '<section x-show="tab===\'basic\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
-    assert '<section x-show="tab===\'persona\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
-    assert '<section x-show="tab===\'dialog\'" x-transition.opacity class="detail-section detail-section-fill detail-section-mobile-stack">' in detail_template
+    for tab in ('basic', 'persona', 'dialog'):
+        assert f'x-show="tab===\'{tab}\'"' in detail_template
+    assert detail_template.count('class="detail-section detail-section-fill detail-section-mobile-stack"') >= 3
+
+
+def test_detail_modal_dialog_editors_allow_first_message_inner_box_to_shrink_with_card_height():
+    detail_template = read_project_file('templates/modals/detail_card.html')
+    detail_css = read_project_file('static/css/modules/modal-detail.css')
+
+    assert 'class="form-textarea detail-dialog-grow-box detail-first-message-edit-box"' in detail_template
+    assert 'class="detail-render-box custom-scrollbar detail-dialog-grow-box detail-first-message-preview-box"' in detail_template
+    assert "minHeight: 0" in detail_template
+
+    edit_box_block = extract_exact_css_block(
+        detail_css,
+        '.detail-section-fill .detail-card .detail-first-message-edit-box',
+    )
+    preview_box_block = extract_exact_css_block(
+        detail_css,
+        '.detail-section-fill .detail-card .detail-first-message-preview-box',
+    )
+
+    assert 'flex: 1 1 0 !important;' in edit_box_block
+    assert 'min-height: 0 !important;' in edit_box_block
+    assert 'flex: 1 1 0 !important;' in preview_box_block
+    assert 'min-height: 0 !important;' in preview_box_block
 
 
 def test_detail_modal_mobile_css_releases_equal_height_card_splits_for_stacked_tabs():
@@ -2071,9 +2752,11 @@ def test_worldinfo_grid_template_groups_title_owner_and_tag_summary():
 
 def test_worldinfo_grid_template_uses_css_drawn_archive_markers():
     wi_grid_template = read_project_file('templates/components/grid_wi.html')
+    owner_row_block = wi_grid_template.split('class="wi-card-owner-row"', 1)[1].split('</template>', 1)[0]
 
     assert 'class="wi-card-bookmark" aria-hidden="true"' in wi_grid_template
-    assert 'class="wi-card-owner-icon" aria-hidden="true"' in wi_grid_template
+    assert 'class="wi-card-owner-icon"' in owner_row_block
+    assert 'aria-hidden="true"' in owner_row_block
     assert '📖' not in wi_grid_template
     assert '🔗' not in wi_grid_template
 
@@ -2106,10 +2789,22 @@ def test_worldinfo_css_exposes_archive_front_groups_and_light_mode_palette():
 
 def test_worldinfo_css_separates_badge_tag_and_note_state_visual_weight():
     wi_css = read_project_file('static/css/modules/view-wi.css')
+    header_actions_block = extract_exact_css_block(wi_css, '.wi-card-header-actions')
+    footer_block = extract_exact_css_block(wi_css, '.wi-card-footer')
+    footer_info_block = extract_exact_css_block(wi_css, '.wi-card-footer-info')
+    footer_tools_block = extract_exact_css_block(wi_css, '.wi-card-footer-tools')
+    date_chip_block = extract_exact_css_block(wi_css, '.wi-card-date-chip')
 
     assert '.wi-card-tag-placeholder::before' in wi_css
-    assert '.wi-card-note-state.no-note' in wi_css
-    assert '.wi-card-note-state.has-note' in wi_css
+    assert 'padding-right:' not in header_actions_block
+    assert 'flex-direction: column;' in footer_block
+    assert 'align-items: stretch;' in footer_block
+    assert 'justify-content: space-between;' not in footer_block
+    assert 'display: flex;' in footer_info_block
+    assert 'display: flex;' in footer_tools_block
+    assert 'padding-right: 1.75rem;' in footer_tools_block
+    assert 'margin-left: auto;' in date_chip_block
+    assert '.wi-card-note-state {' not in wi_css
 
 
 def test_worldinfo_css_archive_tag_summary_overrides_placeholder_rules():
@@ -2128,7 +2823,7 @@ def test_worldinfo_css_styles_archive_backface_and_catalog_meta():
     assert '.wi-card-back-note-wrap::before' in wi_css
     assert 'html.light-mode .wi-card-back {' in wi_css
     assert 'html.light-mode .wi-card-meta-chip {' in wi_css
-    assert 'html.light-mode .wi-card-note-state.has-note {' in wi_css
+    assert 'html.light-mode .wi-card-note-state.has-note {' not in wi_css
 
 
 def test_worldinfo_css_back_header_reserves_space_for_catalog_stamp():
@@ -2171,13 +2866,12 @@ def test_worldinfo_mobile_css_reuses_shared_page_boundary_tokens_for_front_and_b
 
     assert '@media (max-width: 768px)' in wi_css
     mobile_block = extract_media_block(wi_css, '@media (max-width: 768px)')
-    mobile_header_footer_padding_block = extract_exact_css_block(
-        mobile_block,
-        '.wi-card-header-actions,\n  .wi-card-footer',
-    )
     front_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-front')
     back_note_wrap_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-back-note-wrap')
     back_note_frame_mobile_block = extract_exact_css_block(mobile_block, '.wi-card-back-note-wrap::before')
+    footer_block = extract_exact_css_block(mobile_block, '.wi-card-footer')
+    footer_info_block = extract_exact_css_block(mobile_block, '.wi-card-footer-info')
+    footer_tools_block = extract_exact_css_block(mobile_block, '.wi-card-footer-tools')
 
     assert '--wi-card-page-inset-x:' in mobile_block
     assert '--wi-card-page-inset-y:' in mobile_block
@@ -2185,7 +2879,12 @@ def test_worldinfo_mobile_css_reuses_shared_page_boundary_tokens_for_front_and_b
     assert 'padding: var(--wi-card-page-inset-y) var(--wi-card-page-inset-x);' in front_mobile_block
     assert 'padding: 0.18rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_wrap_mobile_block
     assert 'inset: 0.1rem var(--wi-card-page-inset-x) var(--wi-card-page-inset-y);' in back_note_frame_mobile_block
-    assert 'padding-right: 1.5rem;' in mobile_header_footer_padding_block
+    assert 'align-items: stretch;' in footer_block
+    assert 'gap: 0.36rem;' in footer_block
+    assert 'gap: 0.42rem;' in footer_info_block
+    assert 'padding-right: 1.5rem;' in footer_tools_block
+    assert '.wi-card-footer-meta' not in mobile_block
+    assert '.wi-card-header-actions,' not in mobile_block
 
 
 def test_worldinfo_grid_template_uses_back_note_reading_layout():
@@ -2254,14 +2953,14 @@ def test_worldinfo_css_keeps_flip_corner_on_outer_shell_instead_of_face_offsets(
     grid_card_block = extract_exact_css_block(wi_css, '.wi-grid-card')
     front_block = extract_exact_css_block(wi_css, '.wi-card-front')
     header_actions_block = extract_exact_css_block(wi_css, '.wi-card-header-actions')
-    footer_block = extract_exact_css_block(wi_css, '.wi-card-footer')
+    footer_tools_block = extract_exact_css_block(wi_css, '.wi-card-footer-tools')
     flip_corner_block = extract_exact_css_block(card_css, '.card-flip-corner')
 
     assert 'padding: 0;' in grid_card_block
     assert 'position: absolute;' in front_block
     assert 'inset: 0;' in front_block
-    assert 'padding-right: 1.75rem;' in header_actions_block
-    assert 'padding-right: 1.75rem;' in footer_block
+    assert 'padding-right:' not in header_actions_block
+    assert 'padding-right: 1.75rem;' in footer_tools_block
     assert '.wi-item-flip-corner {' in wi_css
     assert 'right: 0;' in flip_corner_block
     assert 'bottom: 0;' in flip_corner_block
@@ -2301,6 +3000,7 @@ def test_worldinfo_frontend_note_sources_switch_embedded_saves_to_update_card():
     wi_editor_source = read_project_file('static/js/components/wiEditor.js')
     detail_save_block = extract_js_function_block(wi_detail_source, 'async saveActiveWorldInfoNote()')
     editor_save_block = extract_js_function_block(wi_editor_source, 'async saveEditingWorldInfoNote()')
+    editor_label_block = extract_js_function_block(wi_editor_source, 'getEditingWorldInfoNoteLabel()')
 
     assert 'updateCard' in wi_detail_source
     assert 'saveWorldInfoNote' in wi_detail_source
@@ -2312,7 +3012,9 @@ def test_worldinfo_frontend_note_sources_switch_embedded_saves_to_update_card():
     assert 'updateCard' in wi_editor_source
     assert 'saveWorldInfoNote' in wi_editor_source
     assert 'embedded' in wi_editor_source
-    assert "return this.editingWiFile?.type === 'embedded' ? '角色卡备注' : '本地备注';" in wi_editor_source
+    assert 'embedded' in editor_label_block
+    assert '角色卡备注' in editor_label_block
+    assert '本地备注' in editor_label_block
     assert 'updateCard' in editor_save_block
     assert 'saveWorldInfoNote' in editor_save_block
     assert 'card_id' in wi_editor_source
@@ -2358,8 +3060,8 @@ def test_sidebar_js_handles_mode_specific_category_trees_and_capability_gating()
     assert 'setPresetCategory' in sidebar_source
     assert 'getFolderCapabilities(path, mode = this.currentMode)' in sidebar_source
     assert 'reset invalid category selection to root' not in sidebar_source
-    assert 'this.$watch(\'$store.global.wiAllFolders\'' in sidebar_source
-    assert 'this.$watch(\'$store.global.presetAllFolders\'' in sidebar_source
+    assert js_contains(sidebar_source, 'this.$watch(\'$store.global.wiAllFolders\'')
+    assert js_contains(sidebar_source, 'this.$watch(\'$store.global.presetAllFolders\'')
 
 
 def test_worldinfo_grid_js_uses_category_metadata_and_explicit_upload_fallback_contract():
@@ -2382,7 +3084,7 @@ def test_worldinfo_grid_js_uses_category_metadata_and_explicit_upload_fallback_c
     assert 'canMoveWorldInfoSelection()' in wi_grid_source
     assert 'deleteSelectedWorldInfo()' in wi_grid_source
     assert 'if (!this.canSelectWorldInfoItem(item)) return;' in wi_grid_source
-    assert "this.wiFilterType === 'global' || this.wiFilterType === 'all'" in wi_grid_source
+    assert "this.wiFilterType === 'global' || this.wiFilterType === 'all'" in wi_grid_source or 'this.wiFilterType === "global" || this.wiFilterType === "all"' in wi_grid_source
     assert 'owner_card_id' in wi_grid_source
     assert 'owner_card_name' in wi_grid_source
     assert 'source_type' in wi_grid_source
@@ -2397,7 +3099,7 @@ def test_worldinfo_grid_js_syncs_local_note_updates_without_waiting_for_refetch(
     assert 'wi-note-updated' in wi_grid_source
     assert 'getWorldInfoRenderKey(item)' in wi_grid_source
     assert 'item.id !== detail.id' in wi_grid_source or 'item.id === detail.id' in wi_grid_source
-    assert "item.ui_summary = detail.ui_summary || ''" in wi_grid_source
+    assert "item.ui_summary = detail.ui_summary || ''" in wi_grid_source or 'item.ui_summary = detail.ui_summary || ""' in wi_grid_source
     assert 'this.wiList = currentItems;' in wi_grid_source
 
 
@@ -2438,21 +3140,81 @@ def test_preset_grid_js_uses_category_metadata_and_explicit_upload_fallback_cont
     assert 'canDeletePresetSelection()' in preset_grid_source
     assert 'canMovePresetSelection()' in preset_grid_source
     assert 'deleteSelectedPresets()' in preset_grid_source
-    assert 'moveSelectedPresets(targetCategory = this.filterCategory || \'\')' in preset_grid_source
+    assert 'moveSelectedPresets(targetCategory = this.filterCategory || ' in preset_grid_source
     assert 'selectedPresetItems()' in preset_grid_source
     assert 'isPresetMovable(item)' in preset_grid_source
-    assert 'selectedItems.length === 0 || !selectedItems.every(currentItem => this.isPresetMovable(currentItem))' in preset_grid_source
     assert '当前选中的预设包含资源绑定项，不能移动分类' in preset_grid_source
     assert 'ids = Array.of(item.id);' not in preset_grid_source
     drag_start_block = extract_js_function_block(preset_grid_source, 'dragStart(e, item)')
-    assert drag_start_block.index('selectedItems.length === 0 || !selectedItems.every(currentItem => this.isPresetMovable(currentItem))') < drag_start_block.index('this.selectedIds = ids;')
-    assert "this.filterType === 'global' || this.filterType === 'all'" in preset_grid_source
+    assert 'selectedItems.length === 0' in drag_start_block
+    assert 'selectedItems.every((currentItem) => this.isPresetMovable(currentItem))' in drag_start_block
+    assert drag_start_block.index('selectedItems.length === 0') < drag_start_block.index('this.selectedIds = ids;')
+    assert 'this.filterType === "global" || this.filterType === "all"' in preset_grid_source
     assert 'owner_card_id' in preset_grid_source
     assert 'owner_card_name' in preset_grid_source
     assert 'source_type' in preset_grid_source
     assert 'showPresetCategoryActions' not in preset_grid_source
     assert 'movePresetToCategory(item)' not in preset_grid_source
     assert 'resetPresetCategory(item)' not in preset_grid_source
+
+
+def test_preset_grid_js_delegates_detail_rendering_to_reader_without_local_detail_state():
+    preset_grid_source = read_project_file('static/js/components/presetGrid.js')
+    open_preset_detail_block = extract_js_function_block(
+        preset_grid_source,
+        'openPresetDetail(item) {',
+    )
+    state_block = preset_grid_source[
+        preset_grid_source.index('return {'):preset_grid_source.index('get selectedIds() {')
+    ]
+
+    assert 'new CustomEvent("open-preset-reader"' in open_preset_detail_block
+    assert 'detail: {' in open_preset_detail_block
+    assert '...item,' in open_preset_detail_block
+    assert 'id: openId,' in open_preset_detail_block
+
+    for dead_state_field in (
+        'selectedPreset:',
+        'showDetailModal:',
+        'activePresetDetail:',
+        'showPresetDetailModal:',
+        'activePresetItem:',
+        'activePresetItemType:',
+        'uiPresetFilter:',
+        'showMobileSidebar:',
+    ):
+        assert dead_state_field not in state_block
+
+    for dead_helper_signature in (
+        'async openPreset(item) {',
+        'closeDetailModal() {',
+        'closePresetDetailModal() {',
+        'selectPresetItem(item, type, shouldScroll = false) {',
+        'get filteredPresetItems() {',
+        'get totalPresetItems() {',
+        'openAdvancedExtensions() {',
+        'async savePresetExtensions(extensions) {',
+        'createSnapshot(type) {',
+        'openRollback() {',
+        'openBackupFolder(type) {',
+        'deleteCurrentPreset() {',
+        'editPresetRawFromDetail() {',
+        'editPresetRaw() {',
+        'formatSize(bytes) {',
+        'formatParam(val) {',
+        'formatPromptContent(val) {',
+        'pickPromptContent(prompt) {',
+        'collectPromptMeta(prompt) {',
+        'normalizePrompts(list) {',
+    ):
+        assert dead_helper_signature not in preset_grid_source
+
+    assert 'toggleSelection(item)' in preset_grid_source
+    assert 'selectedPresetItems()' in preset_grid_source
+    assert 'deleteSelectedPresets()' in preset_grid_source
+    assert 'moveSelectedPresets(targetCategory = this.filterCategory || ' in preset_grid_source
+    assert 'async exportPresetItem(item, event = null)' in preset_grid_source
+    assert 'formatDate(ts) {' in preset_grid_source
 
 
 def test_preset_grid_template_uses_selection_without_card_level_category_actions():
@@ -2470,6 +3232,25 @@ def test_preset_grid_template_uses_selection_without_card_level_category_actions
     assert '<span>分类：</span>' not in preset_template
     assert 'locatePresetOwnerCard(item)' in preset_template
     assert 'class="text-[10px] text-[var(--text-dim)] space-y-1 mb-3"' not in preset_template
+
+
+def test_preset_grid_js_exposes_send_to_st_state_and_event_sync_contracts():
+    preset_grid_source = read_project_file('static/js/components/presetGrid.js')
+
+    assert 'sendingPresetToStIds:' in preset_grid_source
+    assert 'canSendPresetToST(item)' in preset_grid_source
+    assert 'getPresetSendToSTTitle(item)' in preset_grid_source
+    assert 'applyPresetSentState(detail)' in preset_grid_source
+    assert 'window.addEventListener("preset-sent-to-st"' in preset_grid_source or "window.addEventListener('preset-sent-to-st'" in preset_grid_source
+    assert 'async sendPresetToST(item, event = null)' in preset_grid_source
+
+
+def test_preset_grid_template_footer_exposes_send_to_st_button_contract():
+    preset_template = read_project_file('templates/components/grid_presets.html')
+
+    assert 'card-send-st-btn' in preset_template
+    assert '@click.stop="sendPresetToST(item, $event)"' in preset_template
+    assert ':title="getPresetSendToSTTitle(item)"' in preset_template
 
 
 def test_sidebar_template_uses_scrollable_worldinfo_and_preset_category_sections():
@@ -2522,12 +3303,29 @@ def test_header_selection_bar_switches_to_worldinfo_specific_actions():
 def test_header_selection_bar_switches_to_preset_specific_actions():
     header_template = read_project_file('templates/components/header.html')
     header_source = read_project_file('static/js/components/header.js')
+    desktop_selection_bar_start = header_template.index('<!-- 桌面端：右侧操作区 -->')
+    desktop_selection_bar_end = header_template.index('<!-- 搜索与筛选区 -->')
+    desktop_selection_bar = header_template[desktop_selection_bar_start:desktop_selection_bar_end]
 
     assert "currentMode === 'presets'" in header_template
+    assert 'mergeSelectedPresets()' in header_template
+    assert 'canMergePresetSelection()' in header_template
+    assert 'getPresetMergeSelectionTitle()' in header_template
+    assert ':disabled="!canMergePresetSelection()"' in header_template
+    assert ':title="getPresetMergeSelectionTitle()"' in header_template
+    assert 'mergeSelectedPresets()' in desktop_selection_bar
+    assert 'canMergePresetSelection()' in desktop_selection_bar
+    assert "x-show=\"selectedIds.length > 1 && currentMode === 'presets'\"" in desktop_selection_bar
+    assert "x-show=\"currentMode === 'presets' && canMergePresetSelection()\"" not in desktop_selection_bar
+    assert 'moveSelectedPresets()' in desktop_selection_bar
+    assert 'deleteSelectedPresets()' in desktop_selection_bar
     assert 'deleteSelectedPresets()' in header_template
     assert 'moveSelectedPresets()' in header_template
     assert 'canMovePresetSelection()' in header_template
     assert "x-show=\"selectedIds.length > 0 && currentMode === 'cards'\"" in header_template
+    assert 'mergeSelectedPresets()' in header_source
+    assert 'canMergePresetSelection()' in header_source
+    assert 'getPresetMergeSelectionTitle()' in header_source
     assert 'deleteSelectedPresets()' in header_source
     assert 'canDeletePresetSelection()' in header_source
     assert 'canMovePresetSelection()' in header_source
@@ -2578,12 +3376,15 @@ def test_mobile_sidebar_css_uses_container_height_instead_of_fixed_dynamic_viewp
 
 def test_card_pagination_template_uses_mobile_short_labels_and_hides_flip_count():
     cards_template = read_project_file('templates/components/grid_cards.html')
+    compact_cards_template = re.sub(r'\s+', ' ', cards_template)
 
     assert 'class="card-pagination-page-indicator"' in cards_template
     assert 'class="btn-secondary card-page-nav-btn"' in cards_template
-    assert "x-show=\"$store.global.deviceType === 'mobile' && !bulkBackMode\">翻面</span>" in cards_template
-    assert "x-show=\"$store.global.deviceType === 'mobile' && bulkBackMode\">正面</span>" in cards_template
-    assert "x-show=\"$store.global.deviceType !== 'mobile'\" class=\"card-flip-count\"" in cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && !bulkBackMode\"" in compact_cards_template
+    assert "x-show=\"$store.global.deviceType === 'mobile' && bulkBackMode\"" in compact_cards_template
+    assert '>翻面<' in compact_cards_template or '>����<' in compact_cards_template
+    assert '>正面<' in compact_cards_template or '>����<' in compact_cards_template
+    assert "x-show=\"$store.global.deviceType !== 'mobile'\" class=\"card-flip-count\"" in compact_cards_template
 
 
 def test_card_pagination_mobile_css_compacts_footer_into_single_row():

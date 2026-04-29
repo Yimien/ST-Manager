@@ -42,7 +42,7 @@ import {
     formatWiKeys,
     getTopbarTokenLevelClass
 } from '../utils/format.js';
-import { updateShadowContent, updateMixedPreviewContent } from '../utils/dom.js';
+import { updateShadowContent, renderUnifiedPreviewHost, updateMixedPreviewContent } from '../utils/dom.js';
 import { createAutoSaver } from '../utils/autoSave.js'; 
 import { wiHelpers } from '../utils/wiHelpers.js';
 import { clearActiveRuntimeContext, setActiveRuntimeContext } from '../runtime/runtimeContext.js';
@@ -104,6 +104,8 @@ export default function detailModal() {
         rawMetadataContent: 'Loading...',
         isEditMode: false, // 编辑模式开关，默认为阅览模式
         detailTagDragIndex: null,
+        pendingAdvancedEditorApplyHandler: null,
+        pendingAdvancedEditorPersistHandler: null,
 
         // 资源文件列表状态
         resourceLorebooks: [],
@@ -126,6 +128,7 @@ export default function detailModal() {
         formatDate,
         estimateTokens,
         updateShadowContent,
+        renderUnifiedPreviewHost,
         updateMixedPreviewContent,
         formatWiKeys,
         getTopbarTokenLevelClass,
@@ -134,6 +137,15 @@ export default function detailModal() {
 
         formatDateWithYear(ts) {
             return formatDate(ts, { includeYear: true });
+        },
+
+        buildPreviewRegexConfig() {
+            const regexScripts = Array.isArray(this.editingData?.extensions?.regex_scripts)
+                ? this.editingData.extensions.regex_scripts
+                : [];
+            return {
+                displayRules: regexScripts,
+            };
         },
 
         _convertLegacyTavernHelper(extensions) {
@@ -226,6 +238,17 @@ export default function detailModal() {
             result.tavern_helper = this._normalizeTavernScriptsForSave(result);
             delete result.TavernHelper_scripts;
             return result;
+        },
+
+        _cleanupPendingAdvancedEditorHandlers() {
+            if (this.pendingAdvancedEditorApplyHandler) {
+                window.removeEventListener('advanced-editor-apply', this.pendingAdvancedEditorApplyHandler);
+                this.pendingAdvancedEditorApplyHandler = null;
+            }
+            if (this.pendingAdvancedEditorPersistHandler) {
+                window.removeEventListener('advanced-editor-persist', this.pendingAdvancedEditorPersistHandler);
+                this.pendingAdvancedEditorPersistHandler = null;
+            }
         },
 
         _normalizeEditingDataShape(source = {}) {
@@ -503,6 +526,7 @@ export default function detailModal() {
             this.$watch('showDetail', (val) => {
                 if (!val) {
                     this.stopAutoSave();
+                    this._cleanupPendingAdvancedEditorHandlers();
                     clearActiveRuntimeContext('card');
                     this.currentSkinIndex = -1;
                     this.zoomLevel = 100;
@@ -935,6 +959,7 @@ export default function detailModal() {
         openDetail(c) {
             // 重置状态
             this.stopAutoSave();
+            this._cleanupPendingAdvancedEditorHandlers();
             this.originalDataJson = null;
             this.activeCard = c;
             this.skinImages = [];
@@ -1127,7 +1152,7 @@ export default function detailModal() {
                 this.editingData.character_book_raw = JSON.stringify(this.editingData.character_book, null, 2);
             }
 
-            this._internalSaveCard(false);
+            return this._internalSaveCard(false);
         },
 
         _internalSaveCard(isBundleRenamed) {
@@ -1166,7 +1191,7 @@ export default function detailModal() {
             // 兼容性映射：getCleanedV3Data 返回的是 name，但 updateCard 需要 char_name
             payload.char_name = cleanData.name;
 
-            updateCard(payload).then(res => {
+            return updateCard(payload).then(res => {
                 this.isSaving = false;
                 if (res.success) {
                     this.editingData.source_revision = res.updated_card?.source_revision || this.editingData.source_revision || "";
@@ -1237,12 +1262,15 @@ export default function detailModal() {
                     const idToRefresh = res.current_version_id || this.editingData.id;
                     this.refreshActiveCardDetail(idToRefresh);
                     autoSaver.initBaseline(this.editingData); // 手动保存后，重置自动保存
+                    return true;
                 } else {
                     alert("保存失败: " + res.msg);
+                    return false;
                 }
             }).catch(e => {
                 this.isSaving = false;
                 alert("请求错误: " + e);
+                return false;
             });
         },
 
@@ -1945,9 +1973,35 @@ export default function detailModal() {
         },
 
         openAdvancedEditor() {
-            // 派发事件，将完整的 editingData 引用传过去
+            this._cleanupPendingAdvancedEditorHandlers();
+
+            const detachedExtensions = JSON.parse(JSON.stringify(this.editingData?.extensions || {}));
+            const advancedEditorPayload = {
+                ...this.editingData,
+                extensions: detachedExtensions,
+                editorCommitMode: 'buffered',
+                showPersistButton: true,
+            };
+            const applyHandler = async () => {
+                this._cleanupPendingAdvancedEditorHandlers();
+                this.editingData.extensions = JSON.parse(JSON.stringify(advancedEditorPayload.extensions || {}));
+            };
+            const persistHandler = async () => {
+                this._cleanupPendingAdvancedEditorHandlers();
+                this.editingData.extensions = JSON.parse(JSON.stringify(advancedEditorPayload.extensions || {}));
+                const saveSucceeded = await this.saveChanges();
+                if (saveSucceeded) {
+                    window.dispatchEvent(new CustomEvent('advanced-editor-close'));
+                }
+            };
+
+            this.pendingAdvancedEditorApplyHandler = applyHandler;
+            this.pendingAdvancedEditorPersistHandler = persistHandler;
+            window.addEventListener('advanced-editor-apply', applyHandler);
+            window.addEventListener('advanced-editor-persist', persistHandler);
+
             window.dispatchEvent(new CustomEvent('open-advanced-editor', {
-                detail: this.editingData 
+                detail: advancedEditorPayload
             }));
         },
 

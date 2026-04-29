@@ -42,9 +42,11 @@ DEFAULT_CONFIG = {
     "world_info_dir": "data/library/lorebooks",
     "chats_dir": "data/library/chats",
     "presets_dir": "data/library/presets",
+    "st_openai_preset_dir": "",
     "regex_dir": "data/library/extensions/regex",
     "scripts_dir": "data/library/extensions/tavern_helper",
     "quick_replies_dir": "data/library/extensions/quick-replies", 
+    "beautify_dir": "data/library/beautify",
     "default_sort": "date_desc",
     "show_header_sort": True,
     "theme_accent": "blue",
@@ -144,6 +146,19 @@ DEFAULT_CONFIG = {
 }
 
 VALID_ST_AUTH_TYPES = {'basic', 'web', 'auth_web'}
+
+
+RUNTIME_DIR_DEFAULTS = {
+    'cards_dir': 'data/library/characters',
+    'world_info_dir': 'data/library/lorebooks',
+    'chats_dir': 'data/library/chats',
+    'presets_dir': 'data/library/presets',
+    'regex_dir': 'data/library/extensions/regex',
+    'scripts_dir': 'data/library/extensions/tavern_helper',
+    'quick_replies_dir': 'data/library/extensions/quick-replies',
+    'beautify_dir': 'data/library/beautify',
+    'resources_dir': 'data/assets/card_assets',
+}
 
 
 def _normalize_st_auth_type(auth_type):
@@ -272,18 +287,36 @@ def _resolve_dir(cfg: dict, key: str, default: str) -> str:
     if os.path.isabs(raw):
         return raw
     return os.path.join(BASE_DIR, raw)
+
+
+def ensure_runtime_dirs(cfg=None):
+    cfg = cfg or load_config()
+    resolved = {}
+
+    for key, default in RUNTIME_DIR_DEFAULTS.items():
+        path = _resolve_dir(cfg, key, default)
+        resolved[key] = _ensure_dir(path)
+
+    return resolved
+
+
 def get_cards_folder() -> str:
     cfg = load_config()
-    return _ensure_dir(_resolve_dir(cfg, 'cards_dir', 'data/library/characters'))
+    return _ensure_dir(_resolve_dir(cfg, 'cards_dir', RUNTIME_DIR_DEFAULTS['cards_dir']))
 
 def get_world_info_folder() -> str:
     cfg = load_config()
-    return _ensure_dir(_resolve_dir(cfg, 'world_info_dir', 'data/library/lorebooks'))
+    return _ensure_dir(_resolve_dir(cfg, 'world_info_dir', RUNTIME_DIR_DEFAULTS['world_info_dir']))
 
 
 def get_chats_folder() -> str:
     cfg = load_config()
-    return _ensure_dir(_resolve_dir(cfg, 'chats_dir', 'data/library/chats'))
+    return _ensure_dir(_resolve_dir(cfg, 'chats_dir', RUNTIME_DIR_DEFAULTS['chats_dir']))
+
+
+def get_beautify_folder() -> str:
+    cfg = load_config()
+    return _ensure_dir(_resolve_dir(cfg, 'beautify_dir', RUNTIME_DIR_DEFAULTS['beautify_dir']))
 
 class DynamicPath:
     def __init__(self, getter):
@@ -302,6 +335,7 @@ class DynamicPath:
 CARDS_FOLDER = DynamicPath(get_cards_folder)
 WI_FOLDER = DynamicPath(get_world_info_folder)
 CHATS_FOLDER = DynamicPath(get_chats_folder)
+BEAUTIFY_FOLDER = DynamicPath(get_beautify_folder)
 
 # 兼容旧逻辑：提供动态读取的配置访问器
 current_config = ConfigProxy()

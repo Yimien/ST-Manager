@@ -38,6 +38,7 @@ from core.data.ui_store import (
     DEFAULT_TAG_CATEGORY_OPACITY,
     _normalize_tag_taxonomy,
     delete_worldinfo_notes_for_card_prefix,
+    rename_embedded_worldinfo_note_card_prefix,
 )
 from core.data.cache import GlobalMetadataCache
 from core.consts import SIDECAR_EXTENSIONS
@@ -46,8 +47,11 @@ from core.consts import SIDECAR_EXTENSIONS
 from core.services.scan_service import suppress_fs_events
 from core.services.cache_service import schedule_reload, force_reload, update_card_cache
 from core.services.index_service import enqueue_index_job
+from core.services.card_index_sync_service import sync_card_index_jobs
+from core.services.index_build_service import apply_card_increment, connect_index_db
 from core.services.card_index_query_service import query_indexed_cards
-from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover
+from core.services.card_service import update_card_content, rename_folder_in_db, rename_folder_in_ui, resolve_ui_key, swap_skin_to_cover, move_card_internal, sync_folder_prefix_after_fs_move, cleanup_deleted_cards_after_fs_delete
+from core.services.card_service import sync_exact_card_after_fs_move
 from core.services.tag_management_service import build_governance_feedback, build_known_tag_set, filter_governed_tags
 from core.services.automation_service import (
     auto_run_rules_on_card,
@@ -77,6 +81,19 @@ logger = logging.getLogger(__name__)
 bp = Blueprint('cards', __name__)
 
 TAG_ORDER_KEY = '_tag_order_v1'
+
+
+def _is_missing_card_metadata_table_error(exc):
+    return 'no such table: card_metadata' in str(exc)
+
+
+def _apply_card_index_increment_now(card_id, source_path, remove_entity_ids=None):
+    try:
+        with connect_index_db(DEFAULT_DB_PATH) as conn:
+            apply_card_increment(conn, card_id, source_path, remove_entity_ids=remove_entity_ids)
+    except RuntimeError as exc:
+        if 'cards active generation missing' not in str(exc):
+            raise
 
 
 def _normalize_tag_list(tags):
@@ -418,6 +435,38 @@ def _is_safe_filename(name: str) -> bool:
     return True
 
 
+def _remove_conflicting_card_targets(target_path: str) -> None:
+    base_path, ext = os.path.splitext(target_path)
+    ext_lower = ext.lower()
+    candidates = [target_path]
+    if ext_lower == '.png':
+        candidates.append(base_path + '.json')
+    elif ext_lower == '.json':
+        candidates.append(base_path + '.png')
+
+    for path in candidates:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def _resolve_existing_card_target(target_path: str) -> str:
+    if os.path.exists(target_path):
+        return target_path
+
+    base_path, ext = os.path.splitext(target_path)
+    ext_lower = ext.lower()
+    if ext_lower == '.png':
+        sibling_path = base_path + '.json'
+    elif ext_lower == '.json':
+        sibling_path = base_path + '.png'
+    else:
+        sibling_path = ''
+
+    if sibling_path and os.path.exists(sibling_path):
+        return sibling_path
+    return target_path
+
+
 def _coerce_request_bool(value) -> bool:
     if isinstance(value, bool):
         return value
@@ -428,6 +477,92 @@ def _coerce_request_bool(value) -> bool:
         if normalized in {'0', 'false', 'no', 'off', ''}:
             return False
     return bool(value)
+
+
+def _build_move_folder_merge_actions(source_path, source_full_path, target_full_path, new_path_prefix):
+    actions = []
+
+    for root, dirs, files in os.walk(source_full_path):
+        rel_root = os.path.relpath(root, source_full_path)
+        if rel_root == '.':
+            rel_root = ''
+
+        for dir_name in list(dirs):
+            rel_dir = os.path.join(rel_root, dir_name) if rel_root else dir_name
+            src_dir = os.path.join(source_full_path, rel_dir)
+            dst_dir = os.path.join(target_full_path, rel_dir)
+            if os.path.exists(dst_dir):
+                continue
+
+            old_path = f"{source_path}/{rel_dir}".replace('\\', '/')
+            new_path = f"{new_path_prefix}/{rel_dir}".replace('\\', '/')
+            actions.append({
+                'type': 'folder',
+                'src_dir': src_dir,
+                'dst_dir': dst_dir,
+                'old_path': old_path,
+                'new_path': new_path,
+            })
+            dirs.remove(dir_name)
+
+        files_to_process = []
+        processed_files = set()
+
+        for file_name in files:
+            if file_name.lower().endswith('.json'):
+                files_to_process.append(file_name)
+                processed_files.add(file_name)
+                base = os.path.splitext(file_name)[0]
+                for ext in SIDECAR_EXTENSIONS:
+                    sidecar_name = base + ext
+                    if sidecar_name in files:
+                        processed_files.add(sidecar_name)
+
+        for file_name in files:
+            if file_name.lower().endswith('.png') and file_name not in processed_files:
+                files_to_process.append(file_name)
+
+        for file_name in files_to_process:
+            src_file = os.path.join(root, file_name)
+            rel_from_source = os.path.relpath(src_file, source_full_path)
+            dst_file = os.path.join(target_full_path, rel_from_source)
+
+            final_dst = dst_file
+            final_name = os.path.basename(final_dst)
+            if os.path.exists(final_dst):
+                base_name, ext_part = os.path.splitext(os.path.basename(dst_file))
+                dir_name = os.path.dirname(dst_file)
+                counter = 1
+                while True:
+                    final_name = f'{base_name}_{counter}{ext_part}'
+                    final_dst = os.path.join(dir_name, final_name)
+                    if not os.path.exists(final_dst):
+                        break
+                    counter += 1
+
+            action = {
+                'type': 'file',
+                'src_file': src_file,
+                'dst_file': final_dst,
+                'filename': file_name,
+            }
+            if file_name.lower().endswith(('.json', '.png')):
+                rel_parent = os.path.dirname(rel_from_source).replace('\\', '/')
+                old_card_id = f"{source_path}/{rel_from_source}".replace('\\', '/')
+                new_rel_name = f"{rel_parent}/{final_name}" if rel_parent else final_name
+                new_card_id = f"{new_path_prefix}/{new_rel_name}".replace('\\', '/')
+                if new_card_id != old_card_id:
+                    old_category = os.path.dirname(old_card_id)
+                    action.update({
+                        'sync': 'exact_card',
+                        'old_card_id': old_card_id,
+                        'new_card_id': new_card_id,
+                        'final_name': final_name,
+                        'old_category': old_category,
+                    })
+            actions.append(action)
+
+    return actions
 
 
 def _normalize_sort_mode(sort_mode: str) -> str:
@@ -1136,6 +1271,7 @@ def api_toggle_favorite():
         row = cursor.fetchone()
         if not row: return jsonify({"success": False, "msg": "Card not found in DB"})
         
+        current_status = 1 if row['is_favorite'] else 0
         new_status = 0 if row['is_favorite'] else 1
         
         # 更新数据库
@@ -1144,6 +1280,17 @@ def api_toggle_favorite():
         
         # 更新缓存
         ctx.cache.toggle_favorite_update(card_id, bool(new_status))
+
+        if current_status != new_status:
+            sync_card_index_jobs(
+                card_id=card_id,
+                source_path=os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep)),
+                favorite_changed=True,
+            )
+            _apply_card_index_increment_now(
+                card_id,
+                os.path.join(CARDS_FOLDER, card_id.replace('/', os.sep)),
+            )
         
         return jsonify({"success": True, "new_status": bool(new_status)})
     except Exception as e:
@@ -1321,8 +1468,10 @@ def api_update_card():
             ui_changed = True
 
         # 注意：如果是设为封面，前端发来的 ui_summary 可能是空的，保留原有值
-        # Track if link was changed for forum tag fetching (必须在更新ui_data之前检查)
+        # Track UI-only side effects before mutating ui_data.
+        summary_changed = False
         link_changed = False
+        resource_folder_changed = False
 
         if not force_set_cover:
             new_summary = data.get('ui_summary', '')
@@ -1344,6 +1493,8 @@ def api_update_card():
                 old_link = ui_data[ui_key].get('link', '')
                 if old_link != new_link:
                     link_changed = True
+                old_resource_folder = ui_data[ui_key].get('resource_folder', '')
+                resource_folder_changed = old_resource_folder != new_resource_folder
 
                 remark_data = {
                     'summary': new_summary,
@@ -1366,14 +1517,17 @@ def api_update_card():
                 # For normal mode, check link change BEFORE updating ui_data
                 if ui_data[ui_key].get('link', '') != new_link:
                     link_changed = True
+                old_resource_folder = ui_data[ui_key].get('resource_folder', '')
+                resource_folder_changed = old_resource_folder != new_resource_folder
 
                 if ui_data[ui_key].get('summary', '') != new_summary:
+                    summary_changed = True
                     ui_data[ui_key]['summary'] = new_summary
                     ui_changed = True
                 if link_changed:  # Use the flag set before update
                     ui_data[ui_key]['link'] = new_link
                     ui_changed = True
-                if ui_data[ui_key].get('resource_folder', '') != new_resource_folder:
+                if resource_folder_changed:
                     ui_data[ui_key]['resource_folder'] = new_resource_folder
                     ui_changed = True
 
@@ -1398,9 +1552,60 @@ def api_update_card():
              info = extract_card_info(current_full_path)
         
         # 更新 DB (Hash / Time)
-        cache_updated = update_card_cache(final_rel_path_id, current_full_path, parsed_info=info, mtime=current_mtime)
-        if cache_updated:
-            enqueue_index_job('upsert_world_owner', entity_id=final_rel_path_id, source_path=current_full_path)
+        cache_result = {
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        }
+        should_refresh_card_cache = bool(file_content_modified or is_renamed or force_set_cover)
+
+        if should_refresh_card_cache:
+            cache_result = update_card_cache(
+                final_rel_path_id,
+                current_full_path,
+                parsed_info=info,
+                mtime=current_mtime,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                file_content_changed=bool(file_content_modified),
+                rename_changed=bool(is_renamed),
+                force_set_cover=bool(force_set_cover),
+                resource_folder_changed=bool(resource_folder_changed),
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+                remove_owner_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+            _apply_card_index_increment_now(
+                final_rel_path_id,
+                current_full_path,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+
+        if resource_folder_changed and not should_refresh_card_cache:
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                resource_folder_changed=True,
+                remove_owner_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
+
+        if summary_changed:
+            sync_card_index_jobs(
+                card_id=final_rel_path_id,
+                source_path=current_full_path,
+                summary_changed=True,
+            )
+            _apply_card_index_increment_now(
+                final_rel_path_id,
+                current_full_path,
+                remove_entity_ids=[raw_id] if raw_id != final_rel_path_id else None,
+            )
 
         if raw_id != final_rel_path_id:
             try:
@@ -1429,6 +1634,9 @@ def api_update_card():
                 import_time_changed_after_rename, _ = ensure_import_time(ui_data, final_rel_path_id, import_fallback)
                 if import_time_changed_after_rename:
                     rename_ui_changed = True
+
+            if rename_embedded_worldinfo_note_card_prefix(ui_data, raw_id, final_rel_path_id):
+                rename_ui_changed = True
 
             if rename_ui_changed:
                 save_ui_data(ui_data)
@@ -1712,206 +1920,30 @@ def api_move_card():
             if not _is_safe_rel_path(cid):
                 return jsonify({"success": False, "msg": "非法卡片路径"}), 400
         
-        # 目标基础目录
-        dst_base_dir = os.path.join(CARDS_FOLDER, target_cat)
-        if not os.path.exists(dst_base_dir): os.makedirs(dst_base_dir)
-        
         moved_details = []
-        ui_data = load_ui_data()
-        ui_changed = False
-
-        # 准备数据库连接，用于实时更新
-        db_path = DEFAULT_DB_PATH
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # 使用缓存查找卡片属性
-        cache_map = ctx.cache.id_map
         
         for cid in card_ids:
             try:
-                card_info = cache_map.get(cid)
-                if not card_info: continue # 找不到卡片，跳过
+                success, new_id, msg = move_card_internal(cid, target_cat)
+                if not success:
+                    logger.warning('Move card skipped for %s: %s', cid, msg)
+                    continue
 
-                old_category = card_info['category']
-                is_bundle = card_info.get('is_bundle', False)
+                new_filename = os.path.basename(new_id)
+                new_category = new_id.rsplit('/', 1)[0] if '/' in new_id else ''
+                cache_item = (ctx.cache.id_map or {}).get(new_id) if ctx.cache else None
+                new_image_url = cache_item.get('image_url', '') if isinstance(cache_item, dict) else ''
 
-                # ===========================
-                # === 情况 1: 聚合角色包 ===
-                # ===========================
-                if is_bundle:
-                    bundle_rel_dir = card_info['bundle_dir'] # e.g. "Race/Elf"
-                    if not bundle_rel_dir: continue
-
-                    src_dir_full = os.path.join(CARDS_FOLDER, bundle_rel_dir.replace('/', os.sep))
-                    folder_name = os.path.basename(src_dir_full)
-                    
-                    # 目标路径 e.g. "Cards/NewCat/Elf"
-                    dst_dir_full = os.path.join(dst_base_dir, folder_name)
-                    
-                    # 如果源和目标一样，跳过
-                    if os.path.abspath(src_dir_full) == os.path.abspath(dst_dir_full):
-                        continue
-
-                    # 处理重名：如果目标文件夹已存在，自动改名 e.g. "Elf_1"
-                    if os.path.exists(dst_dir_full):
-                        counter = 1
-                        while True:
-                            new_folder_name = f"{folder_name}_{counter}"
-                            dst_dir_full = os.path.join(dst_base_dir, new_folder_name)
-                            if not os.path.exists(dst_dir_full):
-                                folder_name = new_folder_name
-                                break
-                            counter += 1
-                    
-                    # 执行移动
-                    shutil.move(src_dir_full, dst_dir_full)
-                    
-                    # 计算新的相对路径 (用于更新 ui_data 和前端)
-                    new_bundle_rel_dir = f"{target_cat}/{folder_name}" if target_cat else folder_name
-                    
-                    # 1. 更新数据库 (模糊匹配目录下的所有文件)
-                    cursor.execute("SELECT id FROM card_metadata WHERE id LIKE ? || '/%'", (bundle_rel_dir,))
-                    rows = cursor.fetchall()
-                    for row in rows:
-                        old_sub_id = row[0]
-                        new_sub_id = old_sub_id.replace(bundle_rel_dir, new_bundle_rel_dir, 1)
-                        cursor.execute("""
-                            UPDATE card_metadata 
-                            SET id = ?, 
-                                category = REPLACE(category, ?, ?) 
-                            WHERE id = ?
-                        """, (new_sub_id, bundle_rel_dir, new_bundle_rel_dir, old_sub_id))
-
-                    # 更新 UI Data (Key 是文件夹路径)
-                    if bundle_rel_dir in ui_data:
-                        ui_data[new_bundle_rel_dir] = ui_data[bundle_rel_dir]
-                        del ui_data[bundle_rel_dir]
-                        ui_changed = True
-                    
-                    ctx.cache.move_bundle_update(bundle_rel_dir, new_bundle_rel_dir, old_category, target_cat)
-
-                    # 返回给前端的信息
-                    moved_details.append({
-                        "old_id": cid,
-                        "new_id": new_bundle_rel_dir, # 前端可以用这个判断
-                        "is_bundle": True,
-                        "new_category": target_cat
-                    })
-
-                # ===========================
-                # === 情况 2: 普通角色卡 ===
-                # ===========================
-                else:
-                    src_sys_path = cid.replace('/', os.sep)
-                    src_full = os.path.join(CARDS_FOLDER, src_sys_path)
-                    
-                    if not os.path.exists(src_full): continue
-
-                    filename = os.path.basename(src_full)
-                    # 此时 dst_full 只是一个基于原名的假设路径，稍后会根据冲突检测改变
-                    # dst_full = os.path.join(dst_base_dir, filename) 
-                    
-                    # 如果源和目标目录完全一致，跳过
-                    if os.path.dirname(src_full) == os.path.abspath(dst_base_dir):
-                        continue
-                    
-                    # === 1. 识别文件及其伴生图片 ===
-                    sidecar_src = None
-                    sidecar_ext = None
-                    
-                    # 只有 JSON 才检查伴生图，PNG 本身就是主图
-                    if filename.lower().endswith('.json'):
-                        sidecar_src = find_sidecar_image(src_full)
-                        if sidecar_src:
-                            sidecar_ext = os.path.splitext(sidecar_src)[1]
-
-                    # === 2. 联合冲突检测 ===
-                    # 我们需要找到一个 base_name，使得 base_name.json 和 base_name.png 在目标目录都不存在
-                    
-                    name_part, ext_part = os.path.splitext(filename)
-                    counter = 0
-                    final_base_name = name_part
-                    
-                    while True:
-                        if counter > 0:
-                            final_base_name = f"{name_part}_{counter}"
-                        
-                        # 预测的主文件目标路径
-                        candidate_main_name = final_base_name + ext_part
-                        candidate_main_path = os.path.join(dst_base_dir, candidate_main_name)
-                        
-                        # 预测的伴生图目标路径 (如果有)
-                        candidate_sidecar_path = None
-                        if sidecar_ext:
-                            candidate_sidecar_name = final_base_name + sidecar_ext
-                            candidate_sidecar_path = os.path.join(dst_base_dir, candidate_sidecar_name)
-                        
-                        # === 同时检测主文件和伴生图是否存在 ===
-                        conflict_main = os.path.exists(candidate_main_path)
-                        conflict_sidecar = False
-                        if candidate_sidecar_path:
-                            conflict_sidecar = os.path.exists(candidate_sidecar_path)
-                        
-                        # 如果两者都不冲突，说明这个名字安全
-                        if not conflict_main and not conflict_sidecar:
-                            # 确定了最终的 safe paths
-                            dst_full = candidate_main_path
-                            dst_sidecar_full = candidate_sidecar_path
-                            final_filename = candidate_main_name
-                            break
-                        
-                        # 否则继续尝试下一个序号
-                        counter += 1
-                    
-                    # === 3. 执行移动 ===
-                    
-                    # 移动主文件
-                    shutil.move(src_full, dst_full)
-                    
-                    # 移动伴生图片 (如果有)
-                    if sidecar_src and dst_sidecar_full:
-                        shutil.move(sidecar_src, dst_sidecar_full)
-
-                    # === 4. 更新数据 ===
-                    
-                    # 计算新 ID (Relative Path)
-                    new_id = f"{target_cat}/{final_filename}" if target_cat else final_filename
-
-                    # 更新数据库
-                    cursor.execute("""
-                        UPDATE card_metadata 
-                        SET id = ?, category = ? 
-                        WHERE id = ?
-                    """, (new_id, target_cat, cid))
-                    # update_card_cache(new_id, dst_full) # 确保 hash 更新
-                    
-                    # 更新 UI Data
-                    if cid in ui_data:
-                        ui_data[new_id] = ui_data[cid]
-                        del ui_data[cid]
-                        ui_changed = True
-
-                    # 增量更新】内存缓存
-                    ctx.cache.move_card_update(cid, new_id, old_category, target_cat, final_filename, dst_full)
-
-                    moved_details.append({
-                        "old_id": cid,
-                        "new_id": new_id,
-                        "new_filename": final_filename,
-                        "new_category": target_cat,
-                        "new_image_url": ctx.cache.id_map[new_id]['image_url'] # 返回给前端用
-                    })
-                    
+                moved_details.append({
+                    "old_id": cid,
+                    "new_id": new_id,
+                    "new_filename": new_filename,
+                    "new_category": new_category,
+                    "new_image_url": new_image_url,
+                })
             except Exception as inner_e:
                 print(f"Error moving {cid}: {inner_e}")
                 continue
-        
-        # 提交数据库和 UI Data
-        conn.commit()
-
-        if ui_changed:
-            save_ui_data(ui_data)
         
         return jsonify({
             "success": True, 
@@ -1986,6 +2018,8 @@ def api_delete_cards():
                 return jsonify({"success": False, "msg": "非法卡片路径"}), 400
 
         deleted_count = 0
+        deleted_card_ids = []
+        source_paths_by_card_id = {}
         ui_data = load_ui_data()
         ui_changed = False
 
@@ -2058,6 +2092,8 @@ def api_delete_cards():
                     is_deleted = True
 
                 if is_deleted:
+                    deleted_card_ids.append(cid)
+                    source_paths_by_card_id[cid] = full_path
                     if cid in ui_data:
                         del ui_data[cid]
                         ui_changed = True
@@ -2077,6 +2113,10 @@ def api_delete_cards():
                     ctx.cache.delete_card_update(cid)
         
         conn.commit()
+        cleanup_deleted_cards_after_fs_delete(
+            deleted_card_ids=deleted_card_ids,
+            source_paths_by_card_id=source_paths_by_card_id,
+        )
 
         if ui_changed:
             save_ui_data(ui_data)
@@ -2093,9 +2133,6 @@ def api_delete_cards():
 def api_import_from_url():
     temp_path = None
     try:
-        # 会写入 cards/ 文件，抑制 watchdog
-        suppress_fs_events(2.5)
-        
         data = request.json
         url = data.get('url')
         target_category = data.get('category', '')
@@ -2191,9 +2228,11 @@ def api_import_from_url():
         if conflict:
             if resolution == 'check':
                 # --- 发现冲突，返回对比数据 ---
+                existing_target_path = _resolve_existing_card_target(target_save_path)
+                existing_filename = os.path.basename(existing_target_path)
                 
                 # 1. 获取现有卡数据
-                existing_info = extract_card_info(target_save_path)
+                existing_info = extract_card_info(existing_target_path)
                 existing_data = existing_info.get('data', {}) if 'data' in existing_info else existing_info
                 
                 # 计算 Token
@@ -2204,8 +2243,8 @@ def api_import_from_url():
                 existing_meta = {
                     "char_name": existing_info.get('name') or existing_data.get('name'),
                     "token_count": ex_tokens,
-                    "file_size": os.path.getsize(target_save_path),
-                    "image_url": f"/cards_file/{quote(target_category + '/' + final_filename if target_category else final_filename)}?t={time.time()}"
+                    "file_size": os.path.getsize(existing_target_path),
+                    "image_url": f"/cards_file/{quote(target_category + '/' + existing_filename if target_category else existing_filename)}?t={time.time()}"
                 }
 
                 # 2. 获取新卡数据 (Temp)
@@ -2259,23 +2298,27 @@ def api_import_from_url():
                     break
                 
             elif resolution == 'overwrite':
+                existing_target_path = _resolve_existing_card_target(target_save_path)
+
                 # 1. 读取旧文件的 Tags 并合并到 info 对象
-                merged_tags = _merge_tags_into_new_info(target_save_path, info)
+                merged_tags = _merge_tags_into_new_info(existing_target_path, info)
                 
                 # 2. 如果有合并发生，将更新后的 info 写入 temp 文件
                 if merged_tags is not None:
                     write_card_metadata(temp_path, info)
-                    
-                # 3. 删除旧文件 (为 move 做准备)
-                if os.path.exists(target_save_path):
-                    os.remove(target_save_path)
-                
+
+                suppress_fs_events(2.5)
+                # 3. 删除旧文件及其冲突伴生文件 (为 move 做准备)
+                _remove_conflicting_card_targets(target_save_path)
+
             else:
                 # 未知 resolution
                 if os.path.exists(temp_path): os.remove(temp_path)
                 return jsonify({"success": False, "msg": f"无效的解决策略: {resolution}"})
         
         # === 5. 执行保存 (Move) ===
+        if resolution != 'overwrite':
+            suppress_fs_events(2.5)
         shutil.move(temp_path, target_save_path)
         
         # 最终文件名
@@ -2291,9 +2334,15 @@ def api_import_from_url():
             save_ui_data(ui_data)
         
         # === 6. 更新缓存与返回 ===
-        cache_updated = update_card_cache(rel_path, target_save_path)
-        if cache_updated:
-            enqueue_index_job('upsert_world_owner', entity_id=rel_path, source_path=target_save_path)
+        cache_result = update_card_cache(rel_path, target_save_path)
+        sync_card_index_jobs(
+            card_id=rel_path,
+            source_path=target_save_path,
+            file_content_changed=True,
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        )
         schedule_reload(reason="import_from_url")
 
         data_block = info.get('data', {}) if 'data' in info else info
@@ -2451,7 +2500,12 @@ def api_change_image():
             # 6. 数据库清理 (删除旧 ID 记录)
             db_path = DEFAULT_DB_PATH
             with sqlite3.connect(db_path, timeout=30) as conn:
-                conn.execute("DELETE FROM card_metadata WHERE id = ?", (raw_id,))
+                try:
+                    conn.execute("DELETE FROM card_metadata WHERE id = ?", (raw_id,))
+                except sqlite3.OperationalError as exc:
+                    if not _is_missing_card_metadata_table_error(exc):
+                        raise
+                    logger.warning("card_metadata table missing during change_image cleanup: %s", raw_id)
             
             # 7. 内存缓存清理 (删除旧对象)
             # 注意：新对象将在后续步骤添加
@@ -2502,9 +2556,22 @@ def api_change_image():
             save_ui_data(ui_data_for_import_time)
         
         # 3. 更新数据库记录 (Upsert)
-        cache_updated = update_card_cache(final_id, target_save_path)
-        if cache_updated:
-            enqueue_index_job('upsert_world_owner', entity_id=final_id, source_path=target_save_path)
+        cache_result = update_card_cache(
+            final_id,
+            target_save_path,
+            remove_entity_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+        )
+        sync_card_index_jobs(
+            card_id=final_id,
+            source_path=target_save_path,
+            file_content_changed=True,
+            rename_changed=bool(is_format_conversion and raw_id != final_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+            remove_owner_ids=[raw_id] if is_format_conversion and raw_id != final_id else None,
+        )
         
         # 4. [增量更新] 内存缓存
         # 我们需要构造一个符合 ctx.cache 格式的对象
@@ -2871,6 +2938,7 @@ def api_toggle_bundle_mode():
             # 在删除标记文件前，先将 bundle 的全局 link/resource_folder 复制到每个版本
             ui_data = load_ui_data()
             ui_changed = False
+            migrated_resource_folder = ''
 
             version_ids = []
             if os.path.exists(full_path):
@@ -2883,6 +2951,8 @@ def api_toggle_bundle_mode():
                             version_ids.append(rel_id)
             
             if folder_path in ui_data and os.path.exists(full_path):
+                folder_ui = ui_data.get(folder_path) if isinstance(ui_data.get(folder_path), dict) else {}
+                migrated_resource_folder = str(folder_ui.get('resource_folder') or '').strip()
                 # 迁移 bundle 的全局数据到各个版本
                 if version_ids:
                     from core.data.ui_store import migrate_bundle_remarks_to_versions
@@ -2901,6 +2971,14 @@ def api_toggle_bundle_mode():
             
             if ui_changed:
                 save_ui_data(ui_data)
+            for ver_id in version_ids:
+                sync_card_index_jobs(
+                    card_id=ver_id,
+                    source_path=os.path.join(CARDS_FOLDER, ver_id.replace('/', os.sep)),
+                    file_content_changed=False,
+                    summary_changed=True,
+                    resource_folder_changed=bool(migrated_resource_folder),
+                )
             
             if os.path.exists(marker_path):
                 os.remove(marker_path)
@@ -2999,12 +3077,30 @@ def api_toggle_bundle_mode():
             # 这里我们把合并后的 tags 更新到最新的那张卡片文件里，确保数据物理落地
             latest_card_file = os.path.join(full_path, cards_in_dir[0]['filename'])
             info = extract_card_info(latest_card_file)
-            if info:
-                data_part = info.get('data') if 'data' in info else info
-                data_part['tags'] = list(all_tags)
-                if 'data' in info: info['data'] = data_part # 确保写回结构正确
-                else: info = data_part
-                write_card_metadata(latest_card_file, info)
+            if not info:
+                return jsonify({"success": False, "msg": "读取封面卡片元数据失败"})
+            data_part = info.get('data') if 'data' in info else info
+            data_part['tags'] = sorted(list(all_tags))
+            if 'data' in info: info['data'] = data_part # 确保写回结构正确
+            else: info = data_part
+            if not write_card_metadata(latest_card_file, info):
+                return jsonify({"success": False, "msg": "写入卡片元数据失败"})
+            cover_mtime = os.path.getmtime(latest_card_file)
+            cache_result = update_card_cache(
+                cover_id,
+                latest_card_file,
+                parsed_info=info,
+                mtime=cover_mtime,
+            )
+            sync_card_index_jobs(
+                card_id=cover_id,
+                source_path=latest_card_file,
+                tags_changed=True,
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            )
+            _apply_card_index_increment_now(cover_id, latest_card_file)
 
             save_ui_data(ui_data)
             
@@ -3086,30 +3182,44 @@ def api_convert_to_bundle():
         
         # 新 ID 变为 "Category/BundleName/Card.png"
         new_id = f"{old_cat}/{new_bundle_name}/{filename}" if old_cat else f"{new_bundle_name}/{filename}"
+        new_bundle_dir = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
+        remove_entity_ids = [card_id]
         
         # 数据库更新
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("UPDATE card_metadata SET id = ? WHERE id = ?", (new_id, card_id))
+        cursor.execute(
+            "UPDATE card_metadata SET id = ?, category = ? WHERE id = ?",
+            (new_id, new_bundle_dir, card_id),
+        )
         conn.commit()
-        
-        # 内存更新
-        # 先删除旧的
-        if card_id in ctx.cache.id_map:
-            card_data = ctx.cache.id_map.pop(card_id)
-            # 修改属性
-            card_data['id'] = new_id
-            card_data['is_bundle'] = True
-            card_data['bundle_dir'] = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
-            # 重新插入
-            ctx.cache.id_map[new_id] = card_data
-            # 如果在列表里，也要更新列表引用
-            # 注意：列表里的对象引用必须是同一个
+
+        cache_result = update_card_cache(
+            new_id,
+            dst_path,
+            remove_entity_ids=remove_entity_ids,
+        )
+        sync_card_index_jobs(
+            card_id=new_id,
+            source_path=dst_path,
+            file_content_changed=False,
+            rename_changed=True,
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=remove_entity_ids,
+            remove_owner_ids=remove_entity_ids,
+        )
+        _apply_card_index_increment_now(
+            new_id,
+            dst_path,
+            remove_entity_ids=remove_entity_ids,
+        )
             
         # UI Data 更新
         ui_data = load_ui_data()
         ui_changed = False
-        new_key = f"{old_cat}/{new_bundle_name}" if old_cat else new_bundle_name
+        new_key = new_bundle_dir
         if card_id in ui_data:
             # Bundle 模式下，UI data key 通常是 bundle_dir
             ui_data[new_key] = ui_data[card_id]
@@ -3128,6 +3238,8 @@ def api_convert_to_bundle():
 
         if ui_changed:
             save_ui_data(ui_data)
+
+        force_reload(reason='convert_to_bundle')
             
         # 强制前端刷新
         return jsonify({"success": True, "new_id": new_id, "new_bundle_dir": new_dir_path})
@@ -3175,8 +3287,13 @@ def api_get_card_detail():
         row = None
         with sqlite3.connect(db_path, timeout=5) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM card_metadata WHERE id = ?", (card_id,))
-            row = cursor.fetchone()
+            try:
+                cursor = conn.execute("SELECT * FROM card_metadata WHERE id = ?", (card_id,))
+                row = cursor.fetchone()
+            except sqlite3.OperationalError as exc:
+                if not _is_missing_card_metadata_table_error(exc):
+                    raise
+                row = None
 
         full_info = {}
         tags = []
@@ -3198,6 +3315,8 @@ def api_get_card_detail():
         if not file_info: return jsonify({"success": False})
         
         data_block = file_info.get('data', {}) if 'data' in file_info else file_info
+        if not row:
+            tags = data_block.get('tags', [])
         regex_only = bool(request.json.get('regex_only', False))
         # === 提取 V3 extensions (包含 regex_scripts, tavern_helper 等) ===
         extensions = data_block.get('extensions', {})
@@ -3726,66 +3845,20 @@ def api_rename_folder():
         # 计算新的相对路径
         new_rel_path = os.path.relpath(new_path, CARDS_FOLDER).replace('\\', '/')
         
-        # 2. [UI Data 更新] (保持原逻辑)
+        # 2. [数据库 / UI / 缓存增量同步]
         ui_data = load_ui_data()
-        ui_changed = False
-        old_prefix = old_path + "/"
-        
-        keys_to_move = []
-        for key in ui_data.keys():
-            if key == old_path or key.startswith(old_prefix):
-                keys_to_move.append(key)
-        
-        for key in keys_to_move:
-            if key == old_path:
-                new_key = new_rel_path
-            else:
-                new_key = key.replace(old_path, new_rel_path, 1)
-            
-            ui_data[new_key] = ui_data[key]
-            del ui_data[key]
-            ui_changed = True
-            
-        if ui_changed:
-            save_ui_data(ui_data)
-            
-        # 3. [数据库更新]
         try:
             db_path = DEFAULT_DB_PATH
             with sqlite3.connect(db_path, timeout=30) as conn:
-                cursor = conn.cursor()
-
-                # === 转义 SQL 通配符 ===
-                # 如果文件夹名包含 _ 或 %，必须转义，否则 LIKE 会匹配错误
-                # 例如: old_path="char_v1", 不转义 LIKE 'char_v1/%' 会匹配 "char_v10/img.png"
-                escaped_old_path = old_path.replace('_', r'\_').replace('%', r'\%')
-
-                # A. 查找所有子文件 (ID 以 old_path/ 开头)
-                # 使用 ESCAPE '\' 语法
-                cursor.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_path,))
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    curr_id = row[0]
-                    # Python 字符串替换不需要转义，直接替换前缀
-                    new_id_val = curr_id.replace(old_path, new_rel_path, 1)
-                    
-                    # 更新 id 和 category
-                    cursor.execute("""
-                        UPDATE card_metadata 
-                        SET id = ?, 
-                            category = REPLACE(category, ?, ?) 
-                        WHERE id = ?
-                    """, (new_id_val, old_path, new_rel_path, curr_id))
-                
-                conn.commit()
-
-            # 4. [内存增量更新]
-            ctx.cache.rename_folder_update(old_path, new_rel_path)
-            
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=old_path,
+                    new_path=new_rel_path,
+                )
         except Exception as e:
-            # 如果数据库更新失败，记录错误并触发全量重载，保证数据最终一致性
-            logger.error(f"DB update failed after file rename: {e}")
+            # 如果增量同步失败，记录错误并触发全量重载，保证数据最终一致性
+            logger.error(f"Folder sync failed after file rename: {e}")
             schedule_reload(reason="rename_folder:fallback")
             return jsonify({
                 "success": True, 
@@ -3851,6 +3924,12 @@ def api_delete_folder():
             cursor = conn.cursor()
             escaped_old_prefix = folder_path.replace('_', r'\_').replace('%', r'\%')
             cursor.execute(
+                "SELECT id FROM card_metadata WHERE id = ? OR id LIKE ? || '/%' ESCAPE '\\' ORDER BY id",
+                (folder_path, escaped_old_prefix),
+            )
+            deleted_card_ids = [row[0] for row in cursor.fetchall()]
+            source_paths_by_card_id = {card_id: card_id for card_id in deleted_card_ids}
+            cursor.execute(
                 "SELECT COUNT(*) FROM card_metadata WHERE id = ? OR id LIKE ? || '/%' ESCAPE '\\'",
                 (folder_path, escaped_old_prefix),
             )
@@ -3866,9 +3945,14 @@ def api_delete_folder():
             ui_data = load_ui_data()
             prefix = folder_path + '/'
             keys_to_remove = [k for k in ui_data.keys() if k == folder_path or k.startswith(prefix)]
+            ui_changed = False
             if keys_to_remove:
                 for k in keys_to_remove:
                     del ui_data[k]
+                ui_changed = True
+            if delete_worldinfo_notes_for_card_prefix(ui_data, folder_path):
+                ui_changed = True
+            if ui_changed:
                 save_ui_data(ui_data)
 
             # 4) 内存增量（可见文件夹列表）
@@ -3882,22 +3966,33 @@ def api_delete_folder():
             # 5) 触发刷新（这里必须强制同步重载：前端会立即请求 list_cards 读取 ctx.cache）
             force_reload(reason="delete_folder:delete_children")
 
+            cleanup_result = cleanup_deleted_cards_after_fs_delete(
+                deleted_card_ids=deleted_card_ids,
+                source_paths_by_card_id=source_paths_by_card_id,
+            )
+            cleanup_warnings = []
+            if isinstance(cleanup_result, dict):
+                reported_warnings = cleanup_result.get('warnings')
+                if isinstance(reported_warnings, list):
+                    cleanup_warnings = [str(item) for item in reported_warnings if item]
+
             if dir_is_empty:
                 msg = f"文件夹已删除。{deleted_cards} 个项目在索引中已移除。"
             else:
                 msg = f"文件夹及其子内容已删除并移动到回收站（可恢复）。{deleted_cards} 个项目已移除。"
 
-            return jsonify({
+            response = {
                 "success": True,
                 "deleted_children": True,
                 "deleted_count": deleted_cards,
                 "msg": msg,
-            })
+            }
+            if cleanup_warnings:
+                response['warning'] = '\n'.join(cleanup_warnings)
+            return jsonify(response)
 
-        ui_data = load_ui_data()
-        ui_changed = False
         conn = get_db()
-        cursor = conn.cursor()
+        ui_data = load_ui_data()
 
         # === 核心逻辑：将 target_dir 下的所有内容（文件和文件夹）移动到 parent_dir ===
         
@@ -3908,6 +4003,9 @@ def api_delete_folder():
             return jsonify({"success": False, "msg": f"无法读取目录: {e}"})
 
         moved_count = 0
+        exact_card_moves = []
+        folder_prefix_moves = []
+        move_failures = []
 
         file_groups = {}
         dirs = []
@@ -3965,22 +4063,19 @@ def api_delete_folder():
                         parent_rel = os.path.dirname(folder_path)
                         # 注意：parent_rel 为空时，ID 就是 filename
                         new_rel_id = f"{parent_rel}/{new_filename}" if parent_rel else new_filename
-                        
-                        # 更新 DB
-                        cursor.execute("UPDATE card_metadata SET id = ?, category = ? WHERE id = ?", 
-                                      (new_rel_id, parent_rel, old_rel_id))
-                        
-                        # 更新 UI Data
-                        if old_rel_id in ui_data:
-                            ui_data[new_rel_id] = ui_data[old_rel_id]
-                            del ui_data[old_rel_id]
-                            ui_changed = True
-                            
-                        # 更新缓存 (单卡)
-                        ctx.cache.move_card_update(old_rel_id, new_rel_id, folder_path, parent_rel, new_filename, dst_path)
-                        
+                        exact_card_moves.append(
+                            {
+                                'old_card_id': old_rel_id,
+                                'new_card_id': new_rel_id,
+                                'dst_full_path': dst_path,
+                                'final_name': new_filename,
+                                'old_category': folder_path,
+                            }
+                        )
+
                 except Exception as e:
                     logger.error(f"Error moving file {original_filename}: {e}")
+                    move_failures.append(original_filename)
 
         # 3. 处理子文件夹 (Dirs)
         for dir_name in dirs:
@@ -4007,34 +4102,62 @@ def api_delete_folder():
                 old_prefix = f"{folder_path}/{dir_name}"
                 parent_rel = os.path.dirname(folder_path)
                 new_prefix = f"{parent_rel}/{final_dir_name}" if parent_rel else final_dir_name
-                
-                escaped_old_prefix = old_prefix.replace('_', r'\_').replace('%', r'\%')
-                
-                cursor.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_prefix,))
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    curr_id = row[0]
-                    new_id = curr_id.replace(old_prefix, new_prefix, 1)
-                    
-                    cursor.execute("UPDATE card_metadata SET id = ? WHERE id = ?", (new_id, curr_id))
-                    cursor.execute("UPDATE card_metadata SET category = REPLACE(category, ?, ?) WHERE id = ?", 
-                                  (old_prefix, new_prefix, new_id))
-                
-                # Bundle UI Data 更新
-                if old_prefix in ui_data:
-                    ui_data[new_prefix] = ui_data[old_prefix]
-                    del ui_data[old_prefix]
-                    ui_changed = True
-                
-                # 缓存更新
-                ctx.cache.move_folder_update(old_prefix, new_prefix)
-                
+                folder_prefix_moves.append((old_prefix, new_prefix))
+
             except Exception as e:
                 logger.error(f"Error moving subfolder {dir_name}: {e}")
+                move_failures.append(dir_name)
 
-        conn.commit()
-        if ui_changed: save_ui_data(ui_data)
+        if move_failures:
+            if moved_count > 0:
+                logger.error(
+                    'Delete folder dissolve encountered partial move failures: %s',
+                    ', '.join(move_failures),
+                )
+                schedule_reload(reason='delete_folder:fallback')
+                return jsonify({
+                    'success': True,
+                    'mode': 'dissolve',
+                    'moved_count': moved_count,
+                    'failed_count': len(move_failures),
+                    'warning': (
+                        f'文件夹已部分解散，已移动 {moved_count} 个项目，'
+                        f'另有 {len(move_failures)} 个项目处理失败，系统将自动修复。'
+                    ),
+                })
+            return jsonify({
+                'success': False,
+                'msg': f'解散文件夹失败，{len(move_failures)} 个项目移动失败。',
+            })
+
+        try:
+            for move in exact_card_moves:
+                sync_exact_card_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_card_id=move['old_card_id'],
+                    new_card_id=move['new_card_id'],
+                    dst_full_path=move['dst_full_path'],
+                    final_name=move['final_name'],
+                    old_category=move['old_category'],
+                )
+
+            for old_prefix, new_prefix in folder_prefix_moves:
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=old_prefix,
+                    new_path=new_prefix,
+                )
+        except Exception as e:
+            logger.error(f"Delete folder sync failed after filesystem moves: {e}")
+            schedule_reload(reason="delete_folder:fallback")
+            return jsonify({
+                'success': True,
+                'mode': 'dissolve',
+                'moved_count': moved_count,
+                'warning': '文件夹已解散，但数据库索引更新遇到问题，系统将自动修复。',
+            })
 
         # 4. 删除原空文件夹
         try:
@@ -4116,15 +4239,26 @@ def api_move_folder():
         # === 场景 A: 目标不存在，直接整文件夹移动 (最快) ===
         if not os.path.exists(target_full_path):
             shutil.move(source_full_path, target_full_path)
-            
-            # 更新数据
-            ui_data = load_ui_data()
-            rename_folder_in_db(source_path, new_path_prefix) # 见下方辅助函数说明或直接写SQL
-            rename_folder_in_ui(ui_data, source_path, new_path_prefix)
-            save_ui_data(ui_data)
-            
-            # 内存增量更新
-            ctx.cache.move_folder_update(source_path, new_path_prefix)
+
+            try:
+                ui_data = load_ui_data()
+                conn = get_db()
+                sync_folder_prefix_after_fs_move(
+                    conn=conn,
+                    ui_data=ui_data,
+                    old_path=source_path,
+                    new_path=new_path_prefix,
+                )
+            except Exception as e:
+                logger.error(f"Folder sync failed after folder move: {e}")
+                schedule_reload(reason="move_folder:fallback")
+                return jsonify({
+                    "success": True,
+                    "new_path": new_path_prefix,
+                    "mode": "move",
+                    "warning": "文件夹已移动，但数据库索引更新遇到问题，系统将自动修复。",
+                    "category_counts": ctx.cache.category_counts,
+                })
             
             return jsonify({
                 "success": True, 
@@ -4140,76 +4274,84 @@ def api_move_folder():
         
         # 执行合并逻辑
         ui_data = load_ui_data()
-        
-        # 递归遍历源目录
-        for root, dirs, files in os.walk(source_full_path):
-            # 筛选文件：PNG 和 JSON
-            files_to_process = []
-            processed_files = set()
+        conn = get_db()
+        merge_actions = _build_move_folder_merge_actions(
+            source_path=source_path,
+            source_full_path=source_full_path,
+            target_full_path=target_full_path,
+            new_path_prefix=new_path_prefix,
+        )
 
-            # 1. 找 JSON (带伴生图)
-            for f in files:
-                if f.lower().endswith('.json'):
-                    files_to_process.append(f)
-                    processed_files.add(f)
-                    base = os.path.splitext(f)[0]
-                    for ext in SIDECAR_EXTENSIONS:
-                        if (base + ext) in files: processed_files.add(base + ext)
-            
-            # 2. 找剩余 PNG
-            for f in files:
-                if f.lower().endswith('.png') and f not in processed_files:
-                    files_to_process.append(f)
+        fs_mutation_started = False
+        try:
+            for action in merge_actions:
+                if action['type'] == 'folder':
+                    shutil.move(action['src_dir'], action['dst_dir'])
+                    fs_mutation_started = True
+                    sync_folder_prefix_after_fs_move(
+                        conn=conn,
+                        ui_data=ui_data,
+                        old_path=action['old_path'],
+                        new_path=action['new_path'],
+                    )
+                    continue
 
-            # 移动文件
-            for filename in files_to_process:
-                src_file = os.path.join(root, filename)
-                
-                # 计算在目标文件夹中的对应位置
-                # rel_from_source: "Sub/Card.json"
-                rel_from_source = os.path.relpath(src_file, source_full_path)
-                dst_file = os.path.join(target_full_path, rel_from_source)
-                
-                # 确保目标子目录存在
-                os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                
-                # 重名检测
-                final_dst = dst_file
-                if os.path.exists(final_dst):
-                    base_name, ext_part = os.path.splitext(os.path.basename(dst_file))
-                    dir_name = os.path.dirname(dst_file)
-                    counter = 1
-                    while True:
-                        new_name = f"{base_name}_{counter}{ext_part}"
-                        final_dst = os.path.join(dir_name, new_name)
-                        # 如果是 JSON，还需要检查伴生图是否冲突 (略简化，假设主文件冲突则全部重命名)
-                        if not os.path.exists(final_dst): break
-                        counter += 1
-                
-                # 移动主文件
-                shutil.move(src_file, final_dst)
-                
-                # 如果是 JSON，移动伴生图
-                if filename.lower().endswith('.json'):
-                    base_src = os.path.splitext(filename)[0]
-                    base_dst = os.path.splitext(os.path.basename(final_dst))[0] # 使用可能重命名后的名字
-                    src_dir = os.path.dirname(src_file)
-                    dst_dir = os.path.dirname(final_dst)
-                    
+                os.makedirs(os.path.dirname(action['dst_file']), exist_ok=True)
+                shutil.move(action['src_file'], action['dst_file'])
+                fs_mutation_started = True
+
+                if action['filename'].lower().endswith('.json'):
+                    base_src = os.path.splitext(action['filename'])[0]
+                    base_dst = os.path.splitext(os.path.basename(action['dst_file']))[0]
+                    src_dir = os.path.dirname(action['src_file'])
+                    dst_dir = os.path.dirname(action['dst_file'])
+
                     for ext in SIDECAR_EXTENSIONS:
                         s_src = os.path.join(src_dir, base_src + ext)
                         if os.path.exists(s_src):
                             s_dst = os.path.join(dst_dir, base_dst + ext)
                             shutil.move(s_src, s_dst)
 
+                if action.get('sync') == 'exact_card':
+                    sync_exact_card_after_fs_move(
+                        conn=conn,
+                        ui_data=ui_data,
+                        old_card_id=action['old_card_id'],
+                        new_card_id=action['new_card_id'],
+                        dst_full_path=action['dst_file'],
+                        final_name=action['final_name'],
+                        old_category=action['old_category'],
+                    )
+        except Exception as e:
+            if not fs_mutation_started:
+                raise
+            logger.error(f"Folder merge sync failed after filesystem mutation started: {e}")
+            schedule_reload(reason='move_folder:merge_fallback')
+            return jsonify({
+                'success': True,
+                'new_path': new_path_prefix,
+                'mode': 'merge',
+                'warning': '文件夹已合并，但数据库索引更新遇到问题，系统将自动修复。',
+            })
+
         # 删除源文件夹 (此时应为空)
         try: shutil.rmtree(source_full_path)
         except: pass
+
+        if ctx.cache and isinstance(ctx.cache, GlobalMetadataCache):
+            try:
+                ui_data = load_ui_data()
+                source_entry = ui_data.get(source_path)
+                if isinstance(source_entry, dict):
+                    source_remarks = source_entry.get('_version_remarks')
+                    if not source_remarks:
+                        del ui_data[source_path]
+                        save_ui_data(ui_data)
+                ctx.cache.reload_from_db()
+            except Exception as e:
+                logger.warning(f'Post-merge bundle projection refresh failed: {e}')
         
-        # 触发全量刷新 (仅在 Merge 模式下)
-        force_reload(reason="move_folder:merge")
-        # 由于我们没有实现复杂的 Merge 增量逻辑，告诉前端刷新
-        return jsonify({"success": True, "new_path": new_path_prefix, "mode": "merge_reload"})
+        return jsonify({"success": True, "new_path": new_path_prefix, "mode": "merge"})
     except Exception as e:
         logger.error(f"Move folder error: {e}")
         return jsonify({"success": False, "msg": str(e)})
@@ -4361,8 +4503,6 @@ def api_upload_commit():
     第二步：执行导入提交
     """
     try:
-        suppress_fs_events(5.0) 
-        
         data = request.json
         batch_id = data.get('batch_id')
         category = data.get('category', '')
@@ -4457,19 +4597,24 @@ def api_upload_commit():
                         counter += 1
             
             # 执行文件移动 (覆盖模式先删旧)
-            if action == 'overwrite' and os.path.exists(dst_path):
+            if action == 'overwrite' and filename == target_filename and has_conflict:
+                existing_target_path = _resolve_existing_card_target(dst_path)
+
                 # 解析暂存区文件
                 src_info = extract_card_info(src_path)
                 if src_info:
                     # 合并 Tags：读取 dst_path 的 tag 并合并到 src_info
-                    merged = _merge_tags_into_new_info(dst_path, src_info)
+                    merged = _merge_tags_into_new_info(existing_target_path, src_info)
                     if merged:
                         # 如果有合并，将新数据写回 src_path
                         write_card_metadata(src_path, src_info)
-                
-                # 删除目标，准备覆盖
-                os.remove(dst_path)
 
+                suppress_fs_events(5.0)
+                # 删除目标及其冲突伴生文件，准备覆盖
+                _remove_conflicting_card_targets(dst_path)
+
+            if not (action == 'overwrite' and filename == target_filename and has_conflict):
+                suppress_fs_events(5.0)
             shutil.move(src_path, dst_path)
             
             # 更新数据库 & 构建返回对象
@@ -4485,9 +4630,15 @@ def api_upload_commit():
             if import_time_changed:
                 save_ui_data(ui_data)
             
-            cache_updated = update_card_cache(rel_id, dst_path, parsed_info=info, file_hash=final_hash, file_size=final_size, mtime=mtime)
-            if cache_updated:
-                enqueue_index_job('upsert_world_owner', entity_id=rel_id, source_path=dst_path)
+            cache_result = update_card_cache(rel_id, dst_path, parsed_info=info, file_hash=final_hash, file_size=final_size, mtime=mtime)
+            sync_card_index_jobs(
+                card_id=rel_id,
+                source_path=dst_path,
+                file_content_changed=True,
+                cache_updated=bool(cache_result.get('cache_updated')),
+                has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+                previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            )
             
             # 构建返回给前端的卡片对象
             if info:

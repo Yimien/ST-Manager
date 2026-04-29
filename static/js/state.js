@@ -281,6 +281,9 @@ export function initState() {
     // 分页配置
     itemsPerPage: 20,
 
+    // 卡片侧边栏分类搜索
+    cardCategorySearchQuery: "",
+
     // 当前会话排序（仅影响当前列表，不写入配置）
     currentSort: "date_desc",
 
@@ -298,6 +301,7 @@ export function initState() {
     },
     wiFilterType: "all", // 筛选类型: 'all', 'global', 'resource', 'embedded'
     wiFilterCategory: "",
+    wiCategorySearchQuery: "",
     wiAllFolders: [],
     wiCategoryCounts: {},
     wiFolderCapabilities: {},
@@ -316,9 +320,33 @@ export function initState() {
 
     extensionFilterType: "all", // 'all', 'global', 'resource'
 
+    // 美化库状态
+    beautifyList: [],
+    beautifySearch: "",
+    beautifyPlatformFilter: "all",
+    beautifyWorkspace: "packages",
+    beautifySelectedPackageId: "",
+    beautifySelectedVariantId: "",
+    beautifySelectedWallpaperId: "",
+    beautifySelectedScreenshotId: "",
+    beautifyStageMode: "preview",
+    beautifyPreviewDevice: "pc",
+    beautifyVariantSelectionByDevice: {},
+    beautifyPreviewUnavailableReason: "",
+    beautifyMobileFullscreenOpen: false,
+    beautifyPreviewResetToken: 0,
+    beautifyPackageDetailCollapsed: false,
+    beautifyPackageDetailDrawerOpen: false,
+    beautifyGlobalSettings: null,
+    beautifyActiveDetail: null,
+    beautifyActiveVariant: null,
+    beautifyActiveWallpaper: null,
+    sharedWallpapers: [],
+
     // 预设筛选状态
     presetFilterType: "all", // 'all', 'global', 'resource'
     presetFilterCategory: "",
+    presetCategorySearchQuery: "",
     presetAllFolders: [],
     presetCategoryCounts: {},
     presetFolderCapabilities: {},
@@ -332,7 +360,9 @@ export function initState() {
       cards_dir: "data/library/characters",
       chats_dir: "data/library/chats",
       presets_dir: "data/library/presets",
+      st_openai_preset_dir: "",
       quick_replies_dir: "data/library/extensions/quick-replies",
+      beautify_dir: "data/library/beautify",
       default_sort: "date_desc",
       show_header_sort: true,
       st_url: "http://127.0.0.1:8000",
@@ -355,6 +385,7 @@ export function initState() {
       dark_mode: true,
       font_style: "sans",
       card_width: 220,
+      manager_wallpaper_id: "",
       bg_url: "",
       bg_opacity: 0.95,
       bg_blur: 0,
@@ -548,6 +579,9 @@ export function initState() {
             fast_search_use_index: !!settings.fast_search_use_index,
             worldinfo_list_use_index: !!settings.worldinfo_list_use_index,
           };
+          this.sharedWallpapers = Array.isArray(settings.shared_wallpapers)
+            ? settings.shared_wallpapers
+            : [];
 
           this.currentSort = this.settingsForm.default_sort || "date_desc";
 
@@ -563,8 +597,9 @@ export function initState() {
             (this.settingsForm.card_width || 220) + "px",
           );
 
-          if (this.settingsForm.bg_url) {
-            this.updateBackgroundImage(this.settingsForm.bg_url);
+          const managerBackgroundUrl = this.resolveManagerBackgroundUrl();
+          if (managerBackgroundUrl) {
+            this.updateBackgroundImage(this.resolveManagerBackgroundUrl());
             updateCssVariable(
               "--bg-blur",
               (this.settingsForm.bg_blur || 0) + "px",
@@ -795,8 +830,27 @@ export function initState() {
       }
     },
 
+    resolveManagerBackgroundUrl() {
+      const selectedId = String(
+        this.settingsForm.manager_wallpaper_id || "",
+      ).trim();
+      if (selectedId) {
+        const item = this.sharedWallpapers.find(
+          (item) => item.id === selectedId,
+        );
+        if (item && item.file) {
+          return `/api/beautify/preview-asset/${item.file
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/")}`;
+        }
+      }
+
+      return this.settingsForm.bg_url || "";
+    },
+
     // 保存设置
-    saveSettings(closeModal = true) {
+    saveSettings(closeModal = true, options = {}) {
       this.applyTheme(this.settingsForm.theme_accent);
 
       // 乐观更新 localStorage
@@ -811,7 +865,7 @@ export function initState() {
           this.settingsForm.items_per_page_wi,
         );
 
-      return saveSettings(this.settingsForm).then((res) => {
+      return saveSettings(this.settingsForm, options).then((res) => {
         if (res.success) {
           this.updateItemsPerPage();
           // 触发事件让组件刷新
@@ -822,7 +876,7 @@ export function initState() {
               }),
             );
           }
-        } else {
+        } else if (!res.requires_confirmation) {
           alert("保存失败: " + res.msg);
         }
         return res;

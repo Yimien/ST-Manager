@@ -13,10 +13,20 @@ from urllib.parse import quote
 from core.config import CARDS_FOLDER, DEFAULT_DB_PATH, THUMB_FOLDER, BASE_DIR, load_config
 from core.context import ctx
 from core.data.db_session import get_db
-from core.data.ui_store import load_ui_data, save_ui_data, VERSION_REMARKS_KEY, ensure_import_time, get_import_time
+from core.data.ui_store import (
+    load_ui_data,
+    save_ui_data,
+    VERSION_REMARKS_KEY,
+    ensure_import_time,
+    get_import_time,
+    rename_embedded_worldinfo_note_card_prefix,
+)
 
 # === 服务依赖 ===
 from core.services.cache_service import update_card_cache
+from core.services.card_index_sync_service import sync_card_index_jobs
+from core.services.index_build_service import apply_card_increment, connect_index_db
+from core.services.index_job_worker import enqueue_index_job
 from core.services.scan_service import suppress_fs_events
 
 # === 工具函数 ===
@@ -29,6 +39,15 @@ from core.utils.text import calculate_token_count
 from core.utils.hash import get_file_hash_and_size
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_card_index_increment_now(card_id, source_path, remove_entity_ids=None):
+    try:
+        with connect_index_db(DEFAULT_DB_PATH) as conn:
+            apply_card_increment(conn, card_id, source_path, remove_entity_ids=remove_entity_ids)
+    except RuntimeError as exc:
+        if 'cards active generation missing' not in str(exc):
+            raise
 
 # 内部辅助函数：获取或创建资源目录
 def _ensure_resource_folder_exists(card_id, hint_name):
@@ -193,7 +212,7 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         hint_name_for_folder = os.path.splitext(fallback_filename)[0]
     
     # --- 资源归档辅助函数 ---
-    def _archive_file(src_path, label):
+    def _archive_file(src_path, label, preserve_original_name=False):
         try:
             # 自动获取或创建目录
             res_name, res_full_path, is_new = _ensure_resource_folder_exists(card_id, hint_name_for_folder)
@@ -202,9 +221,19 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
             if is_new:
                 keep_ui_data['resource_folder'] = res_name
 
-            ext = os.path.splitext(src_path)[1]
-            timestamp = int(time.time())
-            dst_name = f"{label}_{timestamp}{ext}"
+            if preserve_original_name:
+                src_name = os.path.basename(src_path)
+                name_root, ext = os.path.splitext(src_name)
+                dst_name = src_name
+                counter = 1
+                while os.path.exists(os.path.join(res_full_path, dst_name)):
+                    dst_name = f'{name_root}_{counter}{ext}'
+                    counter += 1
+            else:
+                ext = os.path.splitext(src_path)[1]
+                timestamp = int(time.time())
+                dst_name = f"{label}_{timestamp}{ext}"
+
             shutil.copy2(src_path, os.path.join(res_full_path, dst_name))
             
             return res_name # 返回目录名供后续使用
@@ -272,9 +301,11 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         if image_policy == 'archive_old' and os.path.exists(original_full_path):
             if old_ext == '.json':
                 sidecar = find_sidecar_image(original_full_path)
-                if sidecar: _archive_file(sidecar, "archived_cover")
+                if sidecar and not _archive_file(sidecar, 'archived_cover', preserve_original_name=True):
+                    return {'success': False, 'msg': '归档旧封面失败，已取消覆盖更新'}
             else:
-                _archive_file(original_full_path, "archived_cover")
+                if not _archive_file(original_full_path, 'archived_cover', preserve_original_name=True):
+                    return {'success': False, 'msg': '归档旧封面失败，已取消覆盖更新'}
         
         elif image_policy == 'archive_new':
             if new_upload_ext == '.png':
@@ -382,20 +413,34 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
 
     # 4. 数据库写回 (Upsert)
     file_hash, file_size = get_file_hash_and_size(target_save_path)
-    update_card_cache(
+    cache_result = update_card_cache(
         final_rel_id,
         target_save_path,
         parsed_info=final_info,
         file_hash=file_hash,
         file_size=file_size,
-        mtime=new_mtime
+        mtime=new_mtime,
+        remove_entity_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
+    )
+    sync_card_index_jobs(
+        card_id=final_rel_id,
+        source_path=target_save_path,
+        file_content_changed=True,
+        rename_changed=bool(card_id != final_rel_id and not is_bundle_update),
+        cache_updated=bool(cache_result.get('cache_updated')),
+        has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+        previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        remove_entity_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
+        remove_owner_ids=[card_id] if card_id != final_rel_id and not is_bundle_update else None,
     )
     
     # 5. 内存缓存更新
     updated_card_obj = None
+    warning_message = None
     
     if is_bundle_update:
-        # Bundle 更新涉及版本列表重构，建议全量 Reload
+        # Bundle 更新会影响聚合卡的 versions 列表、封面选择和 bundle_map。
+        # 现有缓存没有等价的定向重建入口，所以这里保留全量 reload。
         ctx.cache.reload_from_db()
         # 找回对象
         bundle_dir_rel = os.path.dirname(final_rel_id).replace('\\', '/')
@@ -441,6 +486,30 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         else:
             updated_card_obj = ctx.cache.update_card_data(card_id, update_payload)
 
+        try:
+            from core.services.automation_service import auto_run_rules_for_trigger
+
+            automation_result = auto_run_rules_for_trigger(final_rel_id, 'card_update')
+            automation_payload = automation_result if isinstance(automation_result, Mapping) else {}
+            if automation_payload.get('run') is False:
+                warning_message = '卡片已更新，但后置自动化执行失败，请稍后检查自动化规则。'
+
+            result_payload = automation_payload.get('result')
+            final_id_from_automation = None
+            if isinstance(result_payload, Mapping):
+                final_id_from_automation = result_payload.get('final_id')
+
+            if final_id_from_automation:
+                final_rel_id = final_id_from_automation
+                updated_card_obj = ctx.cache.id_map.get(final_rel_id) or updated_card_obj
+                if updated_card_obj:
+                    new_filename = updated_card_obj.get('filename') or os.path.basename(final_rel_id)
+                else:
+                    new_filename = os.path.basename(final_rel_id)
+        except Exception as exc:
+            logger.error(f'Card update automation failed for {final_rel_id}: {exc}')
+            warning_message = '卡片已更新，但后置自动化执行失败，请稍后检查自动化规则。'
+
     # 构造返回
     new_image_url = ""
     if updated_card_obj:
@@ -448,7 +517,7 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         if '?t=' not in new_image_url:
             new_image_url += f"?t={int(new_mtime)}"
 
-    return {
+    result = {
         "success": True,
         "file_modified": True,
         "new_id": final_rel_id,
@@ -457,6 +526,11 @@ def update_card_content(card_id, temp_path, is_bundle_update, keep_ui_data, new_
         "updated_card": updated_card_obj,
         "import_time": get_import_time(load_ui_data(), final_rel_id, new_mtime)
     }
+
+    if warning_message:
+        result['warning'] = warning_message
+
+    return result
 
 # 皮肤换封服务
 def swap_skin_to_cover(card_id, skin_filename, save_old_to_resource=False):
@@ -640,25 +714,117 @@ def resolve_ui_key(card_id):
         
     return card_id
 
+
+def _replace_path_prefix(path_value, old_path, new_path):
+    normalized_value = str(path_value or '').replace('\\', '/')
+    normalized_old = str(old_path or '').replace('\\', '/')
+    normalized_new = str(new_path or '').replace('\\', '/')
+
+    if not normalized_old:
+        return normalized_value
+    if normalized_value == normalized_old:
+        return normalized_new
+    if normalized_value.startswith(normalized_old + '/'):
+        return normalized_new + normalized_value[len(normalized_old):]
+    return normalized_value
+
+
+def _rename_prefixed_card_rows(conn, old_path, new_path):
+    escaped_old_path = old_path.replace('_', r'\_').replace('%', r'\%')
+    cursor = conn.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_path,))
+    rows = cursor.fetchall()
+
+    moved_ids = []
+    for row in rows:
+        curr_id = row[0]
+        new_id_val = _replace_path_prefix(curr_id, old_path, new_path)
+        conn.execute("""
+            UPDATE card_metadata 
+            SET id = ?, category = REPLACE(category, ?, ?) 
+            WHERE id = ?
+        """, (new_id_val, old_path, new_path, curr_id))
+        moved_ids.append((curr_id, new_id_val))
+
+    return moved_ids
+
+
+def _rename_prefixed_version_remark_ids(ui_data, old_path, new_path):
+    changed = False
+
+    for entry in ui_data.values():
+        if not isinstance(entry, dict):
+            continue
+
+        remarks = entry.get(VERSION_REMARKS_KEY)
+        if not isinstance(remarks, dict):
+            continue
+
+        remapped = {}
+        entry_changed = False
+        for version_id, remark in remarks.items():
+            new_version_id = _replace_path_prefix(version_id, old_path, new_path)
+            if new_version_id != version_id:
+                entry_changed = True
+            remapped[new_version_id] = remark
+
+        if entry_changed:
+            entry[VERSION_REMARKS_KEY] = remapped
+            changed = True
+
+    return changed
+
+
+def _merge_bundle_version_remarks_after_card_move(ui_data, old_card_id, new_card_id, dst_full_path):
+    old_bundle_dir = old_card_id.rsplit('/', 1)[0] if '/' in old_card_id else ''
+    new_bundle_dir = new_card_id.rsplit('/', 1)[0] if '/' in new_card_id else ''
+
+    if not old_bundle_dir or not new_bundle_dir or old_bundle_dir == new_bundle_dir:
+        return False
+
+    target_bundle_marker = os.path.join(os.path.dirname(dst_full_path), '.bundle')
+    if not os.path.exists(target_bundle_marker):
+        return False
+
+    old_entry = ui_data.get(old_bundle_dir)
+    if not isinstance(old_entry, dict):
+        return False
+
+    old_remarks = old_entry.get(VERSION_REMARKS_KEY)
+    if not isinstance(old_remarks, dict) or not old_remarks:
+        return False
+
+    moved_version_id = None
+    if new_card_id in old_remarks:
+        moved_version_id = new_card_id
+    elif old_card_id in old_remarks:
+        moved_version_id = old_card_id
+
+    if not moved_version_id:
+        return False
+
+    target_entry = ui_data.setdefault(new_bundle_dir, {})
+    if not isinstance(target_entry, dict):
+        target_entry = {}
+        ui_data[new_bundle_dir] = target_entry
+
+    target_remarks = target_entry.setdefault(VERSION_REMARKS_KEY, {})
+    if not isinstance(target_remarks, dict):
+        target_remarks = {}
+        target_entry[VERSION_REMARKS_KEY] = target_remarks
+
+    target_remarks[new_card_id] = old_remarks.pop(moved_version_id)
+
+    if VERSION_REMARKS_KEY in old_entry and not old_remarks:
+        del old_entry[VERSION_REMARKS_KEY]
+
+    return True
+
 def rename_folder_in_db(old_path, new_path):
     """
     在数据库中批量重命名 ID 和 Category 前缀。
     """
     conn = get_db()
-    cursor = conn.cursor()
-    
-    escaped_old_path = old_path.replace('_', r'\_').replace('%', r'\%')
-
-    cursor.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_path,))
-    rows = cursor.fetchall()
-    for row in rows:
-        curr_id = row[0]
-        new_id_val = curr_id.replace(old_path, new_path, 1)
-        cursor.execute("""
-            UPDATE card_metadata 
-            SET id = ?, category = REPLACE(category, ?, ?) 
-            WHERE id = ?
-        """, (new_id_val, old_path, new_path, curr_id))
+    _rename_prefixed_card_rows(conn, old_path, new_path)
     conn.commit()
 
 def rename_folder_in_ui(ui_data, old_path, new_path):
@@ -678,7 +844,133 @@ def rename_folder_in_ui(ui_data, old_path, new_path):
         ui_data[new_key] = ui_data[key]
         del ui_data[key]
         changed = True
+
+    if _rename_prefixed_version_remark_ids(ui_data, old_path, new_path):
+        changed = True
+
     return changed
+
+
+def sync_exact_card_after_fs_move(
+    *,
+    conn,
+    ui_data,
+    old_card_id,
+    new_card_id,
+    dst_full_path,
+    final_name,
+    old_category,
+    save_ui_before_commit=True,
+):
+    target_category = new_card_id.rsplit('/', 1)[0] if '/' in new_card_id else ''
+    conn.execute(
+        'UPDATE card_metadata SET id = ?, category = ? WHERE id = ?',
+        (new_card_id, target_category, old_card_id),
+    )
+
+    ui_changed = False
+    if old_card_id in ui_data:
+        ui_data[new_card_id] = ui_data[old_card_id]
+        del ui_data[old_card_id]
+        ui_changed = True
+
+    if _rename_prefixed_version_remark_ids(ui_data, old_card_id, new_card_id):
+        ui_changed = True
+
+    if _merge_bundle_version_remarks_after_card_move(ui_data, old_card_id, new_card_id, dst_full_path):
+        ui_changed = True
+
+    if rename_embedded_worldinfo_note_card_prefix(ui_data, old_card_id, new_card_id):
+        ui_changed = True
+
+    if save_ui_before_commit:
+        if ui_changed:
+            save_ui_data(ui_data)
+        conn.commit()
+    else:
+        conn.commit()
+        if ui_changed:
+            save_ui_data(ui_data)
+
+    if ctx.cache:
+        ctx.cache.move_card_update(
+            old_card_id,
+            new_card_id,
+            old_category,
+            target_category,
+            final_name,
+            dst_full_path,
+        )
+
+    remove_ids = [old_card_id] if new_card_id != old_card_id else None
+    cache_result = update_card_cache(
+        new_card_id,
+        dst_full_path,
+        remove_entity_ids=remove_ids,
+    )
+    sync_card_index_jobs(
+        card_id=new_card_id,
+        source_path=dst_full_path,
+        file_content_changed=False,
+        rename_changed=bool(new_card_id != old_card_id),
+        cache_updated=bool(cache_result.get('cache_updated')),
+        has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+        previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+        remove_entity_ids=remove_ids,
+        remove_owner_ids=remove_ids,
+    )
+
+
+def sync_folder_prefix_after_fs_move(*, conn, ui_data, old_path, new_path):
+    moved_ids = _rename_prefixed_card_rows(conn, old_path, new_path)
+    conn.commit()
+    ui_changed = False
+
+    if rename_folder_in_ui(ui_data, old_path, new_path):
+        ui_changed = True
+
+    if rename_embedded_worldinfo_note_card_prefix(ui_data, old_path, new_path):
+        ui_changed = True
+
+    if ctx.cache:
+        ctx.cache.move_folder_update(old_path, new_path)
+
+    if ui_changed:
+        save_ui_data(ui_data)
+
+    for old_sub_id, new_sub_id in moved_ids:
+        new_sub_full_path = os.path.join(CARDS_FOLDER, new_sub_id.replace('/', os.sep))
+        remove_ids = [old_sub_id] if new_sub_id != old_sub_id else None
+        cache_result = update_card_cache(
+            new_sub_id,
+            new_sub_full_path,
+            remove_entity_ids=remove_ids,
+        )
+        sync_card_index_jobs(
+            card_id=new_sub_id,
+            source_path=new_sub_full_path,
+            file_content_changed=False,
+            rename_changed=bool(new_sub_id != old_sub_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=remove_ids,
+            remove_owner_ids=remove_ids,
+        )
+
+    return moved_ids
+
+
+def cleanup_deleted_cards_after_fs_delete(*, deleted_card_ids, source_paths_by_card_id=None):
+    source_paths_by_card_id = source_paths_by_card_id or {}
+
+    for card_id in deleted_card_ids or []:
+        sync_card_index_jobs(
+            card_id=card_id,
+            source_path=source_paths_by_card_id.get(card_id, ''),
+            remove_entity_ids=[card_id],
+            remove_owner_ids=[card_id],
+        )
 
 def sync_card_names_internal(
     card_id,
@@ -909,7 +1201,24 @@ def sync_card_names_internal(
         except Exception:
             current_mtime = time.time()
 
-        update_card_cache(new_id, new_full_path, parsed_info=info, mtime=current_mtime)
+        cache_result = update_card_cache(
+            new_id,
+            new_full_path,
+            parsed_info=info,
+            mtime=current_mtime,
+            remove_entity_ids=[old_id] if new_id != old_id else None,
+        )
+        sync_card_index_jobs(
+            card_id=new_id,
+            source_path=new_full_path,
+            file_content_changed=bool(metadata_changed),
+            rename_changed=bool(new_id != old_id),
+            cache_updated=bool(cache_result.get('cache_updated')),
+            has_embedded_wi=bool(cache_result.get('has_embedded_wi')),
+            previous_has_embedded_wi=bool(cache_result.get('previous_has_embedded_wi')),
+            remove_entity_ids=[old_id] if new_id != old_id else None,
+            remove_owner_ids=[old_id] if new_id != old_id else None,
+        )
 
         cache_payload = {
             'last_modified': current_mtime,
@@ -1087,61 +1396,25 @@ def move_card_internal(card_id, target_category):
         # 6. 数据同步 (DB, UI, Cache)
         conn = get_db()
         ui_data = load_ui_data()
-        ui_changed = False
 
         if is_directory:
-            # === Bundle 模式处理 ===
-            
-            # DB: 更新该文件夹下所有文件的 ID 和 Category
-            # 使用 SQL 字符串替换功能
-            escaped_old_id = card_id.replace('_', r'\_').replace('%', r'\%')
-            
-            # 查找所有子文件
-            cursor = conn.execute(f"SELECT id FROM card_metadata WHERE id LIKE ? || '/%' ESCAPE '\\'", (escaped_old_id,))
-            rows = cursor.fetchall()
-            
-            for row in rows:
-                sub_old_id = row[0]
-                # 替换前缀: old_id -> new_id
-                sub_new_id = sub_old_id.replace(card_id, new_id, 1)
-                
-                # Bundle 内的卡片，其 category 实际上就是 Bundle 的路径 (即 new_id)
-                # 所以 category 也要更新为新的 Bundle 路径 (new_id)
-                conn.execute("""
-                    UPDATE card_metadata 
-                    SET id = ?, category = ? 
-                    WHERE id = ?
-                """, (sub_new_id, new_id, sub_old_id))
-            
-            # UI Data: 迁移文件夹本身的 UI 数据
-            if card_id in ui_data:
-                ui_data[new_id] = ui_data[card_id]
-                del ui_data[card_id]
-                ui_changed = True
-
-            # Cache: 调用 move_bundle_update
-            if ctx.cache:
-                # 注意：参数4 new_category 传 new_id，因为 Bundle 内的卡片 category = bundle_path
-                ctx.cache.move_bundle_update(card_id, new_id, old_category, new_id)
-
+            sync_folder_prefix_after_fs_move(
+                conn=conn,
+                ui_data=ui_data,
+                old_path=card_id,
+                new_path=new_id,
+            )
         else:
-            # === 单文件模式处理 ===
-            
-            # DB
-            conn.execute("UPDATE card_metadata SET id = ?, category = ? WHERE id = ?", (new_id, target_category, card_id))
-            
-            # UI Data
-            if card_id in ui_data:
-                ui_data[new_id] = ui_data[card_id]
-                del ui_data[card_id]
-                ui_changed = True
-            
-            # Cache
-            if ctx.cache:
-                ctx.cache.move_card_update(card_id, new_id, old_category, target_category, final_name, dst_full_path)
-
-        conn.commit()
-        if ui_changed: save_ui_data(ui_data)
+            sync_exact_card_after_fs_move(
+                conn=conn,
+                ui_data=ui_data,
+                old_card_id=card_id,
+                new_card_id=new_id,
+                dst_full_path=dst_full_path,
+                final_name=final_name,
+                old_category=old_category,
+                save_ui_before_commit=False,
+            )
 
         return True, new_id, "Success"
         
@@ -1179,12 +1452,16 @@ def modify_card_attributes_internal(card_id, add_tags=None, remove_tags=None, se
                 if 'data' in info: info['data'] = data_block # V3 write back
                 else: info = data_block # V2 write back
                 
-                write_card_metadata(full_path, info)
+                suppress_fs_events(2.5)
+                if not write_card_metadata(full_path, info):
+                    return False
                 
                 # Update DB
                 conn = get_db()
                 conn.execute("UPDATE card_metadata SET tags = ? WHERE id = ?", (json.dumps(new_tags), card_id))
                 conn.commit()
+
+                enqueue_index_job('upsert_card', entity_id=card_id, source_path=full_path)
                 
                 # Update Cache
                 if ctx.cache: ctx.cache.update_tags_update(card_id, new_tags)
@@ -1194,10 +1471,24 @@ def modify_card_attributes_internal(card_id, add_tags=None, remove_tags=None, se
         if set_favorite is not None:
             new_status = 1 if set_favorite else 0
             conn = get_db()
+            row = conn.execute("SELECT is_favorite FROM card_metadata WHERE id = ?", (card_id,)).fetchone()
             conn.execute("UPDATE card_metadata SET is_favorite = ? WHERE id = ?", (new_status, card_id))
             conn.commit()
             
             if ctx.cache: ctx.cache.toggle_favorite_update(card_id, bool(new_status))
+            previous_status = None
+            if row is not None:
+                try:
+                    previous_status = 1 if row['is_favorite'] else 0
+                except (TypeError, KeyError, IndexError):
+                    previous_status = 1 if row[0] else 0
+            if previous_status is None or previous_status != new_status:
+                sync_card_index_jobs(
+                    card_id=card_id,
+                    source_path=full_path,
+                    favorite_changed=True,
+                )
+                _apply_card_index_increment_now(card_id, full_path)
             changed = True
             
         return True

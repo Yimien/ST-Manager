@@ -85,21 +85,26 @@ def execute_rules():
             
             if category == "": # 根目录
                 if recursive:
-                    cursor.execute("SELECT id FROM card_metadata")
+                    cursor.execute("SELECT id FROM card_metadata ORDER BY id")
                 else:
-                    cursor.execute("SELECT id FROM card_metadata WHERE category = ''")
+                    cursor.execute("SELECT id FROM card_metadata WHERE category = '' ORDER BY id")
             else:
                 if recursive:
                     # 转义 SQL 通配符，匹配 category/%
                     safe_cat = category.replace('_', r'\_').replace('%', r'\%')
-                    cursor.execute(f"SELECT id FROM card_metadata WHERE category = ? OR id LIKE ? || '/%' ESCAPE '\\'", (category, safe_cat))
+                    cursor.execute(
+                        "SELECT id FROM card_metadata WHERE category = ? OR id LIKE ? || '/%' ESCAPE '\\' ORDER BY id",
+                        (category, safe_cat)
+                    )
                 else:
-                    cursor.execute("SELECT id FROM card_metadata WHERE category = ?", (category,))
+                    cursor.execute("SELECT id FROM card_metadata WHERE category = ? ORDER BY id", (category,))
             
             rows = cursor.fetchall()
             # 将查询结果合并到 card_ids (去重)
             db_ids = [row[0] for row in rows]
-            card_ids = list(set(card_ids + db_ids))
+            card_ids = list(dict.fromkeys(card_ids + db_ids))
+
+        selected_count = len(card_ids)
 
         if not card_ids:
             return jsonify({"success": False, "msg": "未找到需要处理的卡片"})
@@ -126,9 +131,11 @@ def execute_rules():
         # 2. 执行循环
         # =================================================================
         batch_targets = []
+        skipped_details = []
         for cid in card_ids:
             card_obj = ctx.cache.id_map.get(cid)
             if not card_obj:
+                skipped_details.append({'card_id': cid, 'reason': 'card_not_in_cache'})
                 continue
             batch_targets.append((cid, deepcopy(card_obj)))
 
@@ -197,11 +204,18 @@ def execute_rules():
             if res['moved_to']: summary['moves'] += 1
             if res['tags_added'] or res['tags_removed']: summary['tag_changes'] += 1
 
-        return jsonify({
+        response = {
             "success": True, 
+            "selected": selected_count,
             "processed": processed_count,
-            "summary": summary
-        })
+            "skipped": len(skipped_details),
+            "summary": summary,
+            'details': {
+                'skipped': skipped_details,
+            },
+        }
+
+        return jsonify(response)
 
     except Exception as e:
         logger.error(f"Execution error: {e}")

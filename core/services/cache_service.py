@@ -4,14 +4,12 @@ import sqlite3
 import json
 import os
 import logging
-from urllib.parse import quote
 
 # === 基础设施 ===
 from core.config import CARDS_FOLDER, DEFAULT_DB_PATH
 from core.context import ctx
 from core.data.db_session import get_db, execute_with_retry
 from core.data.ui_store import load_ui_data
-from core.services.index_job_worker import enqueue_index_job
 
 # === 工具函数 ===
 from core.utils.hash import get_file_hash_and_size
@@ -22,6 +20,11 @@ from core.utils.text import calculate_token_count
 logger = logging.getLogger(__name__)
 
 # ================= 模块级辅助函数 =================
+
+
+class CardCacheUpdateResult(dict):
+    def __bool__(self):
+        return bool(self.get('cache_updated'))
 
 def _do_reload_now():
     """Timer 回调：执行重载"""
@@ -62,7 +65,7 @@ def force_reload(reason: str = ""):
             ctx.reload_timer = None
     _do_reload_now()
 
-def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, file_size=None, mtime=None):
+def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, file_size=None, mtime=None, remove_entity_ids=None):
     """
     [数据库写操作] 更新单个卡片的数据库记录。
     通常由 API 路由或扫描器调用。
@@ -71,12 +74,18 @@ def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, f
     try:
         conn = get_db()
         cursor = conn.cursor()
+        result = CardCacheUpdateResult({
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        })
 
-        # 获取收藏状态和历史 worldinfo 状态，用于补发索引刷新任务
+        # 获取收藏状态和历史 embedded worldinfo 状态，供调用方决定后续索引同步
         cursor.execute("SELECT is_favorite, has_character_book FROM card_metadata WHERE id = ?", (card_id,))
         row = cursor.fetchone()
         current_fav = row['is_favorite'] if row else 0
         previous_has_wi = bool(row['has_character_book']) if row else False
+        result['previous_has_embedded_wi'] = previous_has_wi
         
         if file_hash is None or file_size is None:
             file_hash, file_size = get_file_hash_and_size(full_path)
@@ -133,17 +142,17 @@ def update_card_cache(card_id, full_path, *, parsed_info=None, file_hash=None, f
             ))
             
             conn.commit()
-            try:
-                enqueue_index_job('upsert_card', entity_id=card_id, source_path=full_path)
-                if has_wi or previous_has_wi:
-                    enqueue_index_job('upsert_world_embedded', entity_id=card_id, source_path=full_path)
-            except Exception as e:
-                logger.error(f"Failed to enqueue index job for {card_id}: {e}")
-            return True
-        return False
+            result['cache_updated'] = True
+            result['has_embedded_wi'] = bool(has_wi)
+            return result
+        return result
     except Exception as e:
         logger.error(f"Failed to update DB cache for {card_id}: {e}")
-        return False
+        return CardCacheUpdateResult({
+            'cache_updated': False,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        })
 
 def invalidate_wi_list_cache():
     """主动失效：解决 overwrite 保存不改目录mtime 的情况"""

@@ -1,10 +1,17 @@
 from pathlib import Path
 import json
+import re
 import subprocess
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TARGET_CHAT = PROJECT_ROOT / 'data' / 'library' / 'chats' / 'Imported' / '创世回廊！大型异世界幻想RPG1.5 - 2026-03-13@19h29m16s.jsonl'
+TARGET_CHAT = (
+    PROJECT_ROOT
+    / 'tests'
+    / 'fixtures'
+    / 'chat_reader_variable_merge_contracts'
+    / 'target_chat_first_message.jsonl'
+)
 
 
 def read_first_raw_message(path: Path):
@@ -40,6 +47,10 @@ def test_chat_grid_uses_floor_variable_snapshot_pipeline_for_mvu_context():
     assert 'createFloorVariableSnapshotResolver' in source
     assert 'getActiveMessageVariables' in source
     assert 'resolveReaderFloorVariables(' in source
-    assert 'const floorVariables = resolveReaderFloorVariables(rawMessages, floor, chat, activeCardDetail);' in source
+    assert re.search(
+        r'const\s+floorVariables\s*=\s*resolveReaderFloorVariables\(\s*rawMessages,\s*floor,\s*chat,\s*activeCardDetail,\s*\);',
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
     assert 'merged_variables: cloneValue(floorVariables),' in source
     assert 'active_variables: activeVariables,' in source

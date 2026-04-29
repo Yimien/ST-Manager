@@ -25,9 +25,21 @@ from core.utils.image import extract_card_info
 logger = logging.getLogger(__name__)
 
 
+LEGACY_INDEX_TABLE_POLICY = {
+    'decision': 'stop_creating',
+    'reason': 'new databases now use runtime v2 tables only; legacy tables remain only for pre-existing database compatibility',
+    'runtime_callers': (),
+}
+
+
 def _print_and_log(message: str):
     print(message)
     logger.info(message)
+
+
+def get_legacy_index_table_policy() -> dict:
+    """Return the current compatibility decision for pre-v2 index tables."""
+    return dict(LEGACY_INDEX_TABLE_POLICY)
 
 
 def _ensure_worldinfo_projection_complete(conn, generation: int, inspected_books):

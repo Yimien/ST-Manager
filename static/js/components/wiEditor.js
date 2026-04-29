@@ -147,6 +147,207 @@ export default function wiEditor() {
       );
     },
 
+    getEditorPositionSelectValue(entry) {
+      const position = Number(entry?.position ?? 1);
+      if (position !== 4) {
+        return String(Number.isFinite(position) ? position : 1);
+      }
+
+      const role = Number(entry?.role);
+      if (role === 1) return "4:1";
+      if (role === 2) return "4:2";
+      return "4:0";
+    },
+
+    updateEditorPositionFromSelect(entry, rawValue) {
+      if (!entry || typeof entry !== "object") return;
+
+      const value = String(rawValue ?? "").trim();
+      if (value === "4:1") {
+        entry.position = 4;
+        entry.role = 1;
+        return;
+      }
+      if (value === "4:2") {
+        entry.position = 4;
+        entry.role = 2;
+        return;
+      }
+      if (value === "4:0") {
+        entry.position = 4;
+        entry.role = 0;
+        return;
+      }
+
+      const position = Number(value);
+      entry.position = Number.isFinite(position) ? position : 1;
+      entry.role = null;
+    },
+
+    getDelayUntilRecursionEnabled(entry) {
+      return !!entry?.delayUntilRecursion;
+    },
+
+    getDelayUntilRecursionLevel(entry) {
+      const value = entry?.delayUntilRecursion;
+      return typeof value === "number" ? value : "";
+    },
+
+    setDelayUntilRecursionEnabled(entry, enabled) {
+      if (!entry || typeof entry !== "object") return;
+      if (!enabled) {
+        entry.delayUntilRecursion = false;
+        return;
+      }
+
+      const current = entry.delayUntilRecursion;
+      entry.delayUntilRecursion = typeof current === "number" ? current : true;
+    },
+
+    setDelayUntilRecursionLevel(entry, rawValue) {
+      if (!entry || typeof entry !== "object") return;
+
+      const content = String(rawValue ?? "").trim();
+      if (content === "") {
+        entry.delayUntilRecursion = this.getDelayUntilRecursionEnabled(entry)
+          ? true
+          : false;
+        return;
+      }
+
+      const value = Number(content);
+      entry.delayUntilRecursion = Number.isFinite(value) ? value : false;
+    },
+
+    getTriStateSelectValue(value) {
+      if (value === true) return "true";
+      if (value === false) return "false";
+      return "null";
+    },
+
+    setTriStateValue(entry, key, rawValue) {
+      if (!entry || typeof entry !== "object" || !key) return;
+
+      const value = String(rawValue ?? "null").trim();
+      if (value === "true") {
+        entry[key] = true;
+        return;
+      }
+      if (value === "false") {
+        entry[key] = false;
+        return;
+      }
+      entry[key] = null;
+    },
+
+    getOptionalNumberInputValue(value) {
+      return value === null || value === undefined ? "" : value;
+    },
+
+    setOptionalNumberField(entry, key, rawValue) {
+      if (!entry || typeof entry !== "object" || !key) return;
+
+      const content = String(rawValue ?? "").trim();
+      if (content === "") {
+        entry[key] = null;
+        return;
+      }
+
+      const value = Number(content);
+      entry[key] = Number.isFinite(value) ? value : null;
+    },
+
+    setMultiSelectField(entry, key, selectEl) {
+      if (!entry || typeof entry !== "object" || !key || !selectEl) return;
+      entry[key] = Array.from(
+        selectEl.selectedOptions || [],
+        (option) => option.value,
+      );
+    },
+
+    ensureCharacterFilterShape(entry) {
+      if (!entry || typeof entry !== "object") return null;
+      if (
+        !entry.characterFilter ||
+        typeof entry.characterFilter !== "object" ||
+        Array.isArray(entry.characterFilter)
+      ) {
+        entry.characterFilter = {
+          isExclude: false,
+          names: [],
+          tags: [],
+        };
+      }
+      entry.characterFilter.isExclude = !!entry.characterFilter.isExclude;
+      entry.characterFilter.names = Array.isArray(entry.characterFilter.names)
+        ? entry.characterFilter.names
+        : [];
+      entry.characterFilter.tags = Array.isArray(entry.characterFilter.tags)
+        ? entry.characterFilter.tags
+        : [];
+      return entry.characterFilter;
+    },
+
+    toggleCharacterFilterExclude(entry, checked) {
+      if (!entry || typeof entry !== "object") return;
+      if (checked) {
+        const filter = this.ensureCharacterFilterShape(entry);
+        filter.isExclude = true;
+        return;
+      }
+
+      if (
+        !entry.characterFilter ||
+        typeof entry.characterFilter !== "object" ||
+        Array.isArray(entry.characterFilter)
+      ) {
+        return;
+      }
+
+      const names = Array.isArray(entry.characterFilter.names)
+        ? entry.characterFilter.names
+        : [];
+      const tags = Array.isArray(entry.characterFilter.tags)
+        ? entry.characterFilter.tags
+        : [];
+      if (names.length === 0 && tags.length === 0) {
+        delete entry.characterFilter;
+        return;
+      }
+
+      entry.characterFilter.isExclude = false;
+    },
+
+    getCharacterFilterCsv(entry, key) {
+      const values = entry?.characterFilter?.[key];
+      return Array.isArray(values) ? values.join(", ") : "";
+    },
+
+    setCharacterFilterCsv(entry, key, rawValue) {
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        !["names", "tags"].includes(key)
+      )
+        return;
+
+      const filter = this.ensureCharacterFilterShape(entry);
+      const values = String(rawValue ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      filter[key] = values;
+
+      if (
+        !filter.isExclude &&
+        filter.names.length === 0 &&
+        filter.tags.length === 0
+      ) {
+        delete entry.characterFilter;
+      }
+    },
+
     // === 初始化 ===
     init() {
       // 监听打开编辑器事件

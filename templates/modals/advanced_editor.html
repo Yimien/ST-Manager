@@ -1,8 +1,8 @@
 <!-- 高级功能编辑器 (Regex & Scripts) -->
 <div x-show="showAdvancedModal" x-data="advancedEditor" x-cloak class="modal-overlay z-modal-popover"
-    @click.self="showAdvancedModal=false">
+    @click.self="requestClose()">
     <div class="modal-container advanced-editor-container"
-        style="width: 1200px; height: 90vh; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border-light);">
+        style="width: 1200px; height: 90vh; flex-direction: column; border: 1px solid var(--border-light);">
 
         <!-- 1. 顶部 Header -->
         <div class="p-4 border-b flex justify-between items-center advanced-editor-header"
@@ -13,7 +13,7 @@
                     x-text="isFileMode ? (fileType === 'regex' ? '单文件编辑: Regex' : '单文件编辑: Script') : 'Regex & Scripts'">
                 </span>
             </div>
-            <button @click="showAdvancedModal=false"
+            <button @click="requestClose()"
                 class="text-gray-400 hover:text-red-500 transition text-xl advanced-editor-close-btn">✕</button>
         </div>
 
@@ -367,7 +367,7 @@
 
                                         <!-- HTML 渲染显示 (Shadow DOM) -->
                                         <div x-show="regexPreviewMode==='html'" class="test-io-render-box"
-                                            x-effect="updateMixedPreviewContent($el, regexPreviewMode==='html' ? regexTestResult : null, { runtimeOwner: 'regex-test-bench', runtimeLabel: 'Regex Test Bench Preview', scroll: true, minHeight: 200, maxHeight: 0, embeddedStageStyle: false })">
+                                            x-effect="renderUnifiedPreviewHost($el, regexPreviewMode==='html' ? regexTestResult : null, { runtimeOwner: 'regex-test-bench', runtimeLabel: 'Regex Test Bench Preview', scroll: true, minHeight: 200, maxHeight: 0, embeddedStageStyle: false })">
                                         </div>
                                     </div>
                                 </div>
@@ -929,21 +929,24 @@
         <div
             class="p-4 border-t flex flex-col md:flex-row justify-between items-start md:items-center gap-3 advanced-editor-footer bg-[var(--bg-sub)] border-[var(--border-light)]">
             <div class="text-xs text-[var(--text-dim)]">
-                <!-- [修改] 提示文案 -->
-                <span x-show="!isFileMode">提示: 修改会自动暂存，需点击主界面的 <span class="font-bold text-accent-main">保存</span>
-                    按钮才会写入文件。</span>
+                <span x-show="!isFileMode">完成：仅返回当前编辑界面；保存：直接写入原文件。</span>
                 <span x-show="isFileMode" class="text-blue-400">正在编辑独立文件。点击保存将直接写入磁盘。</span>
             </div>
 
-            <!-- [修改] 按钮显示逻辑 -->
-            <button x-show="isFileMode" @click="saveFileChanges()"
-                class="btn-primary px-6 py-2 rounded shadow-lg font-bold w-full md:w-auto">
-                💾 保存文件
+            <div class="flex w-full md:w-auto gap-3 justify-end">
+                <button x-show="!isFileMode && showPersistButton" @click="persistChanges()"
+                    class="btn-secondary px-6 py-2 rounded shadow-lg font-bold w-full md:w-auto">
+                保存
             </button>
-            <button x-show="!isFileMode" @click="showAdvancedModal=false"
-                class="btn-primary px-6 py-2 rounded shadow-lg font-bold w-full md:w-auto">
-                完成 (Done)
+                <button x-show="!isFileMode" @click="applyChangesAndClose()"
+                    class="btn-primary px-6 py-2 rounded shadow-lg font-bold w-full md:w-auto">
+                完成
             </button>
+                <button x-show="isFileMode" @click="saveFileChanges()"
+                    class="btn-primary px-6 py-2 rounded shadow-lg font-bold w-full md:w-auto">
+                保存文件
+            </button>
+            </div>
         </div>
 
         

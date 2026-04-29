@@ -21,13 +21,17 @@ from core.automation.constants import (
     ACT_MOVE,
     ACT_REMOVE_TAG,
     ACT_RENAME_FILE_BY_TEMPLATE,
+    ACT_SET_CHAR_NAME_FROM_FILENAME,
     ACT_SET_FILENAME_FROM_CHAR_NAME,
     ACT_SET_FILENAME_FROM_WI_NAME,
     ACT_SET_FAV,
     ACT_SPLIT_CATEGORY_TO_TAGS,
+    ACT_SET_WI_NAME_FROM_FILENAME,
+    TRIGGER_CONTEXT_ALLOWED_ACTIONS,
 )
 from core.automation.normalizer import (
     TRIGGER_CONTEXT_AUTO_IMPORT,
+    TRIGGER_CONTEXT_CARD_UPDATE,
     TRIGGER_CONTEXT_LINK_UPDATE,
     TRIGGER_CONTEXT_MANUAL_RUN,
     TRIGGER_CONTEXT_TAG_EDIT,
@@ -273,6 +277,10 @@ def _sample_actions():
         {'type': ACT_ADD_TAG, 'value': 'tag-a'},
         {'type': ACT_REMOVE_TAG, 'value': 'tag-b'},
         {'type': ACT_SET_FAV, 'value': 'true'},
+        {'type': ACT_SET_CHAR_NAME_FROM_FILENAME},
+        {'type': ACT_SET_WI_NAME_FROM_FILENAME},
+        {'type': ACT_SET_FILENAME_FROM_CHAR_NAME},
+        {'type': ACT_SET_FILENAME_FROM_WI_NAME},
         {'type': ACT_FETCH_FORUM_TAGS},
         {'type': ACT_MERGE_TAGS, 'value': {'old': 'new'}},
         {'type': ACT_RENAME_FILE_BY_TEMPLATE, 'value': '{{char_name}}'},
@@ -288,6 +296,8 @@ def test_normalize_actions_for_manual_run_keeps_new_actions_available():
         ACT_ADD_TAG,
         ACT_REMOVE_TAG,
         ACT_SET_FAV,
+        ACT_SET_CHAR_NAME_FROM_FILENAME,
+        ACT_SET_WI_NAME_FROM_FILENAME,
         ACT_FETCH_FORUM_TAGS,
         ACT_MERGE_TAGS,
         ACT_RENAME_FILE_BY_TEMPLATE,
@@ -300,7 +310,18 @@ def test_normalize_actions_for_manual_run_keeps_new_actions_available():
                 'excluded_segments': [],
             }
         ],
-        'suppressed_filename_action_conflicts': [],
+        'suppressed_filename_action_conflicts': [
+            {
+                'reason': 'lower_priority_filename_action',
+                'suppressed': ACT_SET_FILENAME_FROM_CHAR_NAME,
+                'winner': ACT_RENAME_FILE_BY_TEMPLATE,
+            },
+            {
+                'reason': 'lower_priority_filename_action',
+                'suppressed': ACT_SET_FILENAME_FROM_WI_NAME,
+                'winner': ACT_RENAME_FILE_BY_TEMPLATE,
+            },
+        ],
         'noop_rename_reasons': [],
     }
     assert normalized['derived'] == {'add_tags': {'tag-a'}, 'remove_tags': set()}
@@ -314,6 +335,8 @@ def test_normalize_actions_for_auto_import_excludes_fetch_and_merge_only():
         ACT_ADD_TAG,
         ACT_REMOVE_TAG,
         ACT_SET_FAV,
+        ACT_SET_CHAR_NAME_FROM_FILENAME,
+        ACT_SET_WI_NAME_FROM_FILENAME,
         ACT_RENAME_FILE_BY_TEMPLATE,
     ]
     assert normalized['observability']['category_tag_expansions'] == [
@@ -323,6 +346,35 @@ def test_normalize_actions_for_auto_import_excludes_fetch_and_merge_only():
             'excluded_segments': [],
         }
     ]
+
+
+def test_card_update_allowlist_matches_auto_import_allowlist():
+    assert TRIGGER_CONTEXT_ALLOWED_ACTIONS[TRIGGER_CONTEXT_CARD_UPDATE] == (
+        TRIGGER_CONTEXT_ALLOWED_ACTIONS[TRIGGER_CONTEXT_AUTO_IMPORT]
+    )
+
+
+def test_normalizer_exports_card_update_context_and_matches_auto_import_allowlist():
+    assert TRIGGER_CONTEXT_CARD_UPDATE == 'card_update'
+
+    auto_import = normalize_actions_for_context(_sample_actions(), TRIGGER_CONTEXT_AUTO_IMPORT)
+    card_update = normalize_actions_for_context(_sample_actions(), TRIGGER_CONTEXT_CARD_UPDATE)
+
+    assert card_update['trigger_context'] == TRIGGER_CONTEXT_CARD_UPDATE
+    assert _action_types(card_update['actions']) == [
+        ACT_MOVE,
+        ACT_ADD_TAG,
+        ACT_REMOVE_TAG,
+        ACT_SET_FAV,
+        ACT_SET_CHAR_NAME_FROM_FILENAME,
+        ACT_SET_WI_NAME_FROM_FILENAME,
+        ACT_RENAME_FILE_BY_TEMPLATE,
+    ]
+    assert {
+        key: value for key, value in card_update.items() if key != 'trigger_context'
+    } == {
+        key: value for key, value in auto_import.items() if key != 'trigger_context'
+    }
 
 
 def test_normalize_actions_for_link_update_only_keeps_fetch_forum_tags():
@@ -508,6 +560,384 @@ def test_auto_run_rules_on_card_uses_shared_normalizer_for_auto_import(monkeypat
     assert captured['applied_plan']['rename_file_by_template'] == '{{char_name}}'
 
 
+def test_auto_run_rules_for_trigger_uses_legacy_default_trigger_contexts(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'legacy-rule',
+                'enabled': True,
+                'groups': [],
+                'actions': [{'type': ACT_ADD_TAG, 'value': 'legacy-tag'}],
+            }
+        ]
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: ruleset)
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {}))
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['ruleset'] = filtered_ruleset
+        return {'actions': [{'type': ACT_ADD_TAG, 'value': 'legacy-tag'}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': {'legacy-tag'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: {'final_id': card_id_arg, 'tags_added': list(plan.get('add_tags', []))},
+    )
+
+    result = automation_service.auto_run_rules_for_trigger(card_id, TRIGGER_CONTEXT_AUTO_IMPORT)
+
+    assert result is not None
+    assert result['run'] is True
+    assert [rule['name'] for rule in captured['ruleset']['rules']] == ['legacy-rule']
+
+
+def test_normalize_rule_trigger_contexts_derives_legacy_contexts_from_actions():
+    assert automation_service._normalize_rule_trigger_contexts({
+        'actions': [
+            {'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'legacy'}},
+            {'type': ACT_MERGE_TAGS, 'value': {'old': 'new'}},
+        ]
+    }) == [
+        TRIGGER_CONTEXT_MANUAL_RUN,
+        TRIGGER_CONTEXT_AUTO_IMPORT,
+        TRIGGER_CONTEXT_LINK_UPDATE,
+        TRIGGER_CONTEXT_TAG_EDIT,
+    ]
+
+
+def test_auto_run_rules_for_trigger_only_evaluates_card_update_rules(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'manual-default',
+                'enabled': False,
+                'groups': [],
+                'actions': [{'type': ACT_ADD_TAG, 'value': 'manual-default'}],
+            },
+            {
+                'name': 'card-update-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_CARD_UPDATE],
+                'groups': [],
+                'actions': [{'type': ACT_ADD_TAG, 'value': 'card-update-only'}],
+            },
+            {
+                'name': 'auto-import-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_AUTO_IMPORT],
+                'groups': [],
+                'actions': [{'type': ACT_ADD_TAG, 'value': 'auto-import-only'}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: ruleset)
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {}))
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {
+            'actions': [
+                {'type': ACT_ADD_TAG, 'value': 'card-update-only'},
+            ]
+        }
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': {'card-update-only'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: {'final_id': card_id_arg, 'tags_added': sorted(plan.get('add_tags', []))},
+    )
+
+    result = automation_service.auto_run_rules_for_trigger(card_id, TRIGGER_CONTEXT_CARD_UPDATE)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['card-update-only']
+
+
+def test_auto_run_rules_for_trigger_accepts_string_trigger_contexts(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'string-card-update-only',
+                'enabled': True,
+                'trigger_contexts': f'  {TRIGGER_CONTEXT_CARD_UPDATE}  ',
+                'groups': [],
+                'actions': [{'type': ACT_ADD_TAG, 'value': 'card-update-only'}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: ruleset)
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {}))
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {'actions': [{'type': ACT_ADD_TAG, 'value': 'card-update-only'}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': {'card-update-only'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: {'final_id': card_id_arg, 'tags_added': sorted(plan.get('add_tags', []))},
+    )
+
+    result = automation_service.auto_run_rules_for_trigger(card_id, TRIGGER_CONTEXT_CARD_UPDATE)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['string-card-update-only']
+
+
+def test_auto_run_rules_for_trigger_uses_card_update_normalizer_context(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    normalized_plan = {
+        'trigger_context': TRIGGER_CONTEXT_CARD_UPDATE,
+        'actions': [
+            {'type': ACT_ADD_TAG, 'value': 'card-update-tag'},
+            {'type': ACT_RENAME_FILE_BY_TEMPLATE, 'value': '{{char_name}}'},
+        ],
+        'derived': {'add_tags': {'card-update-tag'}, 'remove_tags': set()},
+        'observability': {
+            'category_tag_expansions': [],
+            'suppressed_filename_action_conflicts': [],
+            'noop_rename_reasons': [],
+        },
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {}))
+    monkeypatch.setattr(
+        automation_service.engine,
+        'evaluate',
+        lambda *args, **kwargs: {
+            'actions': [
+                {'type': ACT_ADD_TAG, 'value': 'raw-tag'},
+                {'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'raw'}},
+                {'type': ACT_RENAME_FILE_BY_TEMPLATE, 'value': '{{filename_stem}}'},
+            ]
+        },
+    )
+
+    def _fake_normalize(actions, trigger_context, card_snapshot=None):
+        captured['normalize_actions'] = list(actions)
+        captured['trigger_context'] = trigger_context
+        captured['card_snapshot'] = card_snapshot
+        return normalized_plan
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        captured['applied_card_id'] = card_id_arg
+        captured['applied_plan'] = plan
+        return {'final_id': card_id_arg, 'tags_added': list(plan.get('add_tags', []))}
+
+    monkeypatch.setattr(automation_service, 'normalize_actions_for_context', _fake_normalize)
+    monkeypatch.setattr(automation_service.executor, 'apply_plan', _fake_apply_plan)
+
+    result = automation_service.auto_run_rules_for_trigger(card_id, TRIGGER_CONTEXT_CARD_UPDATE)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['trigger_context'] == TRIGGER_CONTEXT_CARD_UPDATE
+    assert _action_types(captured['normalize_actions']) == [
+        ACT_ADD_TAG,
+        ACT_FETCH_FORUM_TAGS,
+        ACT_RENAME_FILE_BY_TEMPLATE,
+    ]
+    assert captured['card_snapshot'] == {'id': card_id}
+    assert captured['applied_card_id'] == card_id
+    assert captured['applied_plan']['add_tags'] == {'card-update-tag'}
+    assert captured['applied_plan']['remove_tags'] == set()
+    assert captured['applied_plan']['fetch_forum_tags'] is None
+    assert captured['applied_plan']['rename_file_by_template'] == '{{char_name}}'
+
+
+def test_auto_run_rules_for_trigger_returns_failure_payload_on_internal_error(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {}))
+    monkeypatch.setattr(
+        automation_service.engine,
+        'evaluate',
+        lambda *args, **kwargs: {'actions': [{'type': ACT_ADD_TAG, 'value': 'card-update-tag'}]},
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': {'card-update-tag'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: (_ for _ in ()).throw(RuntimeError('boom')),
+    )
+
+    result = automation_service.auto_run_rules_for_trigger(card_id, TRIGGER_CONTEXT_CARD_UPDATE)
+
+    assert result == {'run': False, 'error': 'boom'}
+
+
 def test_auto_run_forum_tags_on_link_update_normalizes_fetch_only_then_runs_merge_follow_up(monkeypatch):
     card_id = 'folder/demo.json'
     fake_cache = SimpleNamespace(
@@ -568,7 +998,14 @@ def test_auto_run_forum_tags_on_link_update_normalizes_fetch_only_then_runs_merg
     def _fake_apply_plan(card_id_arg, plan, ui_data):
         captured['applied_plan'] = plan
         captured['applied_ui_data'] = ui_data
-        return {'final_id': card_id_arg, 'tags_added': ['after-fetch', 'legacy']}
+        return {
+            'final_id': card_id_arg,
+            'tags_added': ['after-fetch', 'legacy'],
+            'forum_tags_fetched': {
+                'provider': 'normalized-forum',
+                'tags': ['after-fetch', 'fresh-forum-tag'],
+            },
+        }
 
     def _fake_tag_merge(card_id_arg, tags, ui_data=None, runtime=None):
         captured['merge_card_id'] = card_id_arg
@@ -605,7 +1042,7 @@ def test_auto_run_forum_tags_on_link_update_normalizes_fetch_only_then_runs_merg
     assert captured['applied_plan']['fetch_forum_tags'] == {'provider': 'normalized-forum'}
     assert captured['applied_plan']['add_tags'] == set()
     assert captured['merge_card_id'] == card_id
-    assert captured['merge_tags'] == ['after-fetch', 'legacy']
+    assert captured['merge_tags'] == ['after-fetch', 'fresh-forum-tag']
     assert captured['merge_ui_data'] == {'ui': 'data'}
     assert captured['merge_runtime'] == {
         'ruleset_id': 'ruleset-1',
@@ -619,6 +1056,165 @@ def test_auto_run_forum_tags_on_link_update_normalizes_fetch_only_then_runs_merg
         'replace_rules': {'legacy': 'modern'},
         'actions': 1,
     }
+
+
+def test_auto_run_forum_tags_on_link_update_filters_rules_before_evaluation(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'link-update-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_LINK_UPDATE],
+                'groups': [],
+                'actions': [{'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'link'}}],
+            },
+            {
+                'name': 'tag-edit-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_TAG_EDIT],
+                'groups': [],
+                'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'new'}}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: ruleset)
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {'ui': 'data'}))
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {'actions': [{'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'link'}}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: {'final_id': card_id_arg, 'tags_added': ['after-fetch']},
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'auto_run_tag_merge_on_tagging',
+        lambda *args, **kwargs: {'run': True, 'actions': 0, 'result': {'changed': False, 'tags': ['after-fetch']}},
+    )
+
+    result = automation_service.auto_run_forum_tags_on_link_update(card_id)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['link-update-only']
+
+
+def test_auto_run_forum_tags_on_link_update_keeps_legacy_rules_without_trigger_contexts(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': ['existing'],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'legacy-link-rule',
+                'enabled': True,
+                'groups': [],
+                'actions': [{'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'legacy'}}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: ruleset)
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {'ui': 'data'}))
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {'actions': [{'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'legacy'}}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service.executor,
+        'apply_plan',
+        lambda card_id_arg, plan, ui_data: {
+            'final_id': card_id_arg,
+            'forum_tags_fetched': {'provider': 'legacy', 'tags': ['existing', 'fetched']},
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'auto_run_tag_merge_on_tagging',
+        lambda *args, **kwargs: {'run': True, 'actions': 0, 'result': {'changed': False, 'tags': ['existing', 'fetched']}},
+    )
+
+    result = automation_service.auto_run_forum_tags_on_link_update(card_id)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['legacy-link-rule']
 
 
 def test_auto_run_forum_tags_on_link_update_filters_governed_tags_before_writeback(monkeypatch):
@@ -683,7 +1279,7 @@ def test_auto_run_forum_tags_on_link_update_filters_governed_tags_before_writeba
             'tags_added': ['existing', 'allowed-tag', 'blocked-tag', 'unknown-tag'],
             'forum_tags_fetched': {
                 'provider': 'normalized-forum',
-                'tags': ['allowed-tag', 'blocked-tag', 'unknown-tag'],
+                'tags': ['existing', 'allowed-tag', 'blocked-tag', 'unknown-tag'],
             },
         }
 
@@ -734,6 +1330,229 @@ def test_auto_run_forum_tags_on_link_update_filters_governed_tags_before_writeba
         'skipped_unknown': ['unknown-tag'],
         'skipped_blacklist': ['blocked-tag'],
     }
+
+
+def test_auto_run_forum_tags_on_link_update_uses_full_tag_source_for_merge_follow_up(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': [],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {'ui': 'data'}))
+    monkeypatch.setattr(
+        automation_service.engine,
+        'evaluate',
+        lambda *args, **kwargs: {
+            'actions': [
+                {'type': ACT_FETCH_FORUM_TAGS, 'value': {'provider': 'forum'}},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        return {
+            'final_id': card_id_arg,
+            'tags_added': ['delta-only'],
+            'forum_tags_fetched': {
+                'provider': 'forum',
+                'tags': ['full-a', 'full-b'],
+            },
+        }
+
+    def _fake_tag_merge(card_id_arg, tags, ui_data=None, runtime=None):
+        captured['merge_tags'] = list(tags)
+        return {'run': True, 'actions': 0, 'result': {'changed': False, 'tags': list(tags)}}
+
+    monkeypatch.setattr(automation_service.executor, 'apply_plan', _fake_apply_plan)
+    monkeypatch.setattr(automation_service, 'auto_run_tag_merge_on_tagging', _fake_tag_merge)
+
+    result = automation_service.auto_run_forum_tags_on_link_update(card_id)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['merge_tags'] == ['full-a', 'full-b']
+
+
+def test_auto_run_forum_tags_on_link_update_prefers_fetched_full_tags_over_stale_cache(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': ['stale-cache-tag'],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {'ui': 'data'}))
+    monkeypatch.setattr(
+        automation_service.engine,
+        'evaluate',
+        lambda *args, **kwargs: {
+            'actions': [
+                {'type': ACT_FETCH_FORUM_TAGS, 'value': {'provider': 'forum'}},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        return {
+            'final_id': card_id_arg,
+            'tags_added': ['delta-only'],
+            'forum_tags_fetched': {
+                'provider': 'forum',
+                'tags': ['fresh-a', 'fresh-b'],
+            },
+        }
+
+    def _fake_tag_merge(card_id_arg, tags, ui_data=None, runtime=None):
+        captured['merge_tags'] = list(tags)
+        return {'run': True, 'actions': 0, 'result': {'changed': False, 'tags': list(tags)}}
+
+    monkeypatch.setattr(automation_service.executor, 'apply_plan', _fake_apply_plan)
+    monkeypatch.setattr(automation_service, 'auto_run_tag_merge_on_tagging', _fake_tag_merge)
+
+    result = automation_service.auto_run_forum_tags_on_link_update(card_id)
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['merge_tags'] == ['fresh-a', 'fresh-b']
+
+
+def test_auto_run_forum_tags_on_link_update_keeps_empty_fetched_tags_instead_of_stale_cache(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': ['stale-cache-tag'],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        automation_service,
+        'load_config',
+        lambda: {
+            'active_automation_ruleset': 'ruleset-1',
+            'automation_slash_is_tag_separator': False,
+        },
+    )
+    monkeypatch.setattr(automation_service.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_service, '_build_rule_context', lambda *args, **kwargs: ({'id': card_id}, {'ui': 'data'}))
+    monkeypatch.setattr(
+        automation_service.engine,
+        'evaluate',
+        lambda *args, **kwargs: {
+            'actions': [
+                {'type': ACT_FETCH_FORUM_TAGS, 'value': {'provider': 'forum'}},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        return {
+            'final_id': card_id_arg,
+            'tags_added': [],
+            'forum_tags_fetched': {
+                'provider': 'forum',
+                'tags': [],
+            },
+        }
+
+    def _fake_tag_merge(card_id_arg, tags, ui_data=None, runtime=None):
+        captured['merge_tags'] = list(tags)
+        return {'run': True, 'actions': 0, 'result': {'changed': False, 'tags': list(tags)}}
+
+    monkeypatch.setattr(automation_service.executor, 'apply_plan', _fake_apply_plan)
+    monkeypatch.setattr(automation_service, 'auto_run_tag_merge_on_tagging', _fake_tag_merge)
+
+    result = automation_service.auto_run_forum_tags_on_link_update(card_id)
+
+    assert result is not None
+    assert result['run'] is True
+    assert result['result']['final_tags'] == []
+    assert 'merge_tags' not in captured
 
 
 def test_auto_run_tag_merge_on_tagging_uses_shared_normalizer_for_tag_edit(monkeypatch):
@@ -819,6 +1638,160 @@ def test_auto_run_tag_merge_on_tagging_uses_shared_normalizer_for_tag_edit(monke
     assert captured['merge_actions'] == [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'modern'}}]
     assert captured['merge_actions'] is normalized_plan['actions']
     assert captured['slash_as_separator'] is False
+
+
+def test_auto_run_tag_merge_on_tagging_filters_rules_before_evaluation(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': ['legacy'],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'tag-edit-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_TAG_EDIT],
+                'groups': [],
+                'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'new'}}],
+            },
+            {
+                'name': 'link-update-only',
+                'enabled': True,
+                'trigger_contexts': [TRIGGER_CONTEXT_LINK_UPDATE],
+                'groups': [],
+                'actions': [{'type': ACT_FETCH_FORUM_TAGS, 'value': {'source': 'link'}}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(
+        automation_service,
+        '_build_rule_context',
+        lambda *args, **kwargs: ({'id': card_id, 'tags': ['legacy']}, {'ui': 'data'}),
+    )
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'new'}}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'apply_merge_actions_to_tags',
+        lambda tags, merge_actions, slash_as_separator=False: {
+            'tags': ['new'],
+            'changed': True,
+            'replacements': ['legacy->new'],
+            'replace_rules': {'legacy': 'new'},
+        },
+    )
+
+    result = automation_service.auto_run_tag_merge_on_tagging(
+        card_id,
+        ['legacy'],
+        runtime={'ruleset_id': 'ruleset-1', 'ruleset': ruleset, 'slash_as_separator': False},
+    )
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['tag-edit-only']
+
+
+def test_auto_run_tag_merge_on_tagging_keeps_legacy_rules_without_trigger_contexts(monkeypatch):
+    card_id = 'folder/demo.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            card_id: {
+                'id': card_id,
+                'filename': 'demo.json',
+                'char_name': 'Demo',
+                'tags': ['legacy'],
+            }
+        },
+        bundle_map={},
+    )
+    captured = {}
+    ruleset = {
+        'rules': [
+            {
+                'name': 'legacy-tag-rule',
+                'enabled': True,
+                'groups': [],
+                'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'new'}}],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(automation_service.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(
+        automation_service,
+        '_build_rule_context',
+        lambda *args, **kwargs: ({'id': card_id, 'tags': ['legacy']}, {'ui': 'data'}),
+    )
+
+    def _fake_evaluate(context_data, filtered_ruleset, match_if_no_conditions=True):
+        captured['rule_names'] = [rule['name'] for rule in filtered_ruleset['rules']]
+        return {'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'new'}}]}
+
+    monkeypatch.setattr(automation_service.engine, 'evaluate', _fake_evaluate)
+    monkeypatch.setattr(
+        automation_service,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': actions,
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        automation_service,
+        'apply_merge_actions_to_tags',
+        lambda tags, merge_actions, slash_as_separator=False: {
+            'tags': ['new'],
+            'changed': True,
+            'replacements': ['legacy->new'],
+            'replace_rules': {'legacy': 'new'},
+        },
+    )
+
+    result = automation_service.auto_run_tag_merge_on_tagging(
+        card_id,
+        ['legacy'],
+        runtime={'ruleset_id': 'ruleset-1', 'ruleset': ruleset, 'slash_as_separator': False},
+    )
+
+    assert result is not None
+    assert result['run'] is True
+    assert captured['rule_names'] == ['legacy-tag-rule']
 
 
 def test_normalize_actions_expands_split_category_to_append_only_add_tags():
@@ -1040,7 +2013,19 @@ def test_manual_execute_reuses_shared_rule_context_builder(monkeypatch):
     response = client.post('/api/automation/execute', json={'card_ids': [card_id], 'ruleset_id': 'ruleset-1'})
 
     assert response.status_code == 200
-    assert response.get_json()['success'] is True
+    assert response.get_json() == {
+        'success': True,
+        'selected': 1,
+        'processed': 0,
+        'skipped': 0,
+        'summary': {
+            'moves': 0,
+            'tag_changes': 0,
+        },
+        'details': {
+            'skipped': [],
+        },
+    }
     assert captured['called'] is True
     assert captured['card_id'] == card_id
     assert captured['card_obj'] == fake_cache.id_map[card_id]
@@ -1155,10 +2140,15 @@ def test_manual_execute_uses_shared_normalizer_for_manual_run_and_preserves_merg
     assert response.status_code == 200
     assert response.get_json() == {
         'success': True,
+        'selected': 1,
         'processed': 1,
+        'skipped': 0,
         'summary': {
             'moves': 0,
             'tag_changes': 2,
+        },
+        'details': {
+            'skipped': [],
         },
     }
     assert captured['trigger_context'] == TRIGGER_CONTEXT_MANUAL_RUN
@@ -1282,10 +2272,15 @@ def test_manual_execute_preserves_batch_snapshot_when_earlier_items_mutate(monke
     assert response.status_code == 200
     assert response.get_json() == {
         'success': True,
+        'selected': 2,
         'processed': 2,
+        'skipped': 0,
         'summary': {
             'moves': 0,
             'tag_changes': 2,
+        },
+        'details': {
+            'skipped': [],
         },
     }
     assert set(captured['processed_ids']) == {first_id, second_id}
@@ -1295,6 +2290,320 @@ def test_manual_execute_preserves_batch_snapshot_when_earlier_items_mutate(monke
     assert snapshots_by_id[second_id]['category'] == 'folder/second'
     assert snapshots_by_id[first_id]['tags'] == []
     assert snapshots_by_id[second_id]['tags'] == []
+
+
+def test_manual_execute_reports_skipped_targets_missing_from_cache(monkeypatch):
+    existing_id = 'folder/existing.json'
+    missing_id = 'folder/missing.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            existing_id: {
+                'id': existing_id,
+                'filename': 'existing.json',
+                'char_name': 'Existing',
+                'category': 'folder',
+                'tags': ['legacy'],
+            }
+        },
+        bundle_map={},
+        initialized=True,
+    )
+    captured = {'processed_ids': []}
+
+    class _FakeCursor:
+        def execute(self, *args, **kwargs):
+            captured['db_query'] = {'args': args, 'kwargs': kwargs}
+
+        def fetchall(self):
+            return [(existing_id,), (missing_id,)]
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    monkeypatch.setattr(automation_api, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(automation_api.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_api, 'load_config', lambda: {'automation_slash_is_tag_separator': False})
+    monkeypatch.setattr(automation_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(automation_api.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+    monkeypatch.setattr(
+        automation_service,
+        '_build_rule_context',
+        lambda *args, **kwargs: ({'id': existing_id, 'category': 'folder', 'tags': ['legacy'], 'token_count': 0}, {}),
+    )
+    monkeypatch.setattr(
+        automation_api.engine,
+        'evaluate',
+        lambda *args, **kwargs: {'actions': [{'type': ACT_MERGE_TAGS, 'value': {'legacy': 'modern'}}]},
+    )
+    monkeypatch.setattr(
+        automation_api,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': list(actions),
+            'derived': {'add_tags': set(), 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        automation_service,
+        '_build_exec_plan_from_actions',
+        lambda actions, slash_as_separator=False: {
+            'move': None,
+            'add_tags': set(),
+            'remove_tags': set(),
+            'set_favorite': None,
+            'set_filename_from_char_name': False,
+            'set_filename_from_wi_name': False,
+            'set_char_name_from_filename': False,
+            'set_wi_name_from_filename': False,
+            'fetch_forum_tags': None,
+            'desired_filename_template': None,
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        captured['processed_ids'].append(card_id_arg)
+        fake_cache.id_map[existing_id]['tags'] = ['modern']
+        return {
+            'moved_to': None,
+            'tags_added': [],
+            'tags_removed': [],
+            'fav_changed': False,
+            'name_sync': None,
+            'forum_tags_fetched': None,
+            'final_id': card_id_arg,
+        }
+
+    monkeypatch.setattr(automation_api.executor, 'apply_plan', _fake_apply_plan)
+    monkeypatch.setattr(
+        automation_api,
+        'apply_merge_actions_to_tags',
+        lambda current_tags, merge_actions, slash_as_separator=False: {
+            'changed': True,
+            'tags': ['modern'],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        automation_api,
+        'modify_card_attributes_internal',
+        lambda card_id_arg, add_tags=None, remove_tags=None: {'ok': True},
+        raising=False,
+    )
+
+    client = _make_automation_app().test_client()
+    response = client.post(
+        '/api/automation/execute',
+        json={'category': 'folder', 'recursive': True, 'ruleset_id': 'ruleset-1'},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        'success': True,
+        'selected': 2,
+        'processed': 1,
+        'skipped': 1,
+        'summary': {
+            'moves': 0,
+            'tag_changes': 1,
+        },
+        'details': {
+            'skipped': [
+                {'card_id': missing_id, 'reason': 'card_not_in_cache'},
+            ]
+        },
+    }
+    assert captured['processed_ids'] == [existing_id]
+
+
+def _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured):
+    monkeypatch.setattr(automation_api.ctx, 'cache', fake_cache, raising=False)
+    monkeypatch.setattr(automation_api, 'load_config', lambda: {'automation_slash_is_tag_separator': False})
+    monkeypatch.setattr(automation_api, 'load_ui_data', lambda: {})
+    monkeypatch.setattr(automation_api.rule_manager, 'get_ruleset', lambda ruleset_id: {'rules': []})
+
+    def _fake_build_rule_context(card_id_arg, card_obj_arg, ruleset_arg, ui_data=None, tags=None):
+        return (
+            {
+                'id': card_id_arg,
+                'category': card_obj_arg.get('category', ''),
+                'tags': list(card_obj_arg.get('tags') or []),
+                'token_count': 0,
+            },
+            ui_data or {},
+        )
+
+    monkeypatch.setattr(automation_service, '_build_rule_context', _fake_build_rule_context)
+    monkeypatch.setattr(
+        automation_api.engine,
+        'evaluate',
+        lambda *args, **kwargs: {'actions': [{'type': ACT_ADD_TAG, 'value': 'ordered'}]},
+    )
+    monkeypatch.setattr(
+        automation_api,
+        'normalize_actions_for_context',
+        lambda actions, trigger_context, card_snapshot=None: {
+            'trigger_context': trigger_context,
+            'actions': list(actions),
+            'derived': {'add_tags': {'ordered'}, 'remove_tags': set()},
+            'observability': {
+                'category_tag_expansions': [],
+                'suppressed_filename_action_conflicts': [],
+                'noop_rename_reasons': [],
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        automation_service,
+        '_build_exec_plan_from_actions',
+        lambda actions, slash_as_separator=False: {
+            'move': None,
+            'add_tags': {'ordered'},
+            'remove_tags': set(),
+            'set_favorite': None,
+            'set_filename_from_char_name': False,
+            'set_filename_from_wi_name': False,
+            'set_char_name_from_filename': False,
+            'set_wi_name_from_filename': False,
+            'fetch_forum_tags': None,
+            'desired_filename_template': None,
+        },
+    )
+
+    def _fake_apply_plan(card_id_arg, plan, ui_data):
+        captured['processed_ids'].append(card_id_arg)
+        return {
+            'moved_to': None,
+            'tags_added': list(plan.get('add_tags', [])),
+            'tags_removed': [],
+            'fav_changed': False,
+            'name_sync': None,
+            'forum_tags_fetched': None,
+            'final_id': card_id_arg,
+        }
+
+    monkeypatch.setattr(automation_api.executor, 'apply_plan', _fake_apply_plan)
+
+
+def test_manual_execute_preserves_explicit_order_then_appends_db_ids_in_order(monkeypatch):
+    request_first = 'folder/request-first.json'
+    request_second = 'folder/request-second.json'
+    db_only = 'folder/db-only.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            request_first: {
+                'id': request_first,
+                'filename': 'request-first.json',
+                'char_name': 'Request First',
+                'category': 'folder',
+                'tags': [],
+            },
+            request_second: {
+                'id': request_second,
+                'filename': 'request-second.json',
+                'char_name': 'Request Second',
+                'category': 'folder',
+                'tags': [],
+            },
+            db_only: {
+                'id': db_only,
+                'filename': 'db-only.json',
+                'char_name': 'DB Only',
+                'category': 'folder',
+                'tags': [],
+            },
+        },
+        bundle_map={},
+        initialized=True,
+    )
+    captured = {'processed_ids': [], 'queries': []}
+
+    class _FakeCursor:
+        def execute(self, sql, params=None):
+            captured['queries'].append((sql, params))
+
+        def fetchall(self):
+            return [(db_only,), (request_first,), (request_second,)]
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    monkeypatch.setattr(automation_api, 'get_db', lambda: _FakeConn())
+    _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured)
+
+    client = _make_automation_app().test_client()
+    response = client.post(
+        '/api/automation/execute',
+        json={
+            'card_ids': [request_second, request_first],
+            'category': 'folder',
+            'recursive': True,
+            'ruleset_id': 'ruleset-1',
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()['selected'] == 3
+    assert captured['processed_ids'] == [request_second, request_first, db_only]
+
+
+def test_manual_execute_category_queries_order_targets_by_id(monkeypatch):
+    first_id = 'folder/a.json'
+    second_id = 'folder/b.json'
+    fake_cache = SimpleNamespace(
+        id_map={
+            first_id: {
+                'id': first_id,
+                'filename': 'a.json',
+                'char_name': 'A',
+                'category': 'folder',
+                'tags': [],
+            },
+            second_id: {
+                'id': second_id,
+                'filename': 'b.json',
+                'char_name': 'B',
+                'category': 'folder',
+                'tags': [],
+            },
+        },
+        bundle_map={},
+        initialized=True,
+    )
+    captured = {'sql': None, 'processed_ids': []}
+
+    class _FakeCursor:
+        def execute(self, sql, params=None):
+            captured['sql'] = sql
+
+        def fetchall(self):
+            return [(first_id,), (second_id,)]
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    monkeypatch.setattr(automation_api, 'get_db', lambda: _FakeConn())
+    _setup_manual_execute_ordering_test_mocks(monkeypatch, fake_cache, captured)
+
+    client = _make_automation_app().test_client()
+    response = client.post(
+        '/api/automation/execute',
+        json={'category': 'folder', 'recursive': True, 'ruleset_id': 'ruleset-1'},
+    )
+
+    assert response.status_code == 200
+    assert 'ORDER BY id' in captured['sql']
+    assert captured['processed_ids'] == [first_id, second_id]
 
 
 def test_executor_apply_plan_runs_template_rename_before_move(monkeypatch):
@@ -1552,6 +2861,100 @@ def test_executor_fetch_forum_tags_preserves_processed_tags_and_exposes_governed
     assert result['tags'] == ['existing', 'allowed-tag']
 
 
+def test_executor_fetch_forum_tags_replace_mode_removes_stale_tags(monkeypatch):
+    from core.automation.executor import AutomationExecutor
+    from core.automation import executor as automation_executor
+
+    writes = []
+    fake_cache = SimpleNamespace(
+        id_map={
+            'folder/demo.json': {
+                'id': 'folder/demo.json',
+                'filename': 'demo.json',
+                'tags': ['existing'],
+            }
+        }
+    )
+
+    monkeypatch.setattr(automation_executor, 'ctx', SimpleNamespace(cache=fake_cache), raising=False)
+    monkeypatch.setattr(
+        AutomationExecutor,
+        '_fetch_forum_tags',
+        lambda self, card_id, config, ui_data=None: {
+            'success': True,
+            'tags': ['allowed-tag'],
+            'governed_tags': ['allowed-tag'],
+            'merge_mode': 'replace',
+        },
+    )
+    monkeypatch.setattr(
+        automation_executor,
+        'modify_card_attributes_internal',
+        lambda card_id, add_tags, remove_tags, fav=None: writes.append((list(add_tags), list(remove_tags))) or True,
+    )
+
+    result = AutomationExecutor().apply_plan(
+        'folder/demo.json',
+        {
+            'fetch_forum_tags': {'merge_mode': 'replace'},
+            'move': None,
+            'favorite': None,
+        },
+        ui_data={},
+    )
+
+    assert writes == [(['allowed-tag'], ['existing'])]
+    assert result['tags_added'] == ['allowed-tag']
+    assert result['tags_removed'] == ['existing']
+
+
+def test_executor_fetch_forum_tags_replace_mode_clears_existing_tags_when_fetch_returns_empty(monkeypatch):
+    from core.automation.executor import AutomationExecutor
+    from core.automation import executor as automation_executor
+
+    writes = []
+    fake_cache = SimpleNamespace(
+        id_map={
+            'folder/demo.json': {
+                'id': 'folder/demo.json',
+                'filename': 'demo.json',
+                'tags': ['existing'],
+            }
+        }
+    )
+
+    monkeypatch.setattr(automation_executor, 'ctx', SimpleNamespace(cache=fake_cache), raising=False)
+    monkeypatch.setattr(
+        AutomationExecutor,
+        '_fetch_forum_tags',
+        lambda self, card_id, config, ui_data=None: {
+            'success': True,
+            'tags': [],
+            'governed_tags': [],
+            'merge_mode': 'replace',
+        },
+    )
+    monkeypatch.setattr(
+        automation_executor,
+        'modify_card_attributes_internal',
+        lambda card_id, add_tags, remove_tags, fav=None: writes.append((list(add_tags), list(remove_tags))) or True,
+    )
+
+    result = AutomationExecutor().apply_plan(
+        'folder/demo.json',
+        {
+            'fetch_forum_tags': {'merge_mode': 'replace'},
+            'move': None,
+            'favorite': None,
+        },
+        ui_data={},
+    )
+
+    assert writes == [([], ['existing'])]
+    assert result['tags_added'] == []
+    assert result['tags_removed'] == ['existing']
+
+
 def test_sync_card_names_internal_template_rename_reuses_existing_migration_logic(monkeypatch, tmp_path):
     from core.services import card_service
 
@@ -1627,12 +3030,22 @@ def test_sync_card_names_internal_template_rename_reuses_existing_migration_logi
     monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
     monkeypatch.setattr(card_service, 'extract_card_info', lambda path: {'name': 'Hero Card', 'data': {'name': 'Hero Card'}})
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda card_id_arg, full_path_arg, parsed_info=None, mtime=None: cache_calls.setdefault('update_card_cache', {
-        'card_id': card_id_arg,
-        'full_path': full_path_arg,
-        'parsed_info': parsed_info,
-        'mtime': mtime,
-    }))
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda card_id_arg, full_path_arg, parsed_info=None, mtime=None, remove_entity_ids=None: (
+        cache_calls.setdefault('update_card_cache', {
+            'card_id': card_id_arg,
+            'full_path': full_path_arg,
+            'parsed_info': parsed_info,
+            'mtime': mtime,
+            'remove_entity_ids': remove_entity_ids,
+        }),
+        {
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+        }
+    )[1])
+    sync_calls = []
+    monkeypatch.setattr(card_service, 'sync_card_index_jobs', lambda **kwargs: sync_calls.append(kwargs) or {})
     monkeypatch.setattr(card_service, 'get_db', lambda: fake_conn)
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: ui_data)
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: saved_ui_snapshots.append({key: (value.copy() if isinstance(value, dict) else value) for key, value in payload.items()}))
@@ -1663,6 +3076,7 @@ def test_sync_card_names_internal_template_rename_reuses_existing_migration_logi
     assert ui_data['folder'][card_service.VERSION_REMARKS_KEY] == {new_id: 'version note'}
     assert cache_calls['update_card_cache']['card_id'] == new_id
     assert cache_calls['update_card_cache']['full_path'].endswith('Hero Card.json')
+    assert cache_calls['update_card_cache']['remove_entity_ids'] == [old_id]
     assert cache_calls['move_card_update'] == {
         'old_id': old_id,
         'new_id': new_id,
@@ -1674,6 +3088,19 @@ def test_sync_card_names_internal_template_rename_reuses_existing_migration_logi
     assert cache_calls['update_card_data']['card_id'] == new_id
     assert cache_calls['update_card_data']['payload']['filename'] == 'Hero Card.json'
     assert cache_calls['update_card_data']['payload']['char_name'] == 'Hero Card'
+    assert sync_calls == [
+        {
+            'card_id': new_id,
+            'source_path': str(card_dir / 'Hero Card.json'),
+            'file_content_changed': False,
+            'rename_changed': True,
+            'cache_updated': True,
+            'has_embedded_wi': False,
+            'previous_has_embedded_wi': False,
+            'remove_entity_ids': [old_id],
+            'remove_owner_ids': [old_id],
+        }
+    ]
     assert saved_ui_snapshots[-1][new_id]['import_time'] == 1704153600
 
 
@@ -1699,7 +3126,11 @@ def test_sync_card_names_internal_template_rename_keeps_priority_over_legacy_fil
         },
     )
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
     monkeypatch.setattr(card_service, 'get_db', lambda: type('Conn', (), {'execute': lambda self, *a, **k: self, 'commit': lambda self: None})())
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: {})
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: None)
@@ -1821,10 +3252,15 @@ def test_manual_execute_runs_template_rename_through_executor_plan(monkeypatch):
     assert response.status_code == 200
     assert response.get_json() == {
         'success': True,
+        'selected': 1,
         'processed': 1,
+        'skipped': 0,
         'summary': {
             'moves': 0,
             'tag_changes': 0,
+        },
+        'details': {
+            'skipped': [],
         },
     }
     assert captured['normalize_actions'] == [{'type': ACT_RENAME_FILE_BY_TEMPLATE, 'value': '{{char_name}}'}]
@@ -1901,7 +3337,11 @@ def test_sync_card_names_internal_accepts_structured_template_rename_config(monk
     monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
     monkeypatch.setattr(card_service, 'extract_card_info', lambda path: {'name': 'Hero Card', 'data': {'name': 'Hero Card'}})
     monkeypatch.setattr(card_service, 'write_card_metadata', lambda path, info: True)
-    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'update_card_cache', lambda *args, **kwargs: {
+        'cache_updated': True,
+        'has_embedded_wi': False,
+        'previous_has_embedded_wi': False,
+    })
     monkeypatch.setattr(card_service, 'get_db', lambda: type('Conn', (), {'execute': lambda self, *a, **k: self, 'commit': lambda self: None})())
     monkeypatch.setattr(card_service, 'load_ui_data', lambda: {'folder/demo.json': {'import_time': 1704153600}})
     monkeypatch.setattr(card_service, 'save_ui_data', lambda payload: None)
@@ -1942,6 +3382,195 @@ def test_sync_card_names_internal_accepts_structured_template_rename_config(monk
     assert details['new_filename'] == 'Hero Card - 2024-01-02.json'
     assert source_path.exists() is False
     assert (card_dir / 'Hero Card - 2024-01-02.json').exists() is True
+
+
+def test_modify_card_attributes_internal_suppresses_fs_events_before_delayed_tag_write(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    card_dir = cards_root / 'folder'
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card_path = card_dir / 'demo.json'
+    card_path.write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    calls = []
+
+    class _FakeConn:
+        def __init__(self):
+            self.executed = []
+            self.committed = 0
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            return self
+
+        def commit(self):
+            self.committed += 1
+
+    class _FakeCache:
+        def __init__(self):
+            self.updated = []
+
+        def update_tags_update(self, card_id_arg, new_tags):
+            self.updated.append((card_id_arg, list(new_tags)))
+
+    fake_conn = _FakeConn()
+    fake_cache = _FakeCache()
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(
+        card_service,
+        'extract_card_info',
+        lambda path: {'data': {'tags': ['existing']}},
+    )
+    monkeypatch.setattr(
+        card_service,
+        'suppress_fs_events',
+        lambda *args, **kwargs: calls.append(('suppress_fs_events', args, kwargs)),
+    )
+    monkeypatch.setattr(
+        card_service,
+        'write_card_metadata',
+        lambda path, info: calls.append(('write_card_metadata', path, info)) or True,
+    )
+    monkeypatch.setattr(card_service, 'get_db', lambda: fake_conn)
+    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(card_service.ctx, 'cache', fake_cache, raising=False)
+
+    ok = card_service.modify_card_attributes_internal(
+        'folder/demo.json',
+        add_tags={'new-tag'},
+    )
+
+    assert ok is True
+    assert [entry[0] for entry in calls] == ['suppress_fs_events', 'write_card_metadata']
+    assert calls[1][1] == str(card_path)
+    assert calls[1][2]['data']['tags'] == ['existing', 'new-tag']
+    assert fake_conn.executed == [
+        ('UPDATE card_metadata SET tags = ? WHERE id = ?', ('["existing", "new-tag"]', 'folder/demo.json')),
+    ]
+    assert fake_conn.committed == 1
+    assert fake_cache.updated == [('folder/demo.json', ['existing', 'new-tag'])]
+
+
+def test_global_metadata_cache_update_card_data_rebuilds_global_tags_when_tags_shrink():
+    from core.data.cache import GlobalMetadataCache
+
+    cache = GlobalMetadataCache()
+    cache.id_map = {
+        'folder/demo.json': {
+            'id': 'folder/demo.json',
+            'category': 'folder',
+            'tags': ['legacy', 'keep'],
+            'last_modified': 1704067200,
+        }
+    }
+    cache.global_tags = {'legacy', 'keep'}
+
+    updated = cache.update_card_data('folder/demo.json', {'tags': ['keep']})
+
+    assert updated['tags'] == ['keep']
+    assert cache.global_tags == ['keep']
+
+
+def test_global_metadata_cache_update_tags_update_rebuilds_global_tags_when_tags_shrink():
+    from core.data.cache import GlobalMetadataCache
+
+    cache = GlobalMetadataCache()
+    cache.id_map = {
+        'folder/demo.json': {
+            'id': 'folder/demo.json',
+            'tags': ['legacy', 'keep'],
+        }
+    }
+    cache.global_tags = {'legacy', 'keep'}
+
+    cache.update_tags_update('folder/demo.json', ['keep'])
+
+    assert cache.id_map['folder/demo.json']['tags'] == ['keep']
+    assert cache.global_tags == ['keep']
+
+
+def test_modify_card_attributes_internal_enqueues_incremental_index_repair_after_delayed_tag_write(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    card_dir = cards_root / 'folder'
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card_path = card_dir / 'demo.json'
+    card_path.write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    class _FakeConn:
+        def execute(self, _sql, _params):
+            return self
+
+        def commit(self):
+            return None
+
+    job_calls = []
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda _path: {'data': {'tags': ['existing']}})
+    monkeypatch.setattr(card_service, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'write_card_metadata', lambda _path, _info: True)
+    monkeypatch.setattr(card_service, 'get_db', lambda: _FakeConn())
+    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+    monkeypatch.setattr(
+        card_service.ctx,
+        'cache',
+        SimpleNamespace(update_tags_update=lambda *args, **kwargs: None),
+        raising=False,
+    )
+
+    ok = card_service.modify_card_attributes_internal('folder/demo.json', add_tags={'new-tag'})
+
+    assert ok is True
+    assert job_calls == [
+        ('upsert_card', {'entity_id': 'folder/demo.json', 'source_path': str(card_path)}),
+    ]
+
+
+def test_modify_card_attributes_internal_skips_db_cache_and_index_when_delayed_tag_write_fails(monkeypatch, tmp_path):
+    from core.services import card_service
+
+    cards_root = tmp_path / 'cards'
+    card_dir = cards_root / 'folder'
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card_path = card_dir / 'demo.json'
+    card_path.write_text('{"spec":"chara_card_v2"}', encoding='utf-8')
+
+    class _FakeConn:
+        def __init__(self):
+            self.executed = []
+            self.committed = 0
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            return self
+
+        def commit(self):
+            self.committed += 1
+
+    fake_conn = _FakeConn()
+    fake_cache = SimpleNamespace(updated=[])
+    fake_cache.update_tags_update = lambda card_id, tags: fake_cache.updated.append((card_id, tags))
+    job_calls = []
+
+    monkeypatch.setattr(card_service, 'CARDS_FOLDER', str(cards_root), raising=False)
+    monkeypatch.setattr(card_service, 'extract_card_info', lambda _path: {'data': {'tags': ['existing']}})
+    monkeypatch.setattr(card_service, 'suppress_fs_events', lambda *args, **kwargs: None)
+    monkeypatch.setattr(card_service, 'write_card_metadata', lambda _path, _info: False)
+    monkeypatch.setattr(card_service, 'get_db', lambda: fake_conn)
+    monkeypatch.setattr(card_service, 'enqueue_index_job', lambda job_type, **kwargs: job_calls.append((job_type, kwargs)), raising=False)
+    monkeypatch.setattr(card_service.ctx, 'cache', fake_cache, raising=False)
+
+    ok = card_service.modify_card_attributes_internal('folder/demo.json', add_tags={'new-tag'})
+
+    assert ok is False
+    assert fake_conn.executed == []
+    assert fake_conn.committed == 0
+    assert fake_cache.updated == []
+    assert job_calls == []
 
 
 def test_rule_manager_save_ruleset_preserves_group_condition_and_action_order(monkeypatch, tmp_path):

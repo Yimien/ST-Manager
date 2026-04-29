@@ -1602,16 +1602,6 @@
     0 0 0 4px color-mix(in srgb, var(--accent-main), transparent 45%);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tag-filter-desktop-shell *,
-  .tag-filter-desktop-shell *::before,
-  .tag-filter-desktop-shell *::after {
-    animation: none !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
 .tag-filter-workspace-help-card-title {
   margin-bottom: 0.65rem;
   font-size: 0.88rem;
@@ -1667,6 +1657,10 @@
   color: var(--accent-light);
   border-bottom-color: var(--accent-main);
   background-color: var(--bg-panel);
+}
+
+.modal-container.advanced-editor-container {
+  background: transparent;
 }
 
 .adv-split-view {
@@ -2352,6 +2346,16 @@ html.light-mode .preview-toggle-inactive {
   padding: 10px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .tag-filter-desktop-shell *,
+  .tag-filter-desktop-shell *::before,
+  .tag-filter-desktop-shell *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media (max-width: 768px) {
   .adv-split-view {
     flex: 1;
@@ -2360,7 +2364,6 @@ html.light-mode .preview-toggle-inactive {
   .tag-modal-container {
     width: 100vw;
     max-width: 100vw;
-    height: 100vh;
     height: 100dvh;
     min-height: 100dvh;
     border-radius: 0;

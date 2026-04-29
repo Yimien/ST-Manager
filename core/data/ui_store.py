@@ -18,6 +18,8 @@ TAG_MANAGEMENT_PREFS_KEY = '_tag_management_prefs_v1'
 ISOLATED_CATEGORIES_KEY = '_isolated_categories_v1'
 RESOURCE_ITEM_CATEGORIES_KEY = '_resource_item_categories_v1'
 WORLDINFO_NOTES_KEY = '_worldinfo_notes_v1'
+BEAUTIFY_LIBRARY_KEY = '_beautify_library_v1'
+SHARED_WALLPAPER_LIBRARY_KEY = '_shared_wallpaper_library_v1'
 
 DEFAULT_TAG_CATEGORY = '未分类'
 DEFAULT_TAG_CATEGORY_COLOR = '#64748b'
@@ -474,10 +476,363 @@ def _is_tag_management_prefs_equal(left, right):
     )
 
 
+def _normalize_beautify_string(value):
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def _normalize_beautify_path(value):
+    path = _normalize_beautify_string(value).replace('\\', '/')
+    return path.strip('/') if path else ''
+
+
+def _normalize_shared_wallpaper_source_type(value):
+    source_type = _normalize_beautify_string(value).lower()
+    if source_type in ('builtin', 'imported', 'package_embedded'):
+        return source_type
+    return 'imported'
+
+
+def _normalize_shared_wallpaper_item(raw_item, wallpaper_id):
+    source = raw_item if isinstance(raw_item, dict) else {}
+
+    def _to_int(value):
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        'id': wallpaper_id,
+        'source_type': _normalize_shared_wallpaper_source_type(source.get('source_type')),
+        'file': _normalize_beautify_path(source.get('file')),
+        'filename': _normalize_beautify_string(source.get('filename')),
+        'width': _to_int(source.get('width')),
+        'height': _to_int(source.get('height')),
+        'mtime': _to_int(source.get('mtime')),
+        'created_at': _to_int(source.get('created_at')),
+        'origin_package_id': _normalize_beautify_string(source.get('origin_package_id')),
+        'origin_variant_id': _normalize_beautify_string(source.get('origin_variant_id')),
+    }
+
+
+def _normalize_shared_wallpaper_library(raw):
+    source = raw if isinstance(raw, dict) else {}
+    items = {}
+    raw_items = source.get('items')
+    if isinstance(raw_items, dict):
+        for raw_wallpaper_id, raw_item in raw_items.items():
+            wallpaper_id = _normalize_beautify_string(raw_wallpaper_id)
+            if not wallpaper_id:
+                continue
+            items[wallpaper_id] = _normalize_shared_wallpaper_item(raw_item, wallpaper_id)
+
+    manager_wallpaper_id = _normalize_beautify_string(source.get('manager_wallpaper_id'))
+    if manager_wallpaper_id and not manager_wallpaper_id.startswith('builtin:') and manager_wallpaper_id not in items:
+        manager_wallpaper_id = ''
+
+    preview_wallpaper_id = _normalize_beautify_string(source.get('preview_wallpaper_id'))
+    if preview_wallpaper_id and not preview_wallpaper_id.startswith('builtin:') and preview_wallpaper_id not in items:
+        preview_wallpaper_id = ''
+
+    try:
+        updated_at = max(0, int(source.get('updated_at') or 0))
+    except (TypeError, ValueError):
+        updated_at = 0
+
+    return {
+        'items': dict(sorted(items.items(), key=lambda item: item[0])),
+        'manager_wallpaper_id': manager_wallpaper_id,
+        'preview_wallpaper_id': preview_wallpaper_id,
+        'updated_at': updated_at,
+    }
+
+
+def _is_shared_wallpaper_library_equal(left, right):
+    left_norm = _normalize_shared_wallpaper_library(left)
+    right_norm = _normalize_shared_wallpaper_library(right)
+    return (
+        left_norm.get('items') == right_norm.get('items')
+        and left_norm.get('manager_wallpaper_id') == right_norm.get('manager_wallpaper_id')
+        and left_norm.get('preview_wallpaper_id') == right_norm.get('preview_wallpaper_id')
+    )
+
+
+def _normalize_beautify_platform(value):
+    platform = _normalize_beautify_string(value).lower()
+    if platform in ('pc', 'mobile', 'dual'):
+        return platform
+    return 'dual'
+
+
+def _normalize_beautify_preview_hint(raw, platform='dual'):
+    source = raw if isinstance(raw, dict) else {}
+    accuracy = _normalize_beautify_string(source.get('preview_accuracy')).lower()
+    if accuracy not in ('base', 'approx'):
+        accuracy = 'approx' if platform in ('pc', 'mobile') else 'base'
+
+    return {
+        'needs_platform_review': bool(source.get('needs_platform_review')),
+        'preview_accuracy': accuracy,
+    }
+
+
+def _normalize_beautify_wallpaper_ids(raw):
+    if not isinstance(raw, list):
+        return []
+
+    result = []
+    seen = set()
+    for item in raw:
+        wallpaper_id = _normalize_beautify_string(item)
+        if not wallpaper_id or ':' not in wallpaper_id or wallpaper_id in seen:
+            continue
+        seen.add(wallpaper_id)
+        result.append(wallpaper_id)
+    return result
+
+
+def _normalize_beautify_selected_wallpaper_id(raw):
+    return _normalize_beautify_string(raw)
+
+
+def _normalize_beautify_variant(raw_variant, variant_id):
+    source = raw_variant if isinstance(raw_variant, dict) else {}
+    platform = _normalize_beautify_platform(source.get('platform'))
+    return {
+        'id': variant_id,
+        'name': _normalize_beautify_string(source.get('name')),
+        'platform': platform,
+        'theme_name': _normalize_beautify_string(source.get('theme_name')),
+        'theme_file': _normalize_beautify_path(source.get('theme_file')),
+        'wallpaper_ids': _normalize_beautify_wallpaper_ids(source.get('wallpaper_ids')),
+        'selected_wallpaper_id': _normalize_beautify_selected_wallpaper_id(source.get('selected_wallpaper_id')),
+        'preview_hint': _normalize_beautify_preview_hint(source.get('preview_hint'), platform),
+    }
+
+
+def _normalize_beautify_wallpaper(raw_wallpaper, wallpaper_id):
+    source = raw_wallpaper if isinstance(raw_wallpaper, dict) else {}
+
+    def _to_int(value):
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        'id': wallpaper_id,
+        'variant_id': _normalize_beautify_string(source.get('variant_id')),
+        'file': _normalize_beautify_path(source.get('file')),
+        'filename': _normalize_beautify_string(source.get('filename')),
+        'width': _to_int(source.get('width')),
+        'height': _to_int(source.get('height')),
+        'mtime': _to_int(source.get('mtime')),
+    }
+
+
+def _normalize_beautify_asset(raw_asset):
+    source = raw_asset if isinstance(raw_asset, dict) else {}
+
+    def _to_int(value):
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        'file': _normalize_beautify_path(source.get('file')),
+        'filename': _normalize_beautify_string(source.get('filename')),
+        'width': _to_int(source.get('width')),
+        'height': _to_int(source.get('height')),
+        'mtime': _to_int(source.get('mtime')),
+    }
+
+
+def _normalize_beautify_identity(raw_identity):
+    source = raw_identity if isinstance(raw_identity, dict) else {}
+    return {
+        'name': _normalize_beautify_string(source.get('name')),
+        'avatar_file': _normalize_beautify_path(source.get('avatar_file')),
+    }
+
+
+def _normalize_beautify_identities(raw):
+    source = raw if isinstance(raw, dict) else {}
+    return {
+        'character': _normalize_beautify_identity(source.get('character')),
+        'user': _normalize_beautify_identity(source.get('user')),
+    }
+
+
+def _normalize_beautify_screenshots(raw):
+    if not isinstance(raw, dict):
+        return {}
+
+    screenshots = {}
+    for raw_screenshot_id, raw_screenshot in raw.items():
+        screenshot_id = _normalize_beautify_string(raw_screenshot_id)
+        if not screenshot_id:
+            continue
+
+        screenshot = _normalize_beautify_asset(raw_screenshot)
+        screenshots[screenshot_id] = {
+            'id': screenshot_id,
+            'file': screenshot['file'],
+            'filename': screenshot['filename'],
+            'width': screenshot['width'],
+            'height': screenshot['height'],
+            'mtime': screenshot['mtime'],
+        }
+
+    return dict(sorted(screenshots.items(), key=lambda item: item[0]))
+
+
+def _normalize_beautify_global_settings(raw):
+    source = raw if isinstance(raw, dict) else {}
+    return {
+        'wallpaper': _normalize_beautify_asset(source.get('wallpaper')),
+        'identities': _normalize_beautify_identities(source.get('identities')),
+    }
+
+
+def _normalize_beautify_package(raw_package, package_id):
+    source = raw_package if isinstance(raw_package, dict) else {}
+
+    def _to_int(value):
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return 0
+
+    variants = {}
+    raw_variants = source.get('variants')
+    if isinstance(raw_variants, dict):
+        for raw_variant_id, raw_variant in raw_variants.items():
+            variant_id = _normalize_beautify_string(raw_variant_id)
+            if not variant_id:
+                continue
+            variants[variant_id] = _normalize_beautify_variant(raw_variant, variant_id)
+
+    wallpapers = {}
+    raw_wallpapers = source.get('wallpapers')
+    if isinstance(raw_wallpapers, dict):
+        for raw_wallpaper_id, raw_wallpaper in raw_wallpapers.items():
+            wallpaper_id = _normalize_beautify_string(raw_wallpaper_id)
+            if not wallpaper_id:
+                continue
+            wallpapers[wallpaper_id] = _normalize_beautify_wallpaper(raw_wallpaper, wallpaper_id)
+
+    for variant in variants.values():
+        variant['wallpaper_ids'] = [
+            wallpaper_id
+            for wallpaper_id in variant.get('wallpaper_ids', [])
+            if (
+                wallpaper_id.startswith('builtin:')
+                or ':' in wallpaper_id
+                or (wallpaper_id in wallpapers and wallpapers[wallpaper_id].get('variant_id') == variant['id'])
+            )
+        ]
+        if variant.get('selected_wallpaper_id') not in variant['wallpaper_ids']:
+            variant['selected_wallpaper_id'] = ''
+
+    return {
+        'id': package_id,
+        'name': _normalize_beautify_string(source.get('name')),
+        'author': _normalize_beautify_string(source.get('author')),
+        'tags': [str(tag).strip() for tag in source.get('tags', []) if str(tag).strip()] if isinstance(source.get('tags'), list) else [],
+        'notes': _normalize_beautify_string(source.get('notes')),
+        'cover_variant_id': _normalize_beautify_string(source.get('cover_variant_id')),
+        'created_at': _to_int(source.get('created_at')),
+        'updated_at': _to_int(source.get('updated_at')),
+        'screenshots': _normalize_beautify_screenshots(source.get('screenshots')),
+        'identity_overrides': _normalize_beautify_identities(source.get('identity_overrides')),
+        'variants': dict(sorted(variants.items(), key=lambda item: item[0])),
+        'wallpapers': dict(sorted(wallpapers.items(), key=lambda item: item[0])),
+    }
+
+
+def _normalize_beautify_library(raw):
+    source = raw if isinstance(raw, dict) else {}
+    packages = {}
+    raw_packages = source.get('packages')
+    if isinstance(raw_packages, dict):
+        for raw_package_id, raw_package in raw_packages.items():
+            package_id = _normalize_beautify_string(raw_package_id)
+            if not package_id:
+                continue
+            packages[package_id] = _normalize_beautify_package(raw_package, package_id)
+
+    try:
+        updated_at = max(0, int(source.get('updated_at') or 0))
+    except (TypeError, ValueError):
+        updated_at = 0
+
+    return {
+        'global_settings': _normalize_beautify_global_settings(source.get('global_settings')),
+        'packages': dict(sorted(packages.items(), key=lambda item: item[0])),
+        'updated_at': updated_at,
+    }
+
+
+def _is_beautify_library_equal(left, right):
+    left_norm = _normalize_beautify_library(left)
+    right_norm = _normalize_beautify_library(right)
+    return (
+        left_norm.get('global_settings') == right_norm.get('global_settings')
+        and left_norm.get('packages') == right_norm.get('packages')
+    )
+
+
 def get_isolated_categories(ui_data):
     if not isinstance(ui_data, dict):
         return _normalize_isolated_categories({})
     return _normalize_isolated_categories(ui_data.get(ISOLATED_CATEGORIES_KEY))
+
+
+def get_beautify_library(ui_data):
+    if not isinstance(ui_data, dict):
+        return _normalize_beautify_library({})
+    return _normalize_beautify_library(ui_data.get(BEAUTIFY_LIBRARY_KEY))
+
+
+def get_shared_wallpaper_library(ui_data):
+    if not isinstance(ui_data, dict):
+        return _normalize_shared_wallpaper_library({})
+    return _normalize_shared_wallpaper_library(ui_data.get(SHARED_WALLPAPER_LIBRARY_KEY))
+
+
+def set_beautify_library(ui_data, payload):
+    if not isinstance(ui_data, dict):
+        return False
+
+    previous_raw = ui_data.get(BEAUTIFY_LIBRARY_KEY)
+    previous_norm = _normalize_beautify_library(previous_raw)
+    next_norm = _normalize_beautify_library(payload)
+
+    if _is_beautify_library_equal(previous_norm, next_norm) and isinstance(previous_raw, dict):
+        return False
+
+    next_norm['updated_at'] = int(time.time())
+    ui_data[BEAUTIFY_LIBRARY_KEY] = next_norm
+    return True
+
+
+def set_shared_wallpaper_library(ui_data, payload):
+    if not isinstance(ui_data, dict):
+        return False
+
+    previous_raw = ui_data.get(SHARED_WALLPAPER_LIBRARY_KEY)
+    previous_norm = _normalize_shared_wallpaper_library(previous_raw)
+    next_norm = _normalize_shared_wallpaper_library(payload)
+
+    if _is_shared_wallpaper_library_equal(previous_norm, next_norm) and isinstance(previous_raw, dict):
+        return False
+
+    next_norm['updated_at'] = int(time.time())
+    ui_data[SHARED_WALLPAPER_LIBRARY_KEY] = next_norm
+    return True
 
 
 def get_resource_item_categories(ui_data):
@@ -561,6 +916,80 @@ def delete_worldinfo_notes_for_card_prefix(ui_data, card_prefix):
         ui_data[WORLDINFO_NOTES_KEY] = notes
     else:
         ui_data.pop(WORLDINFO_NOTES_KEY, None)
+    return True
+
+
+def rename_embedded_worldinfo_note_card_prefix(ui_data, old_card_prefix, new_card_prefix):
+    if not isinstance(ui_data, dict):
+        return False
+
+    normalized_old = _normalize_worldinfo_note_card_id(old_card_prefix)
+    normalized_new = _normalize_worldinfo_note_card_id(new_card_prefix)
+    if not normalized_old or not normalized_new or normalized_old == normalized_new:
+        return False
+
+    raw_notes = ui_data.get(WORLDINFO_NOTES_KEY)
+    if not isinstance(raw_notes, dict):
+        return False
+
+    changed = False
+    remapped = {}
+    exact_old_key = build_worldinfo_note_key('embedded', card_id=normalized_old)
+    nested_old_prefix = f'embedded::{normalized_old}/'
+
+    for note_key, note_value in raw_notes.items():
+        if note_key == exact_old_key:
+            remapped[build_worldinfo_note_key('embedded', card_id=normalized_new)] = note_value
+            changed = True
+            continue
+        if note_key.startswith(nested_old_prefix):
+            suffix = note_key[len(exact_old_key):]
+            remapped[f'embedded::{normalized_new}{suffix}'] = note_value
+            changed = True
+            continue
+        remapped[note_key] = note_value
+
+    if not changed:
+        return False
+
+    ui_data[WORLDINFO_NOTES_KEY] = remapped
+    return True
+
+
+def rename_global_worldinfo_note_path_prefix(ui_data, old_path_prefix, new_path_prefix):
+    if not isinstance(ui_data, dict):
+        return False
+
+    normalized_old = _normalize_worldinfo_note_path(old_path_prefix)
+    normalized_new = _normalize_worldinfo_note_path(new_path_prefix)
+    if not normalized_old or not normalized_new or normalized_old == normalized_new:
+        return False
+
+    raw_notes = ui_data.get(WORLDINFO_NOTES_KEY)
+    if not isinstance(raw_notes, dict):
+        return False
+
+    changed = False
+    remapped = {}
+    exact_old_key = build_worldinfo_note_key('global', file_path=normalized_old)
+    nested_old_prefix = f'global::{normalized_old}/'
+
+    for note_key, note_value in raw_notes.items():
+        if note_key == exact_old_key:
+            remapped[build_worldinfo_note_key('global', file_path=normalized_new)] = note_value
+            changed = True
+            continue
+        if note_key.startswith(nested_old_prefix):
+            suffix = note_key[len(exact_old_key):]
+            remapped[f'global::{normalized_new}{suffix}'] = note_value
+            changed = True
+            continue
+        remapped[note_key] = note_value
+
+    if not changed:
+        return False
+
+    ui_data[WORLDINFO_NOTES_KEY] = remapped
     return True
 
 
